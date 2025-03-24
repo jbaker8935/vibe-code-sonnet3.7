@@ -317,6 +317,7 @@
         </div>
     </div>
     <a target="_blank" href="https://jam.pieter.com" style="font-family: 'system-ui', sans-serif; position: fixed; bottom: -1px; right: -1px; padding: 7px; font-size: 14px; font-weight: bold; background: #fff; color: #000; text-decoration: none; z-index: 10; border-top-left-radius: 12px; z-index: 10000; border: 1px solid #fff;">🕹️ Vibe Jam 2025</a>
+    <a target="_blank" href="https://github.com/jbaker8935/vibe-code-sonnet3.7" style="font-family: 'system-ui', sans-serif; position: fixed; bottom: -1px; left: -1px; padding: 7px; font-size: 14px; font-weight: bold; background: #fff; color: #000; text-decoration: none; z-index: 10; border-top-left-radius: 12px; z-index: 10000; border: 1px solid #fff;">github</a>
     <div class="history-overlay hidden" id="historyOverlay">
         <div class="history-content">
             <table class="history-table" id="overlayHistoryTable">
@@ -427,13 +428,11 @@
         window.addEventListener('resize', checkDisplayLayout);
 
         // Check if display is wide enough for side-by-side layout
+        // this code has been modified.  history button is always shown
         function checkDisplayLayout() {
-            if (window.innerWidth < 768) {
-                showHistoryButton.classList.remove('hidden');
-            } else {
-                showHistoryButton.classList.add('hidden');
-                historyOverlay.classList.add('hidden');
-            }
+
+            showHistoryButton.classList.remove('hidden');
+
         }
 
         // Initialize the game
@@ -758,7 +757,6 @@
 
         // AI move logic
         function makeAIMove() {
-            // Evaluate all possible moves for player B
             let bestScore = -Infinity;
             let bestMove = null;
             
@@ -768,12 +766,10 @@
                     if (gameState.board[row][col] && gameState.board[row][col].player === PLAYER_B) {
                         const validMoves = getValidMoves(row, col);
                         
-                        // Evaluate each move
                         for (const move of validMoves) {
-                            // Clone the game state
                             const tempBoard = JSON.parse(JSON.stringify(gameState.board));
                             
-                            // Execute the move on the cloned board
+                            // Simulate the move on tempBoard
                             const piece = tempBoard[row][col];
                             const targetCell = tempBoard[move.row][move.col];
                             
@@ -787,19 +783,10 @@
                                 // Move to empty cell
                                 tempBoard[move.row][move.col] = piece;
                                 tempBoard[row][col] = null;
-                                
-                                // Unmark all swapped pieces
-                                for (let r = 0; r < ROWS; r++) {
-                                    for (let c = 0; c < COLS; c++) {
-                                        if (tempBoard[r][c]) {
-                                            tempBoard[r][c].swapped = false;
-                                        }
-                                    }
-                                }
                             }
                             
-                            // Score the move
                             const score = evaluateBoard(tempBoard, PLAYER_B);
+                            // console.log(`Evaluating move from ${String.fromCharCode(65 + col)}${row + 1} to ${String.fromCharCode(65 + move.col)}${move.row + 1}: score=${score}`);
                             
                             if (score > bestScore) {
                                 bestScore = score;
@@ -812,91 +799,102 @@
             
             // Execute the best move
             if (bestMove) {
+                // console.log(`Selected best move: from ${String.fromCharCode(65 + bestMove.from.col)}${bestMove.from.row + 1} to ${String.fromCharCode(65 + bestMove.to.col)}${bestMove.to.row + 1} with score ${bestScore}`);
                 executeMove(bestMove.from, bestMove.to);
             }
         }
 
-        // Evaluate the board position for the given player
-        function evaluateBoard(board, player) {
-            let score = 0;
-            const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
-            
-            // 1. Prefer pieces that are advanced toward the goal
-            for (let row = 0; row < ROWS; row++) {
-                for (let col = 0; col < COLS; col++) {
-                    if (board[row][col] && board[row][col].player === player) {
-                        // For player B, prefer pieces closer to row 1
-                        if (player === PLAYER_B) {
-                            score += (ROWS - row) * 2;
-                        } 
-                        // For player A, prefer pieces closer to row 6
-                        else {
-                            score += row * 2;
+        // Find connected component helper function
+        function findConnectedComponent(board, player, start) {
+            const component = new Set();
+            const frontier = [start];
+            const directions = [
+                [-1,-1], [-1,0], [-1,1],
+                [0,-1],          [0,1],
+                [1,-1],  [1,0],  [1,1]
+            ];
+
+            while (frontier.length > 0) {
+                const [r, c] = frontier.pop();
+                const key = `${r},${c}`;
+                
+                if (!component.has(key)) {
+                    component.add(key);
+                    for (const [dr, dc] of directions) {
+                        const nr = r + dr, nc = c + dc;
+                        if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+                            if (board[nr][nc]?.player === player && !component.has(`${nr},${nc}`)) {
+                                frontier.push([nr, nc]);
+                            }
                         }
                     }
                 }
             }
-            
-            // 2. Prefer moves that occupy more rows (better connectivity)
-            const occupiedRows = new Set();
-            const occupiedCols = new Set();
-            
-            for (let row = 0; row < ROWS; row++) {
-                for (let col = 0; col < COLS; col++) {
-                    if (board[row][col] && board[row][col].player === player) {
-                        occupiedRows.add(row);
-                        occupiedCols.add(col);
+            return component;
+        }
+
+        // Calculate connectivity score for a player
+        function connectivityScore(board, player) {
+            const visited = new Set();
+            let totalScore = 0;
+            const startingRows = player === PLAYER_A ? [6, 7] : [0, 1];
+            const targetRow = player === PLAYER_A ? 1 : 6;
+
+            for (let r = 1; r < ROWS-1; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (board[r][c]?.player === player && !visited.has(`${r},${c}`)) {
+                        const comp = findConnectedComponent(board, player, [r, c]);
+                        
+                        // Add all component cells to visited
+                        for (const cell of comp) {
+                            visited.add(cell);
+                        }
+
+                        // Convert component cells back to coordinates
+                        const compCells = Array.from(comp).map(cell => {
+                            const [row, col] = cell.split(',').map(Number);
+                            return [row, col];
+                        });
+
+                        const nonStartCells = compCells.filter(([row]) => !startingRows.includes(row));
+                        const startCells = compCells.filter(([row]) => startingRows.includes(row));
+                        
+                        const multiplier = nonStartCells.length + (startCells.length > 0 ? 1 : 0);
+                        
+                        const compMinDist = nonStartCells.length > 0 
+                            ? Math.min(...nonStartCells.map(([row]) => Math.abs(row - targetRow)))
+                            : Math.min(...compCells.map(([row]) => Math.abs(row - targetRow)));
+
+                        const compBonus = multiplier * (ROWS - compMinDist);
+                        totalScore += compBonus;
                     }
                 }
             }
-            
-            score += occupiedRows.size * 10;
-            score += occupiedCols.size * 5;
-            
-            // 3. Check if we're close to creating a winning path
-            // Simplified version - just check if we have pieces in both row 1 and row 6
-            let hasRow1 = false;
-            let hasRow6 = false;
-            
-            for (let col = 0; col < COLS; col++) {
-                if (board[1][col] && board[1][col].player === player) hasRow1 = true;
-                if (board[6][col] && board[6][col].player === player) hasRow6 = true;
-            }
-            
-            if (hasRow1 && hasRow6) {
-                score += 50;
-            }
-            
-            // 4. Prefer blocking opponent's pieces
-            const opponentPieces = [];
-            for (let row = 0; row < ROWS; row++) {
-                for (let col = 0; col < COLS; col++) {
-                    if (board[row][col] && board[row][col].player === opponent) {
-                        opponentPieces.push({ row, col });
-                    }
+            return totalScore;
+        }
+
+        // Count occupied rows for a player
+        function rowsOccupied(board, player) {
+            let count = 0;
+            for (let r = 1; r < ROWS - 1; r++) {
+                if (board[r].some(cell => cell?.player === player)) {
+                    count++;
                 }
             }
+            return count;
+        }
+
+        // Evaluate board position
+        function evaluateBoard(board, player) {
+            const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
             
-            // Simplified blocking heuristic - prefer having pieces adjacent to opponent pieces
-            for (const piece of opponentPieces) {
-                const directions = [
-                    { row: -1, col: -1 }, { row: -1, col: 0 }, { row: -1, col: 1 },
-                    { row: 0, col: -1 },                        { row: 0, col: 1 },
-                    { row: 1, col: -1 },  { row: 1, col: 0 },   { row: 1, col: 1 }
-                ];
-                
-                for (const dir of directions) {
-                    const adjRow = piece.row + dir.row;
-                    const adjCol = piece.col + dir.col;
-                    
-                    if (adjRow >= 0 && adjRow < ROWS && adjCol >= 0 && adjCol < COLS &&
-                        board[adjRow][adjCol] && board[adjRow][adjCol].player === player) {
-                        score += 3;
-                    }
-                }
-            }
+            const connScore = connectivityScore(board, player);
+            const oppConnScore = connectivityScore(board, opponent);
             
-            return score;
+            const rowScore = rowsOccupied(board, player);
+            const oppRowScore = rowsOccupied(board, opponent);
+            return (connScore - oppConnScore) * 0.5 + (rowScore - oppRowScore) * 0.1;
+            // return (connScore ) * 0.2 + (rowScore ) * 0.1;
         }
 
         // Update the history table
