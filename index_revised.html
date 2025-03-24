@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Path Building Game</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .game-container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            max-width: 100vw;
+            max-height: 100vh;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            overflow: hidden;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .board-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            width: 100%;
+            height: min(100vh, calc(190vw + 8vw));
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+
+        .controls-container {
+            display: flex;
+            flex-direction: column;
+            width: min(calc((100vh - 40px)/9 * 4), calc((100vw - 40px)));
+            height: 8%;
+            justify-content: center;
+            box-sizing: border-box;
+            align-items: flex-end;
+        }
+
+        .button-container {
+            display: flex;
+            gap: 5px;
+            justify-content: flex-start;
+            align-items: bottom;
+            width: 100%;
+            height: 100%;
+            padding: 5px;
+            box-sizing: border-box;
+        }
+
+        .game-board {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            border: 2px solid black;
+            box-sizing: border-box;
+            width: min(calc((100vh - 40px)/9 * 4), calc((100vw - 40px)));
+            aspect-ratio: 1/2;
+            height: auto;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cell {
+            aspect-ratio: 1;
+            width: 100%;
+            height: auto;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            cursor: pointer;
+            margin: 0;
+            border-right: 1px solid black;
+            border-bottom: 1px solid black;
+            box-sizing: border-box;
+        }
+
+        /* Remove right border from last column */
+        .cell:nth-child(4n) {
+            border-right: none;
+        }
+
+        /* Remove bottom border from last row */
+        .cell:nth-child(n + 29) {
+            border-bottom: none;
+        }
+
+        @media screen and (max-width: 412px) {
+            body {
+                padding: 10px;
+            }
+        }
+
+        .white {
+            background-color: white;
+        }
+
+        .buff {
+            background-color: #f5d6a7;
+        }
+
+        .highlight {
+            background-color: rgba(144, 238, 144, 0.6);
+        }
+
+        .winning-path {
+            background-color: rgba(255, 215, 0, 0.5);
+        }
+
+        .piece {
+            width: 80%;
+            height: 80%;
+            border-radius: 50%;
+            position: relative;
+            z-index: 2;
+            cursor: pointer;
+        }
+
+        button {
+            aspect-ratio: 1;
+            height: 80%;
+            padding: 0;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #4CAF50;
+            flex-shrink: 0;
+        }
+
+        button img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: invert(1);
+        } 
+
+        #closeHistoryButton {
+            width: 24px;
+            height: 24px;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        .history-container {
+            flex-shrink: 0;
+            padding: 10px;
+            border-left: 1px solid #ccc;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .history-table th, .history-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        .history-table tr {
+            cursor: pointer;
+        }
+
+        .history-table tr:hover {
+            background-color: #f5f5f5;
+        }
+
+        .selected-history {
+            background-color: #e6f7ff;
+        }
+
+        .history-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 10;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .history-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            max-width: 90%;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="board-container">
+            <div class="controls-container">
+                <div class="button-container">
+                    <button id="resetButton"><img src="images/refresh-circle-outline.svg" alt="Reset"></button>
+                    <button id="backButton"><img src="images/arrow-back-circle-outline.svg" alt="Back"></button>
+                    <button id="forwardButton"><img src="images/arrow-forward-circle-outline.svg" alt="Forward"></button>
+                    <button id="infoButton"><img src="images/information-circle-outline.svg" alt="Info"></button>
+                    <button id="showHistoryButton" class="hidden"><img src="images/list-circle-outline.svg" alt="History"></button>
+                </div>
+            </div>
+            <div class="game-board" id="gameBoard"></div>
+        </div>
+        
+        <div class="history-container" id="historyContainer">
+            <table class="history-table" id="historyTable">
+                <thead>
+                    <tr>
+                        <th>Move</th>
+                        <th>Player</th>
+                        <th>From</th>
+                        <th>To</th>
+                    </tr>
+                </thead>
+                <tbody id="historyBody"></tbody>
+            </table>
+        </div>
+    </div>
+    
+    <div class="history-overlay hidden" id="historyOverlay">
+        <div class="history-content">
+            <table class="history-table" id="overlayHistoryTable">
+                <thead>
+                    <tr>
+                        <th>Move</th>
+                        <th>Player</th>
+                        <th>From</th>
+                        <th>To</th>
+                    </tr>
+                </thead>
+                <tbody id="overlayHistoryBody"></tbody>
+            </table>
+            <button id="closeHistoryButton"><img src="images/close-circle-outline.svg" alt="Close"></button>
+        </div>
+    </div>
+
+    <script>
+        // Game state
+        const ROWS = 8;
+        const COLS = 4;
+        const PLAYER_A = 'A';
+        const PLAYER_B = 'B';
+        
+        let gameState = {
+            board: Array(ROWS).fill().map(() => Array(COLS).fill(null)),
+            currentPlayer: PLAYER_A,
+            selectedPiece: null,
+            validMoves: [],
+            gameOver: false,
+            winningPath: [],
+            moveHistory: [],
+            displayedMoveIndex: -1
+        };
+
+        // Piece images - In a real implementation, these would be actual image files
+        const PIECE_IMAGES = {
+            A_NORMAL: 'images/white_normal.png',
+            A_SWAPPED: 'images/white_swapped.png',
+            B_NORMAL: 'images/black_normal.png',
+            B_SWAPPED: 'images/black_swapped.png'
+        };
+
+        // Initialize DOM elements
+        const gameBoard = document.getElementById('gameBoard');
+        const resetButton = document.getElementById('resetButton');
+        const historyContainer = document.getElementById('historyContainer');
+        const historyTable = document.getElementById('historyTable');
+        const historyBody = document.getElementById('historyBody');
+        const historyOverlay = document.getElementById('historyOverlay');
+        const overlayHistoryBody = document.getElementById('overlayHistoryBody');
+        const showHistoryButton = document.getElementById('showHistoryButton');
+        const closeHistoryButton = document.getElementById('closeHistoryButton');
+        const forwardButton = document.getElementById('forwardButton');
+        const backButton = document.getElementById('backButton');
+        const infoButton = document.getElementById('infoButton');                        
+
+        // Check if display is wide enough for side-by-side layout
+        function checkDisplayLayout() {
+            if (window.innerWidth < 768) {
+                historyContainer.classList.add('hidden');
+                showHistoryButton.classList.remove('hidden');
+            } else {
+                historyContainer.classList.remove('hidden');
+                showHistoryButton.classList.add('hidden');
+                historyOverlay.classList.add('hidden');
+            }
+        }
+
+        // Initialize the game
+        function initializeGame() {
+            // Clear the game board
+            gameBoard.innerHTML = '';
+            
+            // Reset game state
+            gameState = {
+                board: Array(ROWS).fill().map(() => Array(COLS).fill(null)),
+                currentPlayer: PLAYER_A,
+                selectedPiece: null,
+                validMoves: [],
+                gameOver: false,
+                winningPath: [],
+                moveHistory: [],
+                displayedMoveIndex: -1
+            };
+            
+            // Create cells without fixed dimensions
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('cell');
+                    
+                    // Add checkerboard pattern
+                    if ((row + col) % 2 === 0) {
+                        cell.classList.add('white');
+                    } else {
+                        cell.classList.add('buff');
+                    }
+                    
+                    cell.dataset.row = row;
+                    cell.dataset.col = col;
+                    cell.addEventListener('click', handleCellClick);
+                    gameBoard.appendChild(cell);
+                    
+                    // Add initial pieces (reversed from original)
+                    if (row >= ROWS - 2) {
+                        // Player A pieces in bottom two rows (6 and 7)
+                        gameState.board[row][col] = { player: PLAYER_A, swapped: false };
+                    } else if (row < 2) {
+                        // Player B pieces in top two rows (0 and 1)
+                        gameState.board[row][col] = { player: PLAYER_B, swapped: false };
+                    }
+                }
+            }
+            
+            // Render the board
+            renderBoard();
+            updateHistoryTable();
+            checkDisplayLayout();
+        }
+
+        // Render the game board based on the current state
+        function renderBoard() {
+            const cells = document.querySelectorAll('.cell');
+            
+            cells.forEach(cell => {
+                // Clear the cell
+                cell.innerHTML = '';
+                cell.classList.remove('highlight', 'winning-path');
+                
+                const row = parseInt(cell.dataset.row);
+                const col = parseInt(cell.dataset.col);
+                
+                // Check if this cell is in the winning path
+                if (gameState.winningPath.some(pos => pos.row === row && pos.col === col)) {
+                    cell.classList.add('winning-path');
+                }
+                
+                // Check if this is a valid move
+                if (gameState.validMoves.some(move => move.row === row && move.col === col)) {
+                    cell.classList.add('highlight');
+                }
+                
+                // Draw the piece if there is one
+                const piece = gameState.board[row][col];
+                if (piece) {
+                    const pieceElement = document.createElement('img');
+                    pieceElement.classList.add('piece');
+                    
+                    // Set piece image based on player and swapped status
+                    if (piece.player === PLAYER_A) {
+                        pieceElement.src = piece.swapped ? PIECE_IMAGES.A_SWAPPED : PIECE_IMAGES.A_NORMAL;
+                        pieceElement.alt = piece.swapped ? 'A Swapped' : 'A Normal';
+                    } else {
+                        pieceElement.src = piece.swapped ? PIECE_IMAGES.B_SWAPPED : PIECE_IMAGES.B_NORMAL;
+                        pieceElement.alt = piece.swapped ? 'B Swapped' : 'B Normal';
+                    }
+                    
+                    // Add selected state
+                    if (gameState.selectedPiece && 
+                        gameState.selectedPiece.row === row && 
+                        gameState.selectedPiece.col === col) {
+                        pieceElement.style.border = '2px solid green';
+                    }
+                    
+                    cell.appendChild(pieceElement);
+                }
+            });
+        }
+
+        // Handle cell clicks
+        function handleCellClick(event) {
+            if (gameState.gameOver || gameState.currentPlayer !== PLAYER_A || gameState.displayedMoveIndex >= 0) {
+                return;
+            }
+            
+            const cell = event.currentTarget;
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            
+            // If a piece is already selected
+            if (gameState.selectedPiece) {
+                // Check if this cell is a valid move
+                const validMove = gameState.validMoves.find(move => move.row === row && move.col === col);
+                
+                if (validMove) {
+                    // Execute the move
+                    executeMove(gameState.selectedPiece, { row, col });
+                    gameState.selectedPiece = null;
+                    gameState.validMoves = [];
+                    
+                    // Check if the game is over
+                    if (!checkWinCondition(PLAYER_A)) {
+                        // AI player's turn
+                        gameState.currentPlayer = PLAYER_B;
+                        renderBoard();
+                        
+                        // AI makes a move after a short delay
+                        setTimeout(() => {
+                            makeAIMove();
+                            checkWinCondition(PLAYER_B);
+                            gameState.currentPlayer = PLAYER_A;
+                            renderBoard();
+                        }, 500);
+                    }
+                } else if (gameState.board[row][col] && 
+                           gameState.board[row][col].player === PLAYER_A && 
+                           row === gameState.selectedPiece.row && 
+                           col === gameState.selectedPiece.col) {
+                    // Deselect the current piece
+                    gameState.selectedPiece = null;
+                    gameState.validMoves = [];
+                    renderBoard();
+                } else if (gameState.board[row][col] && 
+                           gameState.board[row][col].player === PLAYER_A) {
+                    // Select a different piece
+                    selectPiece(row, col);
+                }
+            } else if (gameState.board[row][col] && 
+                      gameState.board[row][col].player === PLAYER_A) {
+                // Select a new piece
+                selectPiece(row, col);
+            }
+        }
+
+        // Select a piece and show valid moves
+        function selectPiece(row, col) {
+            gameState.selectedPiece = { row, col };
+            gameState.validMoves = getValidMoves(row, col);
+            renderBoard();
+        }
+
+        // Get valid moves for a piece
+        function getValidMoves(row, col) {
+            const validMoves = [];
+            const piece = gameState.board[row][col];
+            const directions = [
+                { row: -1, col: -1 }, { row: -1, col: 0 }, { row: -1, col: 1 },
+                { row: 0, col: -1 },                        { row: 0, col: 1 },
+                { row: 1, col: -1 },  { row: 1, col: 0 },   { row: 1, col: 1 }
+            ];
+            
+            directions.forEach(dir => {
+                const newRow = row + dir.row;
+                const newCol = col + dir.col;
+                
+                // Check if the new position is within the board
+                if (newRow >= 0 && newRow < ROWS && newCol >= 0 && newCol < COLS) {
+                    const targetCell = gameState.board[newRow][newCol];
+                    
+                    // Empty cell - always a valid move
+                    if (!targetCell) {
+                        validMoves.push({ row: newRow, col: newCol });
+                    } 
+                    // Opponent's piece - can swap if it's not swapped
+                    else if (targetCell.player !== piece.player && !targetCell.swapped) {
+                        validMoves.push({ row: newRow, col: newCol });
+                    }
+                }
+            });
+            
+            return validMoves;
+        }
+
+        // Execute a move
+        function executeMove(from, to) {
+            const piece = gameState.board[from.row][from.col];
+            const targetCell = gameState.board[to.row][to.col];
+            
+            // Record move in history
+            gameState.moveHistory.push({
+                moveNumber: gameState.moveHistory.length + 1,
+                player: piece.player,
+                from: { row: from.row, col: from.col },
+                to: { row: to.row, col: to.col },
+                boardState: JSON.parse(JSON.stringify(gameState.board))
+            });
+            
+            if (targetCell) {
+                // Swap pieces
+                gameState.board[to.row][to.col] = piece;
+                gameState.board[from.row][from.col] = targetCell;
+                
+                // Mark both pieces as swapped
+                gameState.board[to.row][to.col].swapped = true;
+                gameState.board[from.row][from.col].swapped = true;
+            } else {
+                // Move to empty cell
+                gameState.board[to.row][to.col] = piece;
+                gameState.board[from.row][from.col] = null;
+                
+                // Unmark all swapped pieces
+                for (let row = 0; row < ROWS; row++) {
+                    for (let col = 0; col < COLS; col++) {
+                        if (gameState.board[row][col]) {
+                            gameState.board[row][col].swapped = false;
+                        }
+                    }
+                }
+            }
+            
+            updateHistoryTable();
+        }
+
+        // Check if a player has won
+        function checkWinCondition(player) {
+            // For player A, need to check for path from row 1 to row 6
+            // For player B, need to check for path from row 6 to row 1
+            const startRow = player === PLAYER_A ? 1 : 6;
+            const targetRow = player === PLAYER_A ? 6 : 1;
+            
+            // Find all pieces in the start row
+            const startPieces = [];
+            for (let col = 0; col < COLS; col++) {
+                if (gameState.board[startRow][col] && gameState.board[startRow][col].player === player) {
+                    startPieces.push({ row: startRow, col });
+                }
+            }
+            
+            // Check for path from each start piece
+            for (const startPiece of startPieces) {
+                const visited = Array(ROWS).fill().map(() => Array(COLS).fill(false));
+                const path = [];
+                
+                if (findPath(startPiece.row, startPiece.col, targetRow, player, visited, path)) {
+                    gameState.gameOver = true;
+                    gameState.winningPath = path;
+                    renderBoard();
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+
+        // Find a path from (row, col) to targetRow for player
+        function findPath(row, col, targetRow, player, visited, path) {
+            // Out of bounds or not player's piece or already visited
+            if (row < 0 || row >= ROWS || col < 0 || col >= COLS || 
+                !gameState.board[row][col] || 
+                gameState.board[row][col].player !== player || 
+                visited[row][col]) {
+                return false;
+            }
+            
+            // Mark as visited and add to path
+            visited[row][col] = true;
+            path.push({ row, col });
+            
+            // Check if we reached the target row
+            if (row === targetRow) {
+                return true;
+            }
+            
+            // Check all 8 directions
+            const directions = [
+                { row: -1, col: -1 }, { row: -1, col: 0 }, { row: -1, col: 1 },
+                { row: 0, col: -1 },                        { row: 0, col: 1 },
+                { row: 1, col: -1 },  { row: 1, col: 0 },   { row: 1, col: 1 }
+            ];
+            
+            for (const dir of directions) {
+                const newRow = row + dir.row;
+                const newCol = col + dir.col;
+                
+                if (findPath(newRow, newCol, targetRow, player, visited, path)) {
+                    return true;
+                }
+            }
+            
+            // Remove from path if no solution found
+            path.pop();
+            return false;
+        }
+
+        // AI move logic
+        function makeAIMove() {
+            // Evaluate all possible moves for player B
+            let bestScore = -Infinity;
+            let bestMove = null;
+            
+            // Find all player B pieces
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    if (gameState.board[row][col] && gameState.board[row][col].player === PLAYER_B) {
+                        const validMoves = getValidMoves(row, col);
+                        
+                        // Evaluate each move
+                        for (const move of validMoves) {
+                            // Clone the game state
+                            const tempBoard = JSON.parse(JSON.stringify(gameState.board));
+                            
+                            // Execute the move on the cloned board
+                            const piece = tempBoard[row][col];
+                            const targetCell = tempBoard[move.row][move.col];
+                            
+                            if (targetCell) {
+                                // Swap pieces
+                                tempBoard[move.row][move.col] = piece;
+                                tempBoard[row][col] = targetCell;
+                                tempBoard[move.row][move.col].swapped = true;
+                                tempBoard[row][col].swapped = true;
+                            } else {
+                                // Move to empty cell
+                                tempBoard[move.row][move.col] = piece;
+                                tempBoard[row][col] = null;
+                                
+                                // Unmark all swapped pieces
+                                for (let r = 0; r < ROWS; r++) {
+                                    for (let c = 0; c < COLS; c++) {
+                                        if (tempBoard[r][c]) {
+                                            tempBoard[r][c].swapped = false;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Score the move
+                            const score = evaluateBoard(tempBoard, PLAYER_B);
+                            
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestMove = { from: { row, col }, to: move };
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Execute the best move
+            if (bestMove) {
+                executeMove(bestMove.from, bestMove.to);
+            }
+        }
+
+        // Evaluate the board position for the given player
+        function evaluateBoard(board, player) {
+            let score = 0;
+            const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
+            
+            // 1. Prefer pieces that are advanced toward the goal
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    if (board[row][col] && board[row][col].player === player) {
+                        // For player B, prefer pieces closer to row 1
+                        if (player === PLAYER_B) {
+                            score += (ROWS - row) * 2;
+                        } 
+                        // For player A, prefer pieces closer to row 6
+                        else {
+                            score += row * 2;
+                        }
+                    }
+                }
+            }
+            
+            // 2. Prefer moves that occupy more rows (better connectivity)
+            const occupiedRows = new Set();
+            const occupiedCols = new Set();
+            
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    if (board[row][col] && board[row][col].player === player) {
+                        occupiedRows.add(row);
+                        occupiedCols.add(col);
+                    }
+                }
+            }
+            
+            score += occupiedRows.size * 10;
+            score += occupiedCols.size * 5;
+            
+            // 3. Check if we're close to creating a winning path
+            // Simplified version - just check if we have pieces in both row 1 and row 6
+            let hasRow1 = false;
+            let hasRow6 = false;
+            
+            for (let col = 0; col < COLS; col++) {
+                if (board[1][col] && board[1][col].player === player) hasRow1 = true;
+                if (board[6][col] && board[6][col].player === player) hasRow6 = true;
+            }
+            
+            if (hasRow1 && hasRow6) {
+                score += 50;
+            }
+            
+            // 4. Prefer blocking opponent's pieces
+            const opponentPieces = [];
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    if (board[row][col] && board[row][col].player === opponent) {
+                        opponentPieces.push({ row, col });
+                    }
+                }
+            }
+            
+            // Simplified blocking heuristic - prefer having pieces adjacent to opponent pieces
+            for (const piece of opponentPieces) {
+                const directions = [
+                    { row: -1, col: -1 }, { row: -1, col: 0 }, { row: -1, col: 1 },
+                    { row: 0, col: -1 },                        { row: 0, col: 1 },
+                    { row: 1, col: -1 },  { row: 1, col: 0 },   { row: 1, col: 1 }
+                ];
+                
+                for (const dir of directions) {
+                    const adjRow = piece.row + dir.row;
+                    const adjCol = piece.col + dir.col;
+                    
+                    if (adjRow >= 0 && adjRow < ROWS && adjCol >= 0 && adjCol < COLS &&
+                        board[adjRow][adjCol] && board[adjRow][adjCol].player === player) {
+                        score += 3;
+                    }
+                }
+            }
+            
+            return score;
+        }
+
+        // Update the history table
+        function updateHistoryTable() {
+            historyBody.innerHTML = '';
+            overlayHistoryBody.innerHTML = '';
+            
+            // Add moves in reverse order
+            const reversedHistory = [...gameState.moveHistory].reverse();
+            
+            reversedHistory.forEach((move, index) => {
+                const reversedIndex = gameState.moveHistory.length - 1 - index;
+                
+                // Create row for main history table
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${move.moveNumber}</td>
+                    <td>Player ${move.player}</td>
+                    <td>${String.fromCharCode(65 + move.from.col)}${move.from.row + 1}</td>
+                    <td>${String.fromCharCode(65 + move.to.col)}${move.to.row + 1}</td>
+                `;
+                
+                row.addEventListener('click', () => {
+                    // Show board state after this move
+                    displayHistoricalState(reversedIndex);
+                });
+                
+                if (reversedIndex === gameState.displayedMoveIndex) {
+                    row.classList.add('selected-history');
+                }
+                
+                historyBody.appendChild(row);
+                
+                // Create row for overlay history table
+                const overlayRow = row.cloneNode(true);
+                overlayRow.addEventListener('click', () => {
+                    displayHistoricalState(reversedIndex);
+                    historyOverlay.classList.add('hidden');
+                });
+                
+                if (reversedIndex === gameState.displayedMoveIndex) {
+                    overlayRow.classList.add('selected-history');
+                }
+                
+                overlayHistoryBody.appendChild(overlayRow);
+            });
+        }
+
+        // Display the board state after a specific move
+        function displayHistoricalState(moveIndex) {
+            if (moveIndex < 0 || moveIndex >= gameState.moveHistory.length) {
+                return;
+            }
+            
+            // Store the current move index
+            gameState.displayedMoveIndex = moveIndex;
+            
+            // Get the board state after this move
+            const move = gameState.moveHistory[moveIndex];
+            gameState.board = JSON.parse(JSON.stringify(move.boardState));
+            
+            // Clear winning path except for the final move
+            if (moveIndex < gameState.moveHistory.length - 1) {
+                gameState.winningPath = [];
+            }
+            
+            renderBoard();
+            updateHistoryTable();
+        }
+
+        // Reset the game to current state
+        function resetToCurrentState() {
+            gameState.displayedMoveIndex = -1;
+            initializeGame();
+        }
+
+        // Event listeners
+        resetButton.addEventListener('click', initializeGame);
+        showHistoryButton.addEventListener('click', () => {
+            historyOverlay.classList.remove('hidden');
+        });
+        closeHistoryButton.addEventListener('click', () => {
+            historyOverlay.classList.add('hidden');
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', checkDisplayLayout);
+
+        // Initialize the game
+        initializeGame();
+    </script>
+</body>
+</html>
