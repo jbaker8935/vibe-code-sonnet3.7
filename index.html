@@ -32,32 +32,31 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: center;
+            gap: 10px;
             width: 100%;
-            height: min(100vh, calc(190vw + 8vw));
+            height: auto;
             box-sizing: border-box;
             overflow: hidden;
+            padding: 10px;
         }
 
         .controls-container {
             display: flex;
-            flex-direction: column;
-            width: min(calc((100vh - 40px)/9 * 4), calc((100vw - 40px)));
-            height: 8%;
+            flex-direction: row;
+            width: 100%;
             justify-content: center;
             box-sizing: border-box;
-            align-items: flex-end;
+            padding: 10px;
         }
 
         .button-container {
             display: flex;
-            gap: 5px;
-            justify-content: flex-start;
-            align-items: bottom;
-            width: 100%;
-            height: 100%;
-            padding: 5px;
-            box-sizing: border-box;
+            flex-direction: row;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
+            width: auto;
         }
 
         .game-board {
@@ -130,27 +129,40 @@
         }
 
         button {
-            aspect-ratio: 1;
-            height: 80%;
-            padding: 0;
+            width: calc(min(12vw, 50px));
+            height: calc(min(12vw, 50px));
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             background-color: #4CAF50;
             flex-shrink: 0;
+            min-width: 32px;  /* Minimum size for buttons */
+            min-height: 32px;
         }
 
         button img {
             width: 100%;
             height: 100%;
+            min-width: 16px;  /* Minimum icon size */
+            min-height: 16px;
             object-fit: contain;
             filter: invert(1);
         } 
 
         #closeHistoryButton {
-            width: 24px;
-            height: 24px;
+            width: 32px;
+            height: 32px;
+            min-width: 32px;
+            min-height: 32px;
+
+        }
+
+        #closeHistoryButton img {
+            min-width: 16px;
+            min-height: 16px;
+            width: 100%;
+            height: 100%;
         }
 
         button:hover {
@@ -215,35 +227,93 @@
             display: none;
         }
 
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        @media (orientation: landscape) {
+            .board-container {
+                flex-direction: row;
+                height: calc(100vh - 40px);
+                gap: 10px;
+            }
+
+            .controls-container {
+                width: auto;
+                height: 100%;
+                flex-direction: column;
+                justify-content: flex-start;
+                margin-left: 10px;
+            }
+
+            .button-container {
+                flex-direction: column;
+            }
+
+            button {
+                width: calc(min(calc((100vh - 40px)/9 * 4), calc((100vw - 40px))) / 5);
+                height: auto;
+                aspect-ratio: 1;
+            }
+
+            .history-container {
+                display: block;
+                width: 200px;
+                margin-left: 10px;
+            }
+        }
+
+        .info-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 10;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .info-content {
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            max-width: 90%;
+            max-height: 80%;
+            overflow-y: auto;
+        }
+
+        .info-content h2 {
+            margin-top: 0;
+            margin-bottom: 15px;
+        }
+
+        .info-content h3 {
+            margin-top: 15px;
+            margin-bottom: 5px;
+        }
+
+        .info-content ul {
+            margin-top: 5px;
+            padding-left: 20px;
+        }
     </style>
 </head>
 <body>
     <div class="game-container">
         <div class="board-container">
+            <div class="game-board" id="gameBoard"></div>
             <div class="controls-container">
                 <div class="button-container">
                     <button id="resetButton"><img src="images/refresh-circle-outline.svg" alt="Reset"></button>
-                    <button id="backButton"><img src="images/arrow-back-circle-outline.svg" alt="Back"></button>
-                    <button id="forwardButton"><img src="images/arrow-forward-circle-outline.svg" alt="Forward"></button>
                     <button id="infoButton"><img src="images/information-circle-outline.svg" alt="Info"></button>
-                    <button id="showHistoryButton" class="hidden"><img src="images/list-circle-outline.svg" alt="History"></button>
+                    <button id="showHistoryButton"><img src="images/list-circle-outline.svg" alt="History"></button>
                 </div>
             </div>
-            <div class="game-board" id="gameBoard"></div>
-        </div>
-        
-        <div class="history-container" id="historyContainer">
-            <table class="history-table" id="historyTable">
-                <thead>
-                    <tr>
-                        <th>Move</th>
-                        <th>Player</th>
-                        <th>From</th>
-                        <th>To</th>
-                    </tr>
-                </thead>
-                <tbody id="historyBody"></tbody>
-            </table>
         </div>
     </div>
     
@@ -261,6 +331,31 @@
                 <tbody id="overlayHistoryBody"></tbody>
             </table>
             <button id="closeHistoryButton"><img src="images/close-circle-outline.svg" alt="Close"></button>
+        </div>
+    </div>
+
+    <div class="info-overlay hidden" id="infoOverlay">
+        <div class="info-content">
+            <h2>Game Summary</h2>
+            <h3>Board & Setup:</h3>
+            <ul>
+                <li>Played on an 8x4 grid.</li>
+                <li>Player A's pieces start at the bottom; Player B's at the top.</li>
+            </ul>
+            <h3>Objective:</h3>
+            <ul>
+                <li>Create a connected chain from your start to your opponent's start.</li>
+            </ul>
+            <h3>Moves:</h3>
+            <ul>
+                <li>Move: Slide a piece to an adjacent empty cell.</li>
+                <li>Swap: Exchange with an adjacent opponent's piece. A swapped piece cannot be swapped again until a normal move is taken by either player</li>
+            </ul>
+            <h3>Win Condition:</h3>
+            <ul>
+                <li>Win by forming a contiguous connection between your start and opponent's start.</li>
+            </ul>
+            <button id="closeInfoButton"><img src="images/close-circle-outline.svg" alt="Close"></button>
         </div>
     </div>
 
@@ -293,24 +388,49 @@
         // Initialize DOM elements
         const gameBoard = document.getElementById('gameBoard');
         const resetButton = document.getElementById('resetButton');
-        const historyContainer = document.getElementById('historyContainer');
-        const historyTable = document.getElementById('historyTable');
-        const historyBody = document.getElementById('historyBody');
         const historyOverlay = document.getElementById('historyOverlay');
         const overlayHistoryBody = document.getElementById('overlayHistoryBody');
         const showHistoryButton = document.getElementById('showHistoryButton');
         const closeHistoryButton = document.getElementById('closeHistoryButton');
-        const forwardButton = document.getElementById('forwardButton');
-        const backButton = document.getElementById('backButton');
         const infoButton = document.getElementById('infoButton');                        
+        const infoOverlay = document.getElementById('infoOverlay');
+        const closeInfoButton = document.getElementById('closeInfoButton');
+
+        // Immediately hide overlays
+        if (infoOverlay) infoOverlay.style.display = 'none';
+        if (historyOverlay) historyOverlay.style.display = 'none';
+
+        // Set up event listeners first
+        if (infoButton && infoOverlay && closeInfoButton) {
+            infoButton.addEventListener('click', () => {
+                infoOverlay.style.display = 'flex';
+            });
+            
+            closeInfoButton.addEventListener('click', () => {
+                infoOverlay.style.display = 'none';
+            });
+        }
+
+        // Set up other event listeners
+        if (showHistoryButton && historyOverlay) {
+            showHistoryButton.addEventListener('click', () => {
+                historyOverlay.style.display = 'flex';
+            });
+        }
+        
+        if (closeHistoryButton && historyOverlay) {
+            closeHistoryButton.addEventListener('click', () => {
+                historyOverlay.style.display = 'none';
+            });
+        }
+        resetButton.addEventListener('click', initializeGame);
+        window.addEventListener('resize', checkDisplayLayout);
 
         // Check if display is wide enough for side-by-side layout
         function checkDisplayLayout() {
             if (window.innerWidth < 768) {
-                historyContainer.classList.add('hidden');
                 showHistoryButton.classList.remove('hidden');
             } else {
-                historyContainer.classList.remove('hidden');
                 showHistoryButton.classList.add('hidden');
                 historyOverlay.classList.add('hidden');
             }
@@ -362,10 +482,17 @@
                 }
             }
             
+            // Disable history button at start
+            showHistoryButton.disabled = true;
+
             // Render the board
             renderBoard();
             updateHistoryTable();
             checkDisplayLayout();
+
+            // Make sure overlays are hidden when game starts
+            if (historyOverlay) historyOverlay.classList.add('hidden');
+            if (infoOverlay) infoOverlay.classList.add('hidden');
         }
 
         // Render the game board based on the current state
@@ -516,14 +643,15 @@
             const piece = gameState.board[from.row][from.col];
             const targetCell = gameState.board[to.row][to.col];
             
-            // Record move in history
-            gameState.moveHistory.push({
+            // Record move in history (without winning path)
+            const historyEntry = {
                 moveNumber: gameState.moveHistory.length + 1,
                 player: piece.player,
                 from: { row: from.row, col: from.col },
                 to: { row: to.row, col: to.col },
                 boardState: JSON.parse(JSON.stringify(gameState.board))
-            });
+            };
+            gameState.moveHistory.push(historyEntry);
             
             if (targetCell) {
                 // Swap pieces
@@ -574,6 +702,12 @@
                 if (findPath(startPiece.row, startPiece.col, targetRow, player, visited, path)) {
                     gameState.gameOver = true;
                     gameState.winningPath = path;
+                    // Add winning path to the last move in history
+                    if (gameState.moveHistory.length > 0) {
+                        gameState.moveHistory[gameState.moveHistory.length - 1].winningPath = [...path];
+                    }
+                    // Enable history button when game is won
+                    showHistoryButton.disabled = false;
                     renderBoard();
                     return true;
                 }
@@ -767,7 +901,6 @@
 
         // Update the history table
         function updateHistoryTable() {
-            historyBody.innerHTML = '';
             overlayHistoryBody.innerHTML = '';
             
             // Add moves in reverse order
@@ -776,7 +909,7 @@
             reversedHistory.forEach((move, index) => {
                 const reversedIndex = gameState.moveHistory.length - 1 - index;
                 
-                // Create row for main history table
+                // Create row for overlay history table
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>${move.moveNumber}</td>
@@ -785,29 +918,28 @@
                     <td>${String.fromCharCode(65 + move.to.col)}${move.to.row + 1}</td>
                 `;
                 
+                // Update click handler
                 row.addEventListener('click', () => {
-                    // Show board state after this move
-                    displayHistoricalState(reversedIndex);
+                    if (historyOverlay) {
+                        historyOverlay.style.display = 'none';
+                    }
+                    // Apply the historical state
+                    gameState.board = JSON.parse(JSON.stringify(move.boardState));
+                    gameState.displayedMoveIndex = reversedIndex;
+                    if (move.winningPath) {
+                        gameState.winningPath = [...move.winningPath];
+                    } else {
+                        gameState.winningPath = [];
+                    }
+                    renderBoard();
+                    updateHistoryTable();
                 });
                 
                 if (reversedIndex === gameState.displayedMoveIndex) {
                     row.classList.add('selected-history');
                 }
                 
-                historyBody.appendChild(row);
-                
-                // Create row for overlay history table
-                const overlayRow = row.cloneNode(true);
-                overlayRow.addEventListener('click', () => {
-                    displayHistoricalState(reversedIndex);
-                    historyOverlay.classList.add('hidden');
-                });
-                
-                if (reversedIndex === gameState.displayedMoveIndex) {
-                    overlayRow.classList.add('selected-history');
-                }
-                
-                overlayHistoryBody.appendChild(overlayRow);
+                overlayHistoryBody.appendChild(row);
             });
         }
 
@@ -820,12 +952,43 @@
             // Store the current move index
             gameState.displayedMoveIndex = moveIndex;
             
-            // Get the board state after this move
+            // Get the move
             const move = gameState.moveHistory[moveIndex];
-            gameState.board = JSON.parse(JSON.stringify(move.boardState));
             
-            // Clear winning path except for the final move
-            if (moveIndex < gameState.moveHistory.length - 1) {
+            // Clone the board state before this move
+            let newBoard = JSON.parse(JSON.stringify(move.boardState));
+            
+            // Apply the move to get the resulting state
+            const piece = newBoard[move.from.row][move.from.col];
+            const targetCell = newBoard[move.to.row][move.to.col];
+            
+            if (targetCell) {
+                // Swap pieces
+                newBoard[move.to.row][move.to.col] = piece;
+                newBoard[move.from.row][move.from.col] = targetCell;
+                newBoard[move.to.row][move.col].swapped = true;
+                newBoard[move.from.row][move.to.col].swapped = true;
+            } else {
+                // Move to empty cell
+                newBoard[move.to.row][move.to.col] = piece;
+                newBoard[move.from.row][move.from.col] = null;
+                
+                // Unmark all swapped pieces
+                for (let row = 0; row < ROWS; row++) {
+                    for (let col = 0; col < COLS; col++) {
+                        if (newBoard[row][col]) {
+                            newBoard[row][col].swapped = false;
+                        }
+                    }
+                }
+            }
+            
+            gameState.board = newBoard;
+            
+            // Show winning path if this was the winning move
+            if (moveIndex === gameState.moveHistory.length - 1 && move.winningPath && move.winningPath.length > 0) {
+                gameState.winningPath = move.winningPath;
+            } else {
                 gameState.winningPath = [];
             }
             
@@ -839,19 +1002,7 @@
             initializeGame();
         }
 
-        // Event listeners
-        resetButton.addEventListener('click', initializeGame);
-        showHistoryButton.addEventListener('click', () => {
-            historyOverlay.classList.remove('hidden');
-        });
-        closeHistoryButton.addEventListener('click', () => {
-            historyOverlay.classList.add('hidden');
-        });
-
-        // Handle window resize
-        window.addEventListener('resize', checkDisplayLayout);
-
-        // Initialize the game
+        // Initialize the game last
         initializeGame();
     </script>
 </body>
