@@ -786,11 +786,13 @@
                             }
                             
                             const score = evaluateBoard(tempBoard, PLAYER_B);
-                            // console.log(`Evaluating move from ${String.fromCharCode(65 + col)}${row + 1} to ${String.fromCharCode(65 + move.col)}${move.row + 1}: score=${score}`);
-                            
-                            if (score > bestScore) {
+                            // Prefer swap moves when scores are equal
+                            if (score > bestScore || (score === bestScore && targetCell && !bestMove?.to.targetCell)) {
                                 bestScore = score;
-                                bestMove = { from: { row, col }, to: move };
+                                bestMove = { 
+                                    from: { row, col }, 
+                                    to: { ...move, targetCell: !!targetCell } 
+                                };
                             }
                         }
                     }
@@ -799,7 +801,6 @@
             
             // Execute the best move
             if (bestMove) {
-                // console.log(`Selected best move: from ${String.fromCharCode(65 + bestMove.from.col)}${bestMove.from.row + 1} to ${String.fromCharCode(65 + bestMove.to.col)}${bestMove.to.row + 1} with score ${bestScore}`);
                 executeMove(bestMove.from, bestMove.to);
             }
         }
