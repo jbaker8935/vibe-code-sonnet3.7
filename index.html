@@ -889,7 +889,12 @@
                     gameState.selectedPiece = null;
                     gameState.validMoves = [];
                     
-                    // Check if the game is over
+                    // First check if opponent won due to player's move
+                    if (checkWinCondition(PLAYER_B)) {
+                        return; // Game is over, opponent won
+                    }
+                    
+                    // Then check if player won
                     if (!checkWinCondition(PLAYER_A)) {
                         // AI player's turn
                         gameState.currentPlayer = PLAYER_B;
@@ -1149,27 +1154,44 @@
                             const targetCell = tempBoard[move.row][move.col];
                             
                             if (targetCell) {
-                                // Swap pieces
                                 tempBoard[move.row][move.col] = piece;
                                 tempBoard[row][col] = targetCell;
                                 tempBoard[move.row][move.col].swapped = true;
                                 tempBoard[row][col].swapped = true;
                             } else {
-                                // Move to empty cell
                                 tempBoard[move.row][move.col] = piece;
                                 tempBoard[row][col] = null;
-                                // Unmark all swapped pieces
-                                for (let row = 0; row < ROWS; row++) {
-                                    for (let col = 0; col < COLS; col++) {
-                                        if (tempBoard[row][col]) {
-                                            tempBoard[row][col].swapped = false;
+                                for (let r = 0; r < ROWS; r++) {
+                                    for (let c = 0; c < COLS; c++) {
+                                        if (tempBoard[r][c]) {
+                                            tempBoard[r][c].swapped = false;
                                         }
                                     }
                                 }                                
                             }
                             
+                            // Check if this move would result in an immediate Player A win
+                            const startRow = 1;  // Player A starts from row 1
+                            const targetRow = 6; // Player A targets row 6
+                            let wouldCausePlayerAWin = false;
+                            
+                            // Look for Player A pieces in start row
+                            for (let c = 0; c < COLS; c++) {
+                                if (tempBoard[startRow][c]?.player === PLAYER_A) {
+                                    const visited = Array(ROWS).fill().map(() => Array(COLS).fill(false));
+                                    if (findPathForBoard(startRow, c, targetRow, PLAYER_A, visited, [], tempBoard)) {
+                                        wouldCausePlayerAWin = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            // Skip this move if it would result in Player A winning
+                            if (wouldCausePlayerAWin) {
+                                continue;
+                            }
+                            
                             const score = evaluateBoard(tempBoard, PLAYER_B);
-                            // Prefer swap moves when scores are equal
                             if (score > bestScore || (score === bestScore && targetCell && !bestMove?.to.targetCell)) {
                                 bestScore = score;
                                 bestMove = { 
@@ -1182,7 +1204,7 @@
                 }
             }
             
-            // Execute the best move
+            // Execute the best move if one was found
             if (bestMove) {
                 executeMove(bestMove.from, bestMove.to);
             }
