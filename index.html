@@ -564,19 +564,23 @@
             <ul>
                 <li>Played on an 8x4 grid.</li>
                 <li>Player A's pieces start at the bottom; Player B's at the top.</li>
+                <li>Human player is Player A and always goes first.  AI plays as Player B.</li>                
             </ul>
             <h3>Objective:</h3>
             <ul>
-                <li>Create a connected chain from your start to your opponent's start.</li>
+                <li>Create a connected path from your start to your opponent's start.</li>
             </ul>
             <h3>Moves:</h3>
             <ul>
-                <li>Move: Slide a piece to an adjacent empty cell.</li>
-                <li>Swap: Exchange with an adjacent opponent's piece. A swapped piece cannot be swapped again until a normal move is taken by either player</li>
+                <li>Pieces move one cell in all eight directions.</li>
+                <li>Move: Select and move a piece to an adjacent empty cell.</li>
+                <li>Swap: Select and exchange with an adjacent opponent's piece. A swapped piece, which is displayed with a crown,
+                    cannot be the target of a another swap until a normal move is taken by either player. 
+                    A swapped piece can swap with the opponent's normal pieces.  Use swapped pieces to limit the actions of the opponent to force a winning position.</li>
             </ul>
             <h3>Win Condition:</h3>
             <ul>
-                <li>Win by forming a contiguous connection between your start and opponent's start.</li>
+                <li>Win by forming a connection between Rows 2 and 7 on the game board.  The connection can have horizonal, diagonal and vertical steps.</li>
             </ul>
             <button id="closeInfoButton"><img src="images/close-circle-outline.svg" alt="Close"></button>
         </div>
