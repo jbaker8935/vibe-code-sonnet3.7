@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Path Building Game</title>
+    <title>Switcharoo</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -301,6 +301,46 @@
             margin-top: 5px;
             padding-left: 20px;
         }
+
+        .win-loss {
+            display: inline-block;
+            margin-left: 10px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        /* Add victory overlay styles */
+        .victory-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 20;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+
+        .victory-overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .victory-message {
+            background-color: white;
+            padding: 30px 50px;
+            border-radius: 10px;
+            font-size: 24px;
+            font-weight: bold;
+            text-align: center;
+            color: #4CAF50;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
     </style>
 </head>
 <body>
@@ -312,12 +352,17 @@
                     <button id="resetButton"><img src="images/refresh-circle-outline.svg" alt="Reset"></button>
                     <button id="infoButton"><img src="images/information-circle-outline.svg" alt="Info"></button>
                     <button id="showHistoryButton"><img src="images/list-circle-outline.svg" alt="History"></button>
+                    <span class="win-loss" id="winLossDisplay">W/L: 0/0</span>
                 </div>
             </div>
         </div>
     </div>
     <a target="_blank" href="https://jam.pieter.com" style="font-family: 'system-ui', sans-serif; position: fixed; bottom: -1px; right: -1px; padding: 7px; font-size: 14px; font-weight: bold; background: #fff; color: #000; text-decoration: none; z-index: 10; border-top-left-radius: 12px; z-index: 10000; border: 1px solid #fff;">🕹️ Vibe Jam 2025</a>
     <a target="_blank" href="https://github.com/jbaker8935/vibe-code-sonnet3.7" style="font-family: 'system-ui', sans-serif; position: fixed; bottom: -1px; left: -1px; padding: 7px; font-size: 14px; font-weight: bold; background: #fff; color: #000; text-decoration: none; z-index: 10; border-top-left-radius: 12px; z-index: 10000; border: 1px solid #fff;">github</a>
+    <div class="victory-overlay" id="victoryOverlay">
+        <div class="victory-message" id="victoryMessage"></div>
+    </div>
+
     <div class="history-overlay hidden" id="historyOverlay">
         <div class="history-content">
             <table class="history-table" id="overlayHistoryTable">
@@ -375,7 +420,11 @@
             gameOver: false,
             winningPath: [],
             moveHistory: [],
-            displayedMoveIndex: -1
+            displayedMoveIndex: -1,
+            aiMoveCount: 0,  // Add this line to track AI moves
+            totalMoves: 0,  // Add this line
+            wins: 0,
+            losses: 0
         };
 
         // Piece images - In a real implementation, these would be actual image files
@@ -396,6 +445,8 @@
         const infoButton = document.getElementById('infoButton');                        
         const infoOverlay = document.getElementById('infoOverlay');
         const closeInfoButton = document.getElementById('closeInfoButton');
+        const victoryOverlay = document.getElementById('victoryOverlay');
+        const victoryMessage = document.getElementById('victoryMessage');
 
         // Immediately hide overlays
         if (infoOverlay) infoOverlay.style.display = 'none';
@@ -427,6 +478,84 @@
         resetButton.addEventListener('click', initializeGame);
         window.addEventListener('resize', checkDisplayLayout);
 
+        // Add new event listener for mouse wheel after other event listeners
+        const gameContainer = document.querySelector('.game-container');
+        gameContainer.addEventListener('wheel', (event) => {
+            if (gameState.gameOver) {
+                event.preventDefault();
+                
+                if (event.deltaY > 0) {
+                    // Scroll down - move forward in history
+                    const nextIndex = gameState.displayedMoveIndex < gameState.totalMoves - 1 ? 
+                        gameState.displayedMoveIndex + 1 : gameState.displayedMoveIndex;
+                    if (nextIndex !== gameState.displayedMoveIndex) {
+                        displayHistoricalState(nextIndex);
+                    }
+                } else {
+                    // Scroll up - move backward in history
+                    const prevIndex = gameState.displayedMoveIndex > -1 ? 
+                        gameState.displayedMoveIndex - 1 : -1;
+                    if (prevIndex === -1) {
+                        gameState.displayedMoveIndex = -1;
+                        gameState.board = JSON.parse(JSON.stringify(gameState.moveHistory[0].boardState));
+                        gameState.winningPath = [];
+                        renderBoard();
+                        updateHistoryTable();
+                    } else {
+                        displayHistoricalState(prevIndex);
+                    }
+                }
+            }
+        });
+
+        // Add touch event handling for mobile history scrolling
+        let touchStartY = 0;
+        let touchEndY = 0;
+
+        gameContainer.addEventListener('touchstart', (event) => {
+            if (gameState.gameOver) {
+                touchStartY = event.touches[0].clientY;
+            }
+        });
+
+        gameContainer.addEventListener('touchmove', (event) => {
+            if (gameState.gameOver) {
+                event.preventDefault();  // Prevent scrolling the page
+            }
+        }, { passive: false });
+
+        gameContainer.addEventListener('touchend', (event) => {
+            if (gameState.gameOver) {
+                touchEndY = event.changedTouches[0].clientY;
+                const swipeDistance = touchEndY - touchStartY;
+                
+                // Minimum swipe distance to trigger history navigation
+                if (Math.abs(swipeDistance) > 50) {
+                    if (swipeDistance > 0) {
+                        // Swipe down - move backward in history
+                        const prevIndex = gameState.displayedMoveIndex > -1 ? 
+                            gameState.displayedMoveIndex - 1 : -1;
+                        if (prevIndex === -1) {
+                            gameState.displayedMoveIndex = -1;
+                            gameState.board = JSON.parse(JSON.stringify(gameState.moveHistory[0].boardState));
+                            gameState.winningPath = [];;
+                            renderBoard();
+                            updateHistoryTable();
+                        } else {
+                            displayHistoricalState(prevIndex);
+                        }
+                    } else {
+                        // Swipe up - move forward in history
+                        const nextIndex = gameState.displayedMoveIndex < gameState.totalMoves - 1 ? 
+                            gameState.displayedMoveIndex + 1 : gameState.displayedMoveIndex;
+                        if (nextIndex !== gameState.displayedMoveIndex) {
+                            displayHistoricalState(nextIndex);
+                        }
+                    }
+                }
+            }
+        });
+
         // Check if display is wide enough for side-by-side layout
         // this code has been modified.  history button is always shown
         function checkDisplayLayout() {
@@ -449,7 +578,11 @@
                 gameOver: false,
                 winningPath: [],
                 moveHistory: [],
-                displayedMoveIndex: -1
+                displayedMoveIndex: -1,
+                aiMoveCount: 0,  // Add this line
+                totalMoves: 0,  // Add this line
+                wins: gameState.wins || 0,
+                losses: gameState.losses || 0
             };
             
             // Create cells without fixed dimensions
@@ -642,16 +775,6 @@
             const piece = gameState.board[from.row][from.col];
             const targetCell = gameState.board[to.row][to.col];
             
-            // Record move in history (without winning path)
-            const historyEntry = {
-                moveNumber: gameState.moveHistory.length + 1,
-                player: piece.player,
-                from: { row: from.row, col: from.col },
-                to: { row: to.row, col: to.col },
-                boardState: JSON.parse(JSON.stringify(gameState.board))
-            };
-            gameState.moveHistory.push(historyEntry);
-            
             if (targetCell) {
                 // Swap pieces
                 gameState.board[to.row][to.col] = piece;
@@ -674,6 +797,17 @@
                     }
                 }
             }
+
+            // Record move in history AFTER the move is completed
+            const historyEntry = {
+                moveNumber: gameState.moveHistory.length + 1,
+                player: piece.player,
+                from: { row: from.row, col: from.col },
+                to: { row: to.row, col: to.col },
+                boardState: JSON.parse(JSON.stringify(gameState.board))
+            };
+            gameState.moveHistory.push(historyEntry);
+            gameState.totalMoves = gameState.moveHistory.length;  // Add this line
             
             updateHistoryTable();
         }
@@ -705,7 +839,26 @@
                     if (gameState.moveHistory.length > 0) {
                         gameState.moveHistory[gameState.moveHistory.length - 1].winningPath = [...path];
                     }
-                    // Enable history button when game is won
+                    // Update win/loss counter
+                    if (player === PLAYER_A) {
+                        gameState.wins++;
+                    } else {
+                        gameState.losses++;
+                    }
+                    document.getElementById('winLossDisplay').textContent = `W/L: ${gameState.wins}/${gameState.losses}`;
+                    
+                    // Show victory message and restart animations
+                    victoryMessage.textContent = `Player ${player} Wins!`;
+                    victoryOverlay.classList.add('visible');
+                    
+                    // Hide after 5 seconds
+                    setTimeout(() => {
+                        if (victoryOverlay.classList.contains('visible')) {
+                            victoryOverlay.classList.remove('visible');
+                        }
+                    }, 5000);
+                    
+                    // Enable history button when game is won by either player
                     showHistoryButton.disabled = false;
                     renderBoard();
                     return true;
@@ -757,6 +910,36 @@
 
         // AI move logic
         function makeAIMove() {
+            // For first 4 moves, make random legal moves
+            if (gameState.aiMoveCount < 4) {
+                const possibleMoves = [];
+                
+                // Collect all possible moves
+                for (let row = 0; row < ROWS; row++) {
+                    for (let col = 0; col < COLS; col++) {
+                        if (gameState.board[row][col]?.player === PLAYER_B) {
+                            const validMoves = getValidMoves(row, col);
+                            validMoves.forEach(move => {
+                                possibleMoves.push({
+                                    from: { row, col },
+                                    to: move
+                                });
+                            });
+                        }
+                    }
+                }
+                
+                // Select random move
+                if (possibleMoves.length > 0) {
+                    const randomIndex = Math.floor(Math.random() * possibleMoves.length);
+                    const randomMove = possibleMoves[randomIndex];
+                    executeMove(randomMove.from, randomMove.to);
+                    gameState.aiMoveCount++;
+                    return;
+                }
+            }
+
+            // After 4 moves, use the original AI logic
             let bestScore = -Infinity;
             let bestMove = null;
             
@@ -885,17 +1068,138 @@
             return count;
         }
 
-        // Evaluate board position
+        // Count pieces per row for a player
+        function piecesPerRow(board, player) {
+            const counts = new Array(ROWS).fill(0);
+            for (let r = 0; r < ROWS; r++) {
+                counts[r] = board[r].filter(cell => cell?.player === player).length;
+            }
+            return counts;
+        }
+
+        // Helper function to find path for a specific board state
+        function findPathForBoard(row, col, targetRow, player, visited, path, board) {
+            // Out of bounds or not player's piece or already visited
+            if (row < 0 || row >= ROWS || col < 0 || col >= COLS || 
+                !board[row][col] || 
+                board[row][col].player !== player || 
+                visited[row][col]) {
+                return false;
+            }
+            
+            // Mark as visited and add to path
+            visited[row][col] = true;
+            path.push({ row, col });
+            
+            // Check if we reached the target row
+            if (row === targetRow) {
+                return true;
+            }
+            
+            // Check all 8 directions
+            const directions = [
+                { row: -1, col: -1 }, { row: -1, col: 0 }, { row: -1, col: 1 },
+                { row: 0, col: -1 },                        { row: 0, col: 1 },
+                { row: 1, col: -1 },  { row: 1, col: 0 },   { row: 1, col: 1 }
+            ];
+            
+            for (const dir of directions) {
+                const newRow = row + dir.row;
+                const newCol = col + dir.col;
+                
+                if (findPathForBoard(newRow, newCol, targetRow, player, visited, path, board)) {
+                    return true;
+                }
+            }
+            
+            // Remove from path if no solution found
+            path.pop();
+            return false;
+        }
+
+        // Update evaluateBoard to use findPathForBoard
         function evaluateBoard(board, player) {
             const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
+            
+            // Check all possible opponent moves for a win
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    if (board[row][col]?.player === opponent) {
+                        const tempValidMoves = getValidMovesForBoard(row, col, board);
+                        
+                        for (const move of tempValidMoves) {
+                            const tempBoard = JSON.parse(JSON.stringify(board));
+                            const piece = tempBoard[row][col];
+                            const targetCell = tempBoard[move.row][move.col];
+                            
+                            if (targetCell) {
+                                tempBoard[move.row][move.col] = piece;
+                                tempBoard[row][col] = targetCell;
+                            } else {
+                                tempBoard[move.row][move.col] = piece;
+                                tempBoard[row][col] = null;
+                            }
+                            
+                            const opponentStartRow = opponent === PLAYER_A ? 1 : 6;
+                            const opponentTargetRow = opponent === PLAYER_A ? 6 : 1;
+                            
+                            for (let c = 0; c < COLS; c++) {
+                                if (tempBoard[opponentStartRow][c]?.player === opponent) {
+                                    const visited = Array(ROWS).fill().map(() => Array(COLS).fill(false));
+                                    if (findPathForBoard(opponentStartRow, c, opponentTargetRow, opponent, visited, [], tempBoard)) {
+                                        return -1000;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             
             const connScore = connectivityScore(board, player);
             const oppConnScore = connectivityScore(board, opponent);
             
             const rowScore = rowsOccupied(board, player);
             const oppRowScore = rowsOccupied(board, opponent);
-            return (connScore - oppConnScore) * 0.5 + (rowScore - oppRowScore) * 0.1;
-            // return (connScore ) * 0.2 + (rowScore ) * 0.1;
+
+            // Calculate row concentration penalties
+            const rowCounts = piecesPerRow(board, player);
+            let concentrationPenalty = 0;
+            for (const count of rowCounts) {
+                if (count === 3) concentrationPenalty += 0.2;  // Small penalty for 3 pieces
+                if (count === 4) concentrationPenalty += 1.0;  // Large penalty for 4 pieces
+            }
+
+            return (connScore - oppConnScore) * 0.5 + (rowScore - oppRowScore) * 0.1 - concentrationPenalty;
+        }
+
+        // Helper function to get valid moves for a specific board state
+        function getValidMovesForBoard(row, col, board) {
+            const validMoves = [];
+            const piece = board[row][col];
+            const directions = [
+                { row: -1, col: -1 }, { row: -1, col: 0 }, { row: -1, col: 1 },
+                { row: 0, col: -1 },                        { row: 0, col: 1 },
+                { row: 1, col: -1 },  { row: 1, col: 0 },  { row: 1, col: 1 }
+            ];
+            
+            directions.forEach(dir => {
+                const newRow = row + dir.row;
+                const newCol = col + dir.col;
+                
+                if (newRow >= 0 && newRow < ROWS && newCol >= 0 && newCol < COLS) {
+                    const targetCell = board[newRow][newCol];
+                    
+                    if (!targetCell) {
+                        validMoves.push({ row: newRow, col: newCol });
+                    } 
+                    else if (targetCell.player !== piece.player && !targetCell.swapped) {
+                        validMoves.push({ row: newRow, col: newCol });
+                    }
+                }
+            });
+            
+            return validMoves;
         }
 
         // Update the history table
@@ -922,14 +1226,16 @@
                     if (historyOverlay) {
                         historyOverlay.style.display = 'none';
                     }
-                    // Apply the historical state
+                    
                     gameState.board = JSON.parse(JSON.stringify(move.boardState));
                     gameState.displayedMoveIndex = reversedIndex;
+                    
                     if (move.winningPath) {
                         gameState.winningPath = [...move.winningPath];
                     } else {
                         gameState.winningPath = [];
                     }
+                    
                     renderBoard();
                     updateHistoryTable();
                 });
@@ -951,42 +1257,13 @@
             // Store the current move index
             gameState.displayedMoveIndex = moveIndex;
             
-            // Get the move
+            // Get the move and its board state
             const move = gameState.moveHistory[moveIndex];
+            gameState.board = JSON.parse(JSON.stringify(move.boardState));
             
-            // Clone the board state before this move
-            let newBoard = JSON.parse(JSON.stringify(move.boardState));
-            
-            // Apply the move to get the resulting state
-            const piece = newBoard[move.from.row][move.from.col];
-            const targetCell = newBoard[move.to.row][move.to.col];
-            
-            if (targetCell) {
-                // Swap pieces
-                newBoard[move.to.row][move.to.col] = piece;
-                newBoard[move.from.row][move.from.col] = targetCell;
-                newBoard[move.to.row][move.col].swapped = true;
-                newBoard[move.from.row][move.to.col].swapped = true;
-            } else {
-                // Move to empty cell
-                newBoard[move.to.row][move.to.col] = piece;
-                newBoard[move.from.row][move.from.col] = null;
-                
-                // Unmark all swapped pieces
-                for (let row = 0; row < ROWS; row++) {
-                    for (let col = 0; col < COLS; col++) {
-                        if (newBoard[row][col]) {
-                            newBoard[row][col].swapped = false;
-                        }
-                    }
-                }
-            }
-            
-            gameState.board = newBoard;
-            
-            // Show winning path if this was the winning move
-            if (moveIndex === gameState.moveHistory.length - 1 && move.winningPath && move.winningPath.length > 0) {
-                gameState.winningPath = move.winningPath;
+            // Set winning path if this was the winning move
+            if (moveIndex === gameState.moveHistory.length - 1 && move.winningPath) {
+                gameState.winningPath = [...move.winningPath];
             } else {
                 gameState.winningPath = [];
             }
@@ -1000,6 +1277,11 @@
             gameState.displayedMoveIndex = -1;
             initializeGame();
         }
+
+        // Add click handler for victory overlay
+        victoryOverlay.addEventListener('click', () => {
+            victoryOverlay.classList.remove('visible');
+        });
 
         // Initialize the game last
         initializeGame();
