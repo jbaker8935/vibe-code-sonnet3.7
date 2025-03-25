@@ -1154,6 +1154,14 @@
                                 // Move to empty cell
                                 tempBoard[move.row][move.col] = piece;
                                 tempBoard[row][col] = null;
+                                // Unmark all swapped pieces
+                                for (let row = 0; row < ROWS; row++) {
+                                    for (let col = 0; col < COLS; col++) {
+                                        if (tempBoard[row][col]) {
+                                            tempBoard[row][col].swapped = false;
+                                        }
+                                    }
+                                }                                
                             }
                             
                             const score = evaluateBoard(tempBoard, PLAYER_B);
@@ -1305,10 +1313,28 @@
             return false;
         }
 
+        // Convert board state to string representation
+        function boardToString(board) {
+            let result = '';
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    const cell = board[row][col];
+                    if (!cell) {
+                        result += '.';
+                    } else {
+                        const symbol = cell.player === PLAYER_A ? 'A' : 'B';
+                        result += cell.swapped ? symbol.toLowerCase() : symbol;
+                    }
+                }
+                result += '\n';
+            }
+            return result.trim();
+        }
+
         // Update evaluateBoard to use findPathForBoard
         function evaluateBoard(board, player) {
             const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
-            
+
             // Check all possible opponent moves for a win
             for (let row = 0; row < ROWS; row++) {
                 for (let col = 0; col < COLS; col++) {
@@ -1323,18 +1349,30 @@
                             if (targetCell) {
                                 tempBoard[move.row][move.col] = piece;
                                 tempBoard[row][col] = targetCell;
+                                tempBoard[move.row][move.col].swapped = true;
+                                tempBoard[row][col].swapped = true;                                
                             } else {
                                 tempBoard[move.row][move.col] = piece;
                                 tempBoard[row][col] = null;
+                                for (let row = 0; row < ROWS; row++) {
+                                    for (let col = 0; col < COLS; col++) {
+                                        if (tempBoard[row][col]) {
+                                            tempBoard[row][col].swapped = false;
+                                        }
+                                    }
+                                }                                   
                             }
                             
                             const opponentStartRow = opponent === PLAYER_A ? 1 : 6;
                             const opponentTargetRow = opponent === PLAYER_A ? 6 : 1;
-                            
+                            console.log(boardToString(board))
+                            console.log("Opponent Move: " + row + ',' + col + '->' + move.row + ',' + move.col)
+                            console.log(boardToString(tempBoard))
                             for (let c = 0; c < COLS; c++) {
                                 if (tempBoard[opponentStartRow][c]?.player === opponent) {
                                     const visited = Array(ROWS).fill().map(() => Array(COLS).fill(false));
                                     if (findPathForBoard(opponentStartRow, c, opponentTargetRow, opponent, visited, [], tempBoard)) {
+                                        console.log("Win Found")
                                         return -1000;
                                     }
                                 }
@@ -1377,11 +1415,13 @@
                 swappedPiecesPenalty = 0.2; // Small penalty when evaluating moves to empty cells
             }
 
-            return (connScore - oppConnScore) * 0.5 + 
+            score = (connScore - oppConnScore) * 0.5 + 
                    (rowScore - oppRowScore) * 0.1 - 
                    concentrationPenalty - 
                    backRowPenalty - 
                    swappedPiecesPenalty;
+            console.log("Score: " + score)
+            return score;
         }
 
         // Helper function to get valid moves for a specific board state
