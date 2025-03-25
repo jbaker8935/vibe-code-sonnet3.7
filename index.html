@@ -1529,6 +1529,22 @@
             victoryOverlay.classList.remove('visible');
         });
 
+        // Add click/touch handler for history overlay
+        historyOverlay.addEventListener('click', (event) => {
+            // Check if click was on the overlay background (not the content)
+            if (event.target === historyOverlay) {
+                historyOverlay.style.display = 'none';
+            }
+        });
+        
+        // Add touch handler for mobile devices
+        historyOverlay.addEventListener('touchstart', (event) => {
+            // Check if touch was on the overlay background (not the content)
+            if (event.target === historyOverlay) {
+                historyOverlay.style.display = 'none';
+            }
+        });
+
         // Initialize the game last
         initializeGame();
     </script>
