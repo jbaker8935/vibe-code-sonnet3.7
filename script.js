@@ -35,7 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let touchStartY = 0;
     const transpositionTable = new Map();
 
-    var DEBUG = true; // Set to false to disable
+    var DEBUG = false; // Set to false to disable
     var old_console_log = console.log;
     console.log = function() {
         if (DEBUG) {
@@ -474,19 +474,11 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log("AI (Player B) is thinking...");
 
         let spinnerTimeout;
-        let spinnerMinTimeout;
-        let spinnerShown = false;
+        let spinnerMinDisplay = 1000; // Minimum display time for spinner in ms
 
-        // Show spinner after 3 seconds if AI is still thinking
+        // Show spinner after delay if AI is still thinking
         spinnerTimeout = setTimeout(() => {
-            if (AI_DIFFICULTY === 'hard') {
-                showOverlay(aiSpinnerOverlay);
-                spinnerShown = true;
-                // Start minimum display timer when spinner is shown
-                spinnerMinTimeout = setTimeout(() => {
-                    spinnerMinTimeout = null;
-                }, 1000);
-            }
+            showOverlay(aiSpinnerOverlay);
         }, 3000);
 
         // Use Promise to handle AI move computation
@@ -496,37 +488,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 resolve(bestMove);
             }, 100);
         }).then(bestMove => {
-            if (bestMove) {
-                console.log("AI chooses move:", bestMove);
-                selectPiece(bestMove.start.row, bestMove.start.col);
-                if (legalMoves.some(m => m.row === bestMove.end.row && m.col === bestMove.end.col)) {
-                    makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col);
-                } else {
-                    console.error("AI Logic Error: Chosen move is not legal according to recalculation?");
-                    deselectPiece();
-                }
-            } else {
-                console.log("AI has no legal moves!");
-            }
-            
-            // Clear the spinner timeout if it hasn't triggered yet
-            if (spinnerTimeout) {
-                clearTimeout(spinnerTimeout);
-            }
+            // Clear pending spinner timeout if AI finished quickly
+            clearTimeout(spinnerTimeout);
 
-            // If spinner was shown, wait for minimum display time before hiding
-            if (spinnerShown) {
-                const hideSpinner = () => {
+            // If spinner is visible, ensure minimum display time
+            if (aiSpinnerOverlay.classList.contains('active')) {
+                setTimeout(() => {
                     hideOverlay(aiSpinnerOverlay);
-                };
+                    executeMove();
+                }, spinnerMinDisplay);
+            } else {
+                executeMove();
+            }
 
-                if (spinnerMinTimeout) {
-                    // If min display timer is still running, wait for it
-                    clearTimeout(spinnerMinTimeout);
-                    setTimeout(hideSpinner, 1000);
+            function executeMove() {
+                if (bestMove) {
+                    console.log("AI chooses move:", bestMove);
+                    selectPiece(bestMove.start.row, bestMove.start.col);
+                    if (legalMoves.some(m => m.row === bestMove.end.row && m.col === bestMove.end.col)) {
+                        makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col);
+                    } else {
+                        console.error("AI Logic Error: Chosen move is not legal according to recalculation?");
+                        deselectPiece();
+                    }
                 } else {
-                    // Min display time has already elapsed
-                    hideSpinner();
+                    console.log("AI has no legal moves!");
                 }
             }
         });
@@ -659,7 +645,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // (allowsOpponentWin simulation logic remains the same, but calls updated checkWinConditionForState)
-    function allowsOpponentWin(boardState, opponentPlayer, depth = 5, alpha = -Infinity, beta = Infinity) {
+    function allowsOpponentWin(boardState, opponentPlayer, depth = 7, alpha = -Infinity, beta = Infinity) {
         // console.log("Depth " + depth)
         if (depth <= 0) return false;
 
@@ -1220,15 +1206,13 @@ document.addEventListener('DOMContentLoaded', () => {
         ).join('|');
     }
 
-    // Add this new function near the other utility functions
     function serializeBoardState(boardState) {
-        return JSON.stringify(boardState, (key, value) => {
-            if (value === null) return '_';
-            if (typeof value === 'object' && 'player' in value && 'state' in value) {
-                return `${value.player}${value.state[0]}`; // Store as "AN" or "BS" format
-            }
-            return value;
-        });
+        return boardState.map(row => 
+            row.map(cell => {
+                if (!cell) return '_';
+                return `${cell.player}${cell.state === 'normal' ? 'N' : 'S'}`;
+            }).join('')
+        ).join('|');
     }
 
 });
