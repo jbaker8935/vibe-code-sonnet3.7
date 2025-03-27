@@ -364,8 +364,8 @@ document.addEventListener('DOMContentLoaded', () => {
              switchPlayer();
              renderBoard(); // Render board after move, before AI starts thinking
              if (currentPlayer === PLAYER_B && !gameOver) {
-                 // Trigger AI move after a short delay for UX
-                 setTimeout(triggerAIMove, 500);
+                 // Trigger AI move immediately
+                 triggerAIMove();
              }
         }
     }
@@ -473,48 +473,115 @@ document.addEventListener('DOMContentLoaded', () => {
         if (gameOver) return;
         console.log("AI (Player B) is thinking...");
 
-        let spinnerTimeout;
-        let spinnerMinDisplay = 1000; // Minimum display time for spinner in ms
+        const spinnerDelay = 1500; // Time before showing spinner
+        const spinnerMinDisplay = 1000; // Minimum time spinner is shown
+        let spinnerShowTimeout;
+        let spinnerIsVisible = false;
+        const startTime = performance.now();
 
-        // Show spinner after delay if AI is still thinking
-        spinnerTimeout = setTimeout(() => {
+        // Schedule spinner to show after the delay
+        spinnerShowTimeout = setTimeout(() => {
             showOverlay(aiSpinnerOverlay);
-        }, 1500);
+            spinnerIsVisible = true;
+            console.log("Showing AI spinner...");
+        }, spinnerDelay);
 
-        // Use Promise to handle AI move computation
-        new Promise((resolve) => {
+        // Use a Promise to simulate the async nature of findBestAIMove
+        // In a real scenario, findBestAIMove might be async or use a Worker
+        new Promise((resolve, reject) => { // Added reject for error handling
+            // Simulate AI thinking time (replace with actual call)
+            // Using setTimeout to ensure it's async and doesn't block the main thread
             setTimeout(() => {
-                const bestMove = findBestAIMove();
-                resolve(bestMove);
-            }, 100);
+                 try { // Added try...catch for errors within findBestAIMove
+                     const bestMove = findBestAIMove();
+                     resolve(bestMove);
+                 } catch (err) {
+                     reject(err); // Reject promise if findBestAIMove throws error
+                 }
+            }, 10); // Small delay to yield thread, actual calculation happens in findBestAIMove
         }).then(bestMove => {
-            // Clear pending spinner timeout if AI finished quickly
-            clearTimeout(spinnerTimeout);
+            const endTime = performance.now();
+            const duration = endTime - startTime;
+            console.log(`AI finished in ${duration.toFixed(0)}ms.`);
 
-            // If spinner is visible, ensure minimum display time
-            if (aiSpinnerOverlay.classList.contains('active')) {
-                setTimeout(() => {
-                    hideOverlay(aiSpinnerOverlay);
-                    executeMove();
-                }, spinnerMinDisplay);
-            } else {
-                executeMove();
-            }
+            // Clear the timeout that would show the spinner (it might not have run yet)
+            clearTimeout(spinnerShowTimeout);
 
-            function executeMove() {
+            const executeMoveAction = () => {
                 if (bestMove) {
                     console.log("AI chooses move:", bestMove);
+                    // Ensure piece selection happens before makeMove
                     selectPiece(bestMove.start.row, bestMove.start.col);
-                    if (legalMoves.some(m => m.row === bestMove.end.row && m.col === bestMove.end.col)) {
+                    // Double-check legality right before making the move
+                    // Need to recalculate legal moves after selecting the piece
+                    const currentLegalMoves = calculateLegalMoves(bestMove.start.row, bestMove.start.col);
+                    if (currentLegalMoves.some(m => m.row === bestMove.end.row && m.col === bestMove.end.col)) {
                         makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col);
                     } else {
-                        console.error("AI Logic Error: Chosen move is not legal according to recalculation?");
-                        deselectPiece();
+                        console.error("AI Logic Error: Chosen move is not legal after re-selection?", bestMove, currentLegalMoves);
+                        deselectPiece(); // Clean up selection
+                        renderBoard(); // Re-render board state
+                        // Potentially switch back to player A or handle error state
+                        console.warn("AI failed to make a legal move. Switching back to Player A.");
+                        switchPlayer(); // Switch back if AI failed
                     }
                 } else {
-                    console.log("AI has no legal moves!");
+                    console.warn("AI has no legal moves!");
+                    // If AI has no moves, it's likely a stalemate or an issue.
+                    // For now, just log it and give turn back. Consider adding stalemate detection.
+                    switchPlayer(); // Give turn back to Player A
                 }
+            };
+
+            // Decide whether to show/hide spinner based on actual duration
+            const timeSpinnerShouldHaveStarted = startTime + spinnerDelay;
+
+            if (duration >= spinnerDelay) {
+                // AI took longer than the delay. Spinner should be shown or was shown.
+                console.log(`AI took ${duration.toFixed(0)}ms (>= ${spinnerDelay}ms delay). Spinner should show.`);
+
+                // Show the spinner now if it wasn't shown already (i.e., AI finished before initial timeout fired)
+                if (!spinnerIsVisible) { // Check the flag, not the classList yet
+                    showOverlay(aiSpinnerOverlay);
+                    spinnerIsVisible = true; // Mark as visible now
+                    console.log("Showing AI spinner retroactively...");
+                    // Since it's shown now, it needs to stay for the full min display time
+                    setTimeout(() => {
+                        hideOverlay(aiSpinnerOverlay);
+                        console.log("Hiding AI spinner after minimum display time (retroactive).");
+                        executeMoveAction();
+                    }, spinnerMinDisplay);
+                } else {
+                    // Spinner was already shown by the initial timeout because duration > spinnerDelay and timeout fired
+                    const alreadyShownDuration = endTime - timeSpinnerShouldHaveStarted;
+                    const remainingSpinnerTime = Math.max(0, spinnerMinDisplay - alreadyShownDuration);
+                    console.log(`Spinner already shown for ${alreadyShownDuration.toFixed(0)}ms. Remaining display time: ${remainingSpinnerTime.toFixed(0)}ms`);
+
+                    // Ensure spinner stays for the required remaining time
+                    setTimeout(() => {
+                        hideOverlay(aiSpinnerOverlay);
+                        console.log("Hiding AI spinner after minimum display time (proactive).");
+                        executeMoveAction();
+                    }, remainingSpinnerTime);
+                }
+
+            } else {
+                // AI finished before the delay, spinner timeout was cleared, spinner never shown.
+                console.log(`AI finished in ${duration.toFixed(0)}ms (< ${spinnerDelay}ms delay). Executing move immediately.`);
+                // Ensure spinner is hidden just in case (shouldn't be needed as timeout was cleared)
+                hideOverlay(aiSpinnerOverlay);
+                executeMoveAction();
             }
+        }).catch(error => {
+             console.error("Error during AI move calculation:", error);
+             // Handle error: maybe hide spinner, switch player, show error message?
+             clearTimeout(spinnerShowTimeout); // Ensure spinner timeout is cleared
+             if (spinnerIsVisible) { // Use the flag, not classList, as it might not be added yet
+                 hideOverlay(aiSpinnerOverlay);
+             }
+             // Optionally switch back to player A
+             console.warn("Error in AI turn. Switching back to Player A.");
+             switchPlayer();
         });
     }
 
