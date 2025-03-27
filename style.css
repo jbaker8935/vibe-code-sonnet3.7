@@ -20,19 +20,20 @@ body {
     display: flex;
     flex-direction: column; /* Default: mobile portrait */
     align-items: center;
-    gap: 20px;
+    gap: 10px; /* Reduced from 20px */
     width: 100%;
     max-width: 900px; /* Limit max width on desktop */
+    padding: 10px;
 }
 
 #game-board {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     /* Make board size relative to viewport width/height */
-    width: min(90vw, 50vh); /* Adjust as needed */
-    height: min(180vw, 100vh); /* Double width for 8 rows */
-    max-width: 300px; /* Limit max board width */
-    max-height: 600px; /* Limit max board height */
+    width: min(85vw, 45vh); /* Reduced from 90vw, 50vh */
+    height: min(170vw, 90vh); /* Reduced from 180vw, 100vh */
+    max-width: 280px; /* Reduced from 300px */
+    max-height: 560px; /* Reduced from 600px */
     border: 2px solid #333;
     aspect-ratio: 4 / 8; /* 4 columns / 8 rows */
     box-sizing: content-box; /* Changed from border-box to content-box */
@@ -98,22 +99,22 @@ body {
     display: flex;
     flex-direction: row; /* Default: mobile portrait */
     justify-content: center;
-    gap: 15px;
-    padding: 10px;
+    gap: 10px; /* Reduced from 15px */
+    padding: 8px; /* Reduced from 10px */
     background-color: #d0d0d0;
     border-radius: 8px;
-    width: 90%;
-    max-width: 300px; /* Match board width roughly */
+    width: 85%; /* Reduced from 90% */
+    max-width: 280px; /* Match board width roughly */
     align-items: center; /* Added to align items vertically */
 }
 
 #controls button {
-    width: 40px; /* Fixed width */
-    height: 40px; /* Fixed height to maintain 1:1 ratio */
+    width: 36px; /* Reduced from 40px */
+    height: 36px; /* Reduced from 40px to maintain 1:1 ratio */
     background: #f8f8f8;
     border: 1px solid #ccc;
     border-radius: 50%;
-    padding: 8px;
+    padding: 6px; /* Reduced from 8px */
     cursor: pointer;
     display: flex;
     justify-content: center;
@@ -131,8 +132,8 @@ body {
 }
 
 #controls button img {
-    width: 24px;
-    height: 24px;
+    width: 22px; /* Reduced from 24px */
+    height: 22px; /* Reduced from 24px */
     display: block;
 }
 
@@ -265,9 +266,9 @@ body {
     flex-direction: column;  
     gap: 5px;
     font-size: 0.9em;
-    min-width: 40px;
+    min-width: 36px; /* Reduced from 40px */
     justify-content: center;
-    height: 40px; /* Match button height */
+    height: 36px; /* Match new button height */
 }
 
 .score-item {
@@ -276,7 +277,7 @@ body {
     align-items: center;
     justify-content: center;
     line-height: 1.2; /* Adjusted for better vertical spacing */
-    height: 20px; /* Half of parent height for two items */
+    height: 18px; /* Half of new parent height */
 }
 
 .move-counter {
@@ -306,7 +307,29 @@ body {
     font-size: 14px;
 }
 
+/* Jam Link */
+.jam-link {
+    font-family: 'system-ui', sans-serif;
+    position: fixed;
+    bottom: -1px;
+    right: -1px;
+    padding: 7px;
+    font-size: 14px;
+    font-weight: bold;
+    background: #fff;
+    color: #000;
+    text-decoration: none;
+    border-top-left-radius: 12px;
+    z-index: 10000;
+    border: 1px solid #fff;
+}
 
+/* Adjust link position in portrait mode for phones */
+@media (max-width: 600px) {
+    .jam-link {
+        bottom: 0px; /* Adjust this value based on your controls height */
+    }
+}
 
 /* --- Responsiveness --- */
 
