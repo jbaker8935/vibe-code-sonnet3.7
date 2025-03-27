@@ -413,3 +413,23 @@ body {
         gap: 20px;
     }
 }
+
+/* Difficulty Options in Info Overlay */
+.difficulty-options {
+    margin-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.difficulty-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #555;
+}
+
+.difficulty-item img {
+    width: 20px;
+    height: 20px;
+}

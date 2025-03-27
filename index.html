@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Switcharoo</title>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <div class="game-container">
         <div id="game-board">
@@ -37,7 +39,7 @@
             </div>
         </div>
     </div>
-    
+
     <a target="_blank" href="https://jam.pieter.com" class="jam-link">🕹️ Vibe Jam 2025</a>
     <a target="_blank" href="https://github.com/jbaker8935/vibe-code-sonnet3.7" class="github-link">github</a>
 
@@ -55,11 +57,25 @@
                 <li>Starting Position: Pieces on rows 7 & 8 (A) and rows 1 & 2 (B).</li>
                 <li>Movement: Move one piece to any adjacent cell (8 directions).</li>
                 <li>Empty Cell Move: Move to an adjacent empty cell. This unmarks ALL swapped pieces.</li>
-                <li>Swap Move: Move to an adjacent cell occupied by an opponent's NORMAL piece. Both pieces swap positions and become SWAPPED (indicated by a crown).</li>
-                <li>Swapped Pieces: Cannot be the target of a swap, but can initiate a swap with a normal opponent piece.</li>
-                 <!-- Changed Win condition description -->
+                <li>Swap Move: Move to an adjacent cell occupied by an opponent's NORMAL piece. Both pieces swap
+                    positions and become SWAPPED (indicated by a crown).</li>
+                <li>Swapped Pieces: Cannot be the target of a swap, but can initiate a swap with a normal opponent
+                    piece.</li>
+                <!-- Changed Win condition description -->
                 <li>Win Condition: Create a connected path of your pieces linking row 2 and row 7 (inclusive).</li>
-                <li>Difficulty: <img class="rules-icon" src="images/happy-outline.svg" alt="AI Difficulty"> Easy <img class="rules-icon" src="images/skull-outline.svg" alt="AI Difficulty"> ??? </li>
+                <li>Difficulty:
+                </li>
+                    <div class="difficulty-options">
+                        <div class="difficulty-item">
+                            <img class="rules-icon" src="images/happy-outline.svg" alt="AI Difficulty"> Easy
+                        </div>
+                        <div class="difficulty-item">
+                            <img class="rules-icon" src="images/hardware-chip-outline.svg" alt="AI Difficulty"> Look-ahead 3
+                        </div>
+                        <div class="difficulty-item">
+                            <img class="rules-icon" src="images/skull-outline.svg" alt="AI Difficulty"> Look-ahead 5
+                        </div>
+                    </div>
             </ul>
         </div>
     </div>
@@ -94,4 +110,5 @@
 
     <script src="script.js"></script>
 </body>
+
 </html>

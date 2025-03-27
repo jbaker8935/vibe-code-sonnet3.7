@@ -5,7 +5,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const PLAYER_B = 'B'; // Black
     const NORMAL = 'normal';
     const SWAPPED = 'swapped';
-    let AI_DIFFICULTY = 'easy'; // Changed to let and default to 'easy'
+    let AI_DIFFICULTY = 'easy'; // easy, hard1, hard2
+    let AI_DEPTH = 5; // Will be set based on difficulty
 
     const boardElement = document.getElementById('game-board');
     const resetBtn = document.getElementById('reset-btn');
@@ -223,19 +224,34 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Add difficulty button handler
+    // Replace the difficultyBtn click handler with this new version
     difficultyBtn.addEventListener('click', () => {
-        AI_DIFFICULTY = AI_DIFFICULTY === 'easy' ? 'hard' : 'easy';
-        difficultyBtn.classList.toggle('hard', AI_DIFFICULTY === 'hard');
-        const img = difficultyBtn.querySelector('img');
-        if (AI_DIFFICULTY === 'hard') {
-            img.src = 'images/skull-outline.svg';
-            difficultyBtn.title = 'AI Difficulty: Hard';
-        } else {
-            img.src = 'images/happy-outline.svg';
-            difficultyBtn.title = 'AI Difficulty: Easy';
+        switch(AI_DIFFICULTY) {
+            case 'easy':
+                AI_DIFFICULTY = 'hard1';
+                AI_DEPTH = 3;
+                difficultyBtn.classList.add('hard');
+                const img = difficultyBtn.querySelector('img');
+                img.src = 'images/hardware-chip-outline.svg';
+                difficultyBtn.title = 'AI Difficulty: Hard Level 1';
+                break;
+            case 'hard1':
+                AI_DIFFICULTY = 'hard2';
+                AI_DEPTH = 5;
+                const img2 = difficultyBtn.querySelector('img');
+                img2.src = 'images/skull-outline.svg';
+                difficultyBtn.title = 'AI Difficulty: Hard Level 2';
+                break;
+            case 'hard2':
+                AI_DIFFICULTY = 'easy';
+                AI_DEPTH = 1;
+                difficultyBtn.classList.remove('hard');
+                const img3 = difficultyBtn.querySelector('img');
+                img3.src = 'images/happy-outline.svg';
+                difficultyBtn.title = 'AI Difficulty: Easy';
+                break;
         }
-        console.log(`AI Difficulty switched to: ${AI_DIFFICULTY}`);
+        console.log(`AI Difficulty switched to: ${AI_DIFFICULTY} (depth: ${AI_DEPTH})`);
     });
 
     overlayCloseButtons.forEach(button => {
@@ -642,6 +658,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // If no immediate win, proceed with normal evaluation
+        if (AI_DIFFICULTY === 'easy') {
+            // For easy mode, pick a random move from all possible moves
+            return possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
+        }
+
         let bestScore = -Infinity;
         let bestMoves = []; // Store moves with the best score
 
@@ -723,8 +744,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // (allowsOpponentWin simulation logic remains the same, but calls updated checkWinConditionForState)
-    function allowsOpponentWin(boardState, opponentPlayer, depth = 5, alpha = -Infinity, beta = Infinity) {
-        // console.log("Depth " + depth)
+    function allowsOpponentWin(boardState, opponentPlayer, depth = AI_DEPTH, alpha = -Infinity, beta = Infinity) {
         if (depth <= 0) return false;
 
         // Early exit - check immediate win
@@ -736,13 +756,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const boardKey = serializeBoardState(boardState);
         if (transpositionTable.has(boardKey)) {
             const cachedEntry = transpositionTable.get(boardKey);
-            // Only reuse if the cached result was computed at a depth
-            // greater than or equal to the current required depth.
             if (cachedEntry.depth >= depth) {
-                 // console.log(`TT Hit: Key ${boardKey.substring(0,10)} Depth ${depth} <= Cached ${cachedEntry.depth} -> ${cachedEntry.value}`);
-                 return cachedEntry.value;
+                return cachedEntry.value;
             }
-             // console.log(`TT Miss (Depth): Key ${boardKey.substring(0,10)} Depth ${depth} > Cached ${cachedEntry.depth}`);
         }
 
         // Get all opponent's possible moves
@@ -758,25 +774,20 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // --- Start Modification: Simple Move Ordering ---
+        // Move ordering optimization
         let immediateWinMoves = [];
         let otherMoves = [];
-        let moveStates = new Map(); // Store temporary states to avoid re-applying moves
+        let moveStates = new Map();
 
         for (const move of opponentMoves) {
             const {start, end} = move;
-            // Create proper deep clone of the board
-            const afterOpponentMove = boardState.map(row =>
-                row.map(cell => cell ? {...cell} : null)
-            );
-
-            // Apply move
+            const afterOpponentMove = cloneBoard(boardState);
             const movingPiece = afterOpponentMove[start.row][start.col];
             const targetPiece = afterOpponentMove[end.row][end.col];
+
             if (!targetPiece) {
                 afterOpponentMove[end.row][end.col] = {...movingPiece};
                 afterOpponentMove[start.row][start.col] = null;
-                // Reset swapped pieces
                 for (let r = 0; r < ROWS; r++) {
                     for (let c = 0; c < COLS; c++) {
                         if (afterOpponentMove[r][c]?.state === SWAPPED) {
@@ -788,9 +799,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 afterOpponentMove[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 afterOpponentMove[start.row][start.col] = { ...targetPiece, state: SWAPPED };
             }
-            moveStates.set(move, afterOpponentMove); // Store the resulting state
+            moveStates.set(move, afterOpponentMove);
 
-            // Check if this leads to an immediate win
             if (checkWinConditionForState(afterOpponentMove, opponentPlayer).win) {
                 immediateWinMoves.push(move);
             } else {
@@ -798,42 +808,34 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // Combine lists, checking immediate wins first
         const orderedOpponentMoves = [...immediateWinMoves, ...otherMoves];
-        // --- End Modification ---
-
 
         // Check each move using the ordered list
         for (const move of orderedOpponentMoves) {
-            // Retrieve the pre-calculated state
             const afterOpponentMove = moveStates.get(move);
 
-            // Check if this leads to an immediate win (already checked, but confirm)
-            // This check is slightly redundant now but safe to keep
             if (checkWinConditionForState(afterOpponentMove, opponentPlayer).win) {
-                transpositionTable.set(boardKey, true);
-                return true; // Immediate win found
+                transpositionTable.set(boardKey, {value: true, depth: depth});
+                return true;
             }
 
-            // Only recurse if we're in hard mode and have depth remaining
-            if (AI_DIFFICULTY === 'hard' && depth > 1) {
+            // Recursive search for both hard1 and hard2 modes
+            if ((AI_DIFFICULTY === 'hard1' || AI_DIFFICULTY === 'hard2') && depth > 1) {
                 const currentPlayer = opponentPlayer === PLAYER_A ? PLAYER_B : PLAYER_A;
-                // Use the pre-calculated afterOpponentMove state for recursion
                 if (!hasValidResponse(afterOpponentMove, currentPlayer, depth - 1, -beta, -alpha)) {
-                    beta = Math.min(beta, 1); // Opponent found a winning line
-                    // console.log(opponentPlayer + " has Winning Line at Depth " + (5-depth))
+                    beta = Math.min(beta, 1);
                     if (beta <= alpha) {
-                        transpositionTable.set(boardKey, true);
-                        return true; // Prune - opponent has guaranteed win
+                        transpositionTable.set(boardKey, {value: true, depth: depth});
+                        return true;
                     }
                 } else {
-                    alpha = Math.max(alpha, -1); // We found a valid defense
+                    alpha = Math.max(alpha, -1);
                 }
             }
         }
 
-        transpositionTable.set(boardKey, false);
-        return false; // No winning line found for opponentPlayer within depth
+        transpositionTable.set(boardKey, {value: false, depth: depth});
+        return false;
     }
 
     function hasValidResponse(boardState, currentPlayer, depth, alpha, beta) {
