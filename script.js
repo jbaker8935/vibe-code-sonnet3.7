@@ -35,7 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let touchStartY = 0;
     const transpositionTable = new Map();
 
-    var DEBUG = false; // Set to false to disable
+    var DEBUG = true; // Set to false to disable
     var old_console_log = console.log;
     console.log = function() {
         if (DEBUG) {
@@ -533,7 +533,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // (findBestAIMove simulation logic remains the same, but calls updated evaluateBoardState and allowsOpponentWin)
-     function findBestAIMove() {
+    function findBestAIMove() {
         let possibleMoves = [];
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
@@ -552,6 +552,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (possibleMoves.length === 0) return null;
 
+        // First, check for immediate winning moves
+        for (const move of possibleMoves) {
+            const tempBoard = cloneBoard(board);
+            const { start, end } = move;
+            
+            // Apply move to temporary board
+            const movingPiece = tempBoard[start.row][start.col];
+            const targetPiece = tempBoard[end.row][end.col];
+
+            if (!targetPiece) {
+                tempBoard[end.row][end.col] = {...movingPiece};
+                tempBoard[start.row][start.col] = null;
+                // Reset swapped pieces
+                for (let r = 0; r < ROWS; r++) {
+                    for (let c = 0; c < COLS; c++) {
+                        if (tempBoard[r][c]?.state === SWAPPED) {
+                            tempBoard[r][c].state = NORMAL;
+                        }
+                    }
+                }
+            } else {
+                tempBoard[end.row][end.col] = {...movingPiece, state: SWAPPED};
+                tempBoard[start.row][start.col] = {...targetPiece, state: SWAPPED};
+            }
+
+            // Check if this move wins
+            if (checkWinConditionForState(tempBoard, PLAYER_B).win) {
+                return move; // Return winning move immediately
+            }
+        }
+
+        // If no immediate win, proceed with normal evaluation
         let bestScore = -Infinity;
         let bestMoves = []; // Store moves with the best score
 
@@ -627,7 +659,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // (allowsOpponentWin simulation logic remains the same, but calls updated checkWinConditionForState)
-    function allowsOpponentWin(boardState, opponentPlayer, depth = 3, alpha = -Infinity, beta = Infinity) {
+    function allowsOpponentWin(boardState, opponentPlayer, depth = 5, alpha = -Infinity, beta = Infinity) {
+        // console.log("Depth " + depth)
         if (depth <= 0) return false;
 
         // Early exit - check immediate win
