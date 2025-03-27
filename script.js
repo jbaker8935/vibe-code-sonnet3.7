@@ -645,7 +645,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // (allowsOpponentWin simulation logic remains the same, but calls updated checkWinConditionForState)
-    function allowsOpponentWin(boardState, opponentPlayer, depth = 7, alpha = -Infinity, beta = Infinity) {
+    function allowsOpponentWin(boardState, opponentPlayer, depth = 3, alpha = -Infinity, beta = Infinity) {
         // console.log("Depth " + depth)
         if (depth <= 0) return false;
 
