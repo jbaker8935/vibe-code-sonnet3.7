@@ -35,7 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let touchStartY = 0;
     const transpositionTable = new Map();
 
-    var DEBUG = true; // Set to false to disable
+    var DEBUG = false; // Set to false to disable
     var old_console_log = console.log;
     console.log = function() {
         if (DEBUG) {
@@ -361,11 +361,16 @@ document.addEventListener('DOMContentLoaded', () => {
              renderBoard(); // Render final board state with win path highlight
              handleWin(winner);
         } else {
+             // Important: Render the board with Player A's move BEFORE switching players
+             renderBoard();
+             
+             // Switch player and handle AI turn
              switchPlayer();
-             renderBoard(); // Render board after move, before AI starts thinking
              if (currentPlayer === PLAYER_B && !gameOver) {
-                 // Trigger AI move immediately
-                 triggerAIMove();
+                 // Small delay before AI starts thinking to ensure the board is rendered
+                 setTimeout(() => {
+                     triggerAIMove();
+                 }, 50);
              }
         }
     }
