@@ -1,0 +1,345 @@
+/* Basic Reset & Global Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box; /* Keep this global rule */
+}
+
+body {
+    font-family: sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #f0f0f0;
+    padding: 10px; /* Add padding for smaller screens */
+}
+
+/* Game Container Layout */
+.game-container {
+    display: flex;
+    flex-direction: column; /* Default: mobile portrait */
+    align-items: center;
+    gap: 20px;
+    width: 100%;
+    max-width: 900px; /* Limit max width on desktop */
+}
+
+#game-board {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    /* Make board size relative to viewport width/height */
+    width: min(90vw, 50vh); /* Adjust as needed */
+    height: min(180vw, 100vh); /* Double width for 8 rows */
+    max-width: 300px; /* Limit max board width */
+    max-height: 600px; /* Limit max board height */
+    border: 2px solid #333;
+    aspect-ratio: 4 / 8; /* 4 columns / 8 rows */
+    box-sizing: content-box; /* Changed from border-box to content-box */
+    position: relative;
+}
+
+.cell {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative; /* For piece positioning/highlights */
+    aspect-ratio: 1 / 1; /* Ensure cells are square */
+    /* box-sizing: border-box; */ /* Included in global '*' */
+}
+
+/* Checkerboard Pattern */
+.cell.light { background-color: #e0e0e0; }
+.cell.dark { background-color: #a0a0a0; }
+
+/* Pieces */
+.cell img.piece {
+    width: 85%;
+    height: 85%;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    cursor: pointer;
+    border-radius: 50%;
+    transition: transform 0.1s ease-out, box-shadow 0.1s ease-out;
+}
+
+.cell.selected img.piece {
+    transform: scale(1.1);
+    box-shadow: 0 0 10px 3px gold;
+}
+
+/* Highlights */
+.cell.legal-move::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 30%;
+    height: 30%;
+    background-color: rgba(0, 255, 0, 0.5);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none; /* Allow clicks through the highlight */
+}
+.cell.legal-move.swap-target::after {
+     background-color: rgba(255, 165, 0, 0.6); /* Orange for swap */
+}
+
+.cell.win-path {
+    background-color: rgba(255, 215, 0, 0.5) !important; /* Gold highlight */
+}
+
+/* Controls */
+#controls {
+    display: flex;
+    flex-direction: row; /* Default: mobile portrait */
+    justify-content: center;
+    gap: 15px;
+    padding: 10px;
+    background-color: #d0d0d0;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 300px; /* Match board width roughly */
+    align-items: center; /* Added to align items vertically */
+}
+
+#controls button {
+    width: 40px; /* Fixed width */
+    height: 40px; /* Fixed height to maintain 1:1 ratio */
+    background: #f8f8f8;
+    border: 1px solid #ccc;
+    border-radius: 50%;
+    padding: 8px;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: background-color 0.2s ease;
+}
+
+#controls button:hover:not(:disabled) {
+    background-color: #e8e8e8;
+}
+
+#controls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#controls button img {
+    width: 24px;
+    height: 24px;
+    display: block;
+}
+
+/* Overlays */
+.overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    display: none; /* Hidden by default */
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.overlay.active {
+    display: flex;
+}
+
+.overlay-content {
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 8px;
+    position: relative;
+    max-width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.overlay-content h2 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    text-align: center;
+    color: #333;
+}
+
+.overlay-content ul {
+    list-style-position: inside;
+    padding-left: 0;
+}
+.overlay-content li {
+    margin-bottom: 8px;
+    color: #555;
+}
+
+.close-overlay-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 5px;
+}
+
+.close-overlay-btn img {
+    width: 24px;
+    height: 24px;
+    display: block;
+}
+
+/* History List */
+#history-list {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+#history-list div {
+    padding: 8px 12px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+#history-list div:hover {
+    background-color: #f0f0f0;
+}
+
+#history-list div:last-child {
+    border-bottom: none;
+}
+
+/* Win Overlay Specific */
+#win-overlay .overlay-content {
+    text-align: center;
+}
+
+#ai-spinner-overlay {
+    align-items: center;
+    justify-content: center;
+    padding-top: 0;
+    color: white;
+}
+
+#ai-spinner-overlay .spinner-content {
+    background: rgba(0, 0, 0, 0.8);
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    max-width: 200px;
+}
+
+.spinner {
+    width: 30px;
+    height: 30px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 12px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.spinner-text {
+    font-size: 0.9em;
+    color: #ffffff;
+}
+
+/* Score Display */
+#score-display {
+    display: flex;
+    flex-direction: column;  
+    gap: 5px;
+    font-size: 0.9em;
+    min-width: 40px;
+    justify-content: center;
+    height: 40px; /* Match button height */
+}
+
+.score-item {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.2; /* Adjusted for better vertical spacing */
+    height: 20px; /* Half of parent height for two items */
+}
+
+.move-counter {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+#game-board {
+    position: relative; /* Ensure move counter is positioned relative to board */
+}
+
+.score-display {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    font-size: 14px;
+}
+
+
+
+/* --- Responsiveness --- */
+
+/* Mobile Landscape & Desktop/Widescreen */
+@media (min-width: 600px) and (min-aspect-ratio: 1/1), (min-width: 768px) {
+    .game-container {
+        flex-direction: row; /* Side-by-side */
+        align-items: flex-start;
+        justify-content: center;
+    }
+
+    #game-board {
+        /* Adjust size constraints if needed */
+         width: min(40vw, 350px);
+         height: min(80vw, 700px);
+         max-width: 350px;
+         max-height: 700px;
+    }
+
+    #controls {
+        flex-direction: column; /* Vertical buttons */
+        width: auto; /* Fit content */
+        max-width: none;
+        padding: 15px 10px;
+    }
+}
+
+/* Larger Screens - More spacing if needed */
+@media (min-width: 1024px) {
+    .game-container {
+        gap: 30px;
+    }
+     #controls {
+        gap: 20px;
+    }
+}

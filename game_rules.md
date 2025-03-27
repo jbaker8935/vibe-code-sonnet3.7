@@ -12,17 +12,41 @@ you are a game developer that is prototyping a two player game for a vibe coding
 
 design requirements:
 
-1. create a prototype user interface for the game so that a user can select pieces for player A and move them subject to the rules of the game.  Use html, js and css.
-2. write a heuristic algorithm to automatically execute player B's moves subject to the rules of the game with the goal of reaching a winning position.  encourage piece advancement, creating connected paths and blocking the human player's connected paths.  the AI should try to maximize the number occupied rows 1 through 7 on the board, so that a winning connection can be made
-3. the game should be playable on mobile web 
-4. Display the game board as a checkerboard with alternating white and buff colors. The  gameboard container has a black outline.  each cell within the game board should have a fine black outline.  Orient the board so Player A is at the bottom.
-5. Pieces should look like checker pieces having a normal side and a 'swapped' side that has an inset crown graphic. player A normal piece is images/white_normal.png, player A swapped piece is images/white_swapped.png,  player B normal piece is images/black_normal.png, player B swapped piece is images/black_swapped.png.  Scale the piece images so that they fit inside a game board cell.
-6. Under the game board container add a text display area for messages like current player and win status.
-7. Under the text area add a reset button to allow the game to be returned to the initialized state.
-8. The human player can select a piece using a mouse.  When selected, the cells with legal moves should be highlighted.  When a target cell is selected, apply the move.   If a selected piece is clicked again, it becomes deselected and another piece may be selected by the player.
-9. When the game ends, highlight the cells in the winning path.
-10. as the game progresses store a list of game action history showing: the move number, the player, the starting and ending cell.  when displayed, moves should be shown in descending order.
-11. create a game action history container to display the move history.
-12. If the display is wide enough display the game action history container to the right of the game board.
-13. if the display is not wide enough provide a button to overlay the game history container on the display so that the user can select rows from the game history for display.  if the game history is overlaying the game board hide the game history so the selected game state can be shown.
-14. once the game has ended, allow the user to select a row in the game action history and display the game board state at that point in the game.   the highlighted winning path should only be shown for the final move in the game.
+1. create a prototype user interface for the game so that a user can select pieces for player A and move them subject to the rules of the game.
+- prototype is an in-browser game which does not require a server to run
+- use any preferred framework for code or themes
+2. write a heuristic algorithm to automatically execute player B's moves subject to the rules of the game with the goal of reaching a winning position.
+- avoid moves that allow the human player to make a winning move on their next turn.
+- encourage piece advancement
+- discourage having 4 player pieces in a row unless required for other tactics
+- encourage moving pieces off of the back row
+- position pieces to allow creation of connected paths
+- use swapping moves to limit the move options of the opponent
+3. the game must have responsive design and be playable on mobile web 
+4. Display the game board as a checkerboard with alternating colors. Orient the game board so Player A is at the bottom.
+5. Pieces should look like checker pieces having a normal side and a 'swapped' side that has an inset crown graphic. 
+6. The following images will be used for the pieces:
+- player A normal piece is images/white_normal.png
+- player A swapped piece is images/white_swapped.png
+- player B normal piece is images/black_normal.png
+- player B swapped piece is images/black_swapped.png.
+- Scale the piece images so that they fit inside a game board cell.
+7. Display a control container with:
+- a reset button that initializes the game state.
+- reset button will display the icon in images/refresh-circle-outline.svg
+- an info button that displays an overlay with a description of the game rules.
+- info button will display the icon in images/information-circle-outline.svg
+- a history button that displays an overlay listing the move history with the most recent move at the top.  each row shows: the player, the start cell, the end cell
+- the history button is disabled by default.   the history button is enabled when the game ends. 
+- history button will display the icon in images/list-circle-outline.svg
+- when the history overlay is displayed and a user selects a row in the history table, then the overlay is closed and the game board displays the game state after that selected move.
+- the info and history overlays should have a close button.   the overlays can also be dismissed if a user clicks outside the overlay boundry.
+- close button will display the icon in images/close-circle-outline.svg
+- in mobile portrait mode display the control container under the game board with buttons displayed horizontally
+- in mobile landscape or wide screen displays display the control container to the right of the game board, with buttons displayed vertically.
+8. The human player can select a piece using a mouse or touch on mobile.  When selected, the cells with legal moves should be highlighted.  When a target cell is selected, apply the move.   If a selected piece is clicked again, it becomes deselected and another piece may be selected by the player.
+9. When the game ends:
+- display an overlay with text describing the winning player.  the overlay should auto close after 5 seconds Or can be dismissed by clicking outside the overlay boundry
+- highlight the cells in the winning path from rows 1 to 7.
+10. Use a modern polished GUI theme
+
