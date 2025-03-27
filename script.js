@@ -35,7 +35,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let touchStartY = 0;
     const transpositionTable = new Map();
 
-    var DEBUG = false; // Set to false to disable
+    var DEBUG = true; // Set to false to disable
     var old_console_log = console.log;
     console.log = function() {
         if (DEBUG) {
@@ -479,7 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show spinner after delay if AI is still thinking
         spinnerTimeout = setTimeout(() => {
             showOverlay(aiSpinnerOverlay);
-        }, 3000);
+        }, 1500);
 
         // Use Promise to handle AI move computation
         new Promise((resolve) => {
@@ -626,6 +626,12 @@ document.addEventListener('DOMContentLoaded', () => {
              }
         }
 
+        // Check if all evaluated moves lead to a loss
+        const lossPenalty = -100000; // Ensure this matches the penalty value used above
+        if (bestMoves.length > 0 && bestScore === lossPenalty) {
+            console.log("AI: All moves lead to a loss. Forced move.");
+        }
+ 
          // If bestMoves is empty (maybe all moves led to immediate loss?), pick any move?
          // This shouldn't happen if we add the losing moves with a penalty.
          if (bestMoves.length === 0) {
@@ -645,7 +651,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // (allowsOpponentWin simulation logic remains the same, but calls updated checkWinConditionForState)
-    function allowsOpponentWin(boardState, opponentPlayer, depth = 3, alpha = -Infinity, beta = Infinity) {
+    function allowsOpponentWin(boardState, opponentPlayer, depth = 5, alpha = -Infinity, beta = Infinity) {
         // console.log("Depth " + depth)
         if (depth <= 0) return false;
 
@@ -657,7 +663,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // Check transposition table using serialized key
         const boardKey = serializeBoardState(boardState);
         if (transpositionTable.has(boardKey)) {
-            return transpositionTable.get(boardKey);
+            const cachedEntry = transpositionTable.get(boardKey);
+            // Only reuse if the cached result was computed at a depth
+            // greater than or equal to the current required depth.
+            if (cachedEntry.depth >= depth) {
+                 // console.log(`TT Hit: Key ${boardKey.substring(0,10)} Depth ${depth} <= Cached ${cachedEntry.depth} -> ${cachedEntry.value}`);
+                 return cachedEntry.value;
+            }
+             // console.log(`TT Miss (Depth): Key ${boardKey.substring(0,10)} Depth ${depth} > Cached ${cachedEntry.depth}`);
         }
 
         // Get all opponent's possible moves
@@ -673,18 +686,21 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
-        // Check each move for immediate win
+        // --- Start Modification: Simple Move Ordering ---
+        let immediateWinMoves = [];
+        let otherMoves = [];
+        let moveStates = new Map(); // Store temporary states to avoid re-applying moves
+
         for (const move of opponentMoves) {
             const {start, end} = move;
             // Create proper deep clone of the board
-            const afterOpponentMove = boardState.map(row => 
+            const afterOpponentMove = boardState.map(row =>
                 row.map(cell => cell ? {...cell} : null)
             );
-            
+
             // Apply move
             const movingPiece = afterOpponentMove[start.row][start.col];
             const targetPiece = afterOpponentMove[end.row][end.col];
-
             if (!targetPiece) {
                 afterOpponentMove[end.row][end.col] = {...movingPiece};
                 afterOpponentMove[start.row][start.col] = null;
@@ -700,16 +716,37 @@ document.addEventListener('DOMContentLoaded', () => {
                 afterOpponentMove[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 afterOpponentMove[start.row][start.col] = { ...targetPiece, state: SWAPPED };
             }
+            moveStates.set(move, afterOpponentMove); // Store the resulting state
 
             // Check if this leads to an immediate win
             if (checkWinConditionForState(afterOpponentMove, opponentPlayer).win) {
+                immediateWinMoves.push(move);
+            } else {
+                otherMoves.push(move);
+            }
+        }
+
+        // Combine lists, checking immediate wins first
+        const orderedOpponentMoves = [...immediateWinMoves, ...otherMoves];
+        // --- End Modification ---
+
+
+        // Check each move using the ordered list
+        for (const move of orderedOpponentMoves) {
+            // Retrieve the pre-calculated state
+            const afterOpponentMove = moveStates.get(move);
+
+            // Check if this leads to an immediate win (already checked, but confirm)
+            // This check is slightly redundant now but safe to keep
+            if (checkWinConditionForState(afterOpponentMove, opponentPlayer).win) {
                 transpositionTable.set(boardKey, true);
-                return true;
+                return true; // Immediate win found
             }
 
             // Only recurse if we're in hard mode and have depth remaining
             if (AI_DIFFICULTY === 'hard' && depth > 1) {
                 const currentPlayer = opponentPlayer === PLAYER_A ? PLAYER_B : PLAYER_A;
+                // Use the pre-calculated afterOpponentMove state for recursion
                 if (!hasValidResponse(afterOpponentMove, currentPlayer, depth - 1, -beta, -alpha)) {
                     beta = Math.min(beta, 1); // Opponent found a winning line
                     // console.log(opponentPlayer + " has Winning Line at Depth " + (5-depth))
@@ -722,9 +759,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         }
-        
+
         transpositionTable.set(boardKey, false);
-        return false;
+        return false; // No winning line found for opponentPlayer within depth
     }
 
     function hasValidResponse(boardState, currentPlayer, depth, alpha, beta) {
@@ -1013,12 +1050,19 @@ document.addEventListener('DOMContentLoaded', () => {
             const endColDisplay = String.fromCharCode('A'.charCodeAt(0) + move.end.col);
 
             moveDiv.textContent = `${moveNumber}. Player ${move.player}: ${startColDisplay}${startRowDisplay} -> ${endColDisplay}${endRowDisplay}`;
+            moveDiv.classList.add('history-move');
+            // Highlight current move being viewed
+            if (currentHistoryIndex === moveHistory.length - index) {
+                moveDiv.classList.add('selected-move');
+            }
             moveDiv.addEventListener('click', () => {
-                // View state *before* this move was made
-                 currentHistoryIndex = moveHistory.length - index - 1;
-                 renderBoard(move.boardAfter);
-                 updateMoveCounter();
-                 hideOverlay(historyOverlay);
+                currentHistoryIndex = moveHistory.length - index;
+                renderBoard(move.boardAfter);
+                if (currentHistoryIndex === moveHistory.length) {
+                    winPath = checkWinCondition(currentPlayer).path || [];
+                }
+                updateMoveCounter();
+                hideOverlay(historyOverlay);
             });
             historyList.appendChild(moveDiv);
         });
@@ -1026,6 +1070,11 @@ document.addEventListener('DOMContentLoaded', () => {
          // Add option to view initial state
          const initialStateDiv = document.createElement('div');
          initialStateDiv.textContent = `0. Initial State`;
+         initialStateDiv.classList.add('history-move');
+         // Highlight initial state if it's currently viewed
+         if (currentHistoryIndex === 0) {
+             initialStateDiv.classList.add('selected-move');
+         }
          initialStateDiv.addEventListener('click', () => {
              const initialBoard = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
               // Recreate initial state based on NEW orientation
