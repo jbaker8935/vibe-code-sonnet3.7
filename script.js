@@ -229,10 +229,10 @@ document.addEventListener('DOMContentLoaded', () => {
         difficultyBtn.classList.toggle('hard', AI_DIFFICULTY === 'hard');
         const img = difficultyBtn.querySelector('img');
         if (AI_DIFFICULTY === 'hard') {
-            img.src = 'images/play-forward-circle-outline.svg';
+            img.src = 'images/skull-outline.svg';
             difficultyBtn.title = 'AI Difficulty: Hard';
         } else {
-            img.src = 'images/play-circle-outline.svg';
+            img.src = 'images/happy-outline.svg';
             difficultyBtn.title = 'AI Difficulty: Easy';
         }
         console.log(`AI Difficulty switched to: ${AI_DIFFICULTY}`);

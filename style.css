@@ -137,6 +137,11 @@ body {
     display: block;
 }
 
+.rules-icon {
+    height: 1em;
+    width: 1em;
+}
+
 /* Overlays */
 .overlay {
     position: fixed;
@@ -324,11 +329,30 @@ body {
     border: 1px solid #fff;
 }
 
+.github-link {
+    font-family: 'system-ui', sans-serif;
+    position: fixed;
+    bottom: -1px;
+    left: -1px;
+    padding: 7px;
+    font-size: 14px;
+    font-weight: bold;
+    background: #fff;
+    color: #000;
+    text-decoration: none;
+    border-top-right-radius: 12px;
+    z-index: 10000;
+    border: 1px solid #fff;
+}
+
 /* Adjust link position in portrait mode for phones */
 @media (max-width: 600px) {
     .jam-link {
         bottom: 0px; /* Adjust this value based on your controls height */
     }
+    .github-link {
+        bottom: 0px; /* Adjust this value based on your controls height */
+    }    
 }
 
 /* --- Responsiveness --- */
