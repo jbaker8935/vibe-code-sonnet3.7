@@ -225,6 +225,21 @@ body {
     border-bottom: none;
 }
 
+.history-move {
+    cursor: pointer;
+    padding: 5px;
+    transition: background-color 0.2s;
+}
+
+.history-move:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.history-move.selected-move {
+    background-color: rgba(255, 255, 255, 0.2);
+    font-weight: bold;
+}
+
 /* Win Overlay Specific */
 #win-overlay .overlay-content {
     text-align: center;
