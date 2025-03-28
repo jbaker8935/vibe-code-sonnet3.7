@@ -659,7 +659,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // If no immediate win, proceed with normal evaluation
         if (AI_DIFFICULTY === 'easy') {
-            // For easy mode, pick a random move from all possible moves
+            // Filter out moves that allow immediate opponent win
+            let safeMoves = [];
+            for (const move of possibleMoves) {
+                // Test each move on a cloned board
+                const tempBoard = cloneBoard(board);
+                const {start, end} = move;
+                
+                // Apply move to temporary board
+                const movingPiece = tempBoard[start.row][start.col];
+                const targetPiece = tempBoard[end.row][end.col];
+
+                if (!targetPiece) {
+                    tempBoard[end.row][end.col] = {...movingPiece};
+                    tempBoard[start.row][start.col] = null;
+                    // Reset swapped pieces
+                    for (let r = 0; r < ROWS; r++) {
+                        for (let c = 0; c < COLS; c++) {
+                            if (tempBoard[r][c]?.state === SWAPPED) {
+                                tempBoard[r][c].state = NORMAL;
+                            }
+                        }
+                    }
+                } else {
+                    tempBoard[end.row][end.col] = {...movingPiece, state: SWAPPED};
+                    tempBoard[start.row][start.col] = {...targetPiece, state: SWAPPED};
+                }
+
+                // Check if this move allows Player A to win on their *next* turn
+                // Use allowsOpponentWin with depth 1 for easy difficulty
+                if (!allowsOpponentWin(tempBoard, PLAYER_A, 1)) {
+                    safeMoves.push(move);
+                }
+            }
+
+            // If there are safe moves, pick randomly from those
+            if (safeMoves.length > 0) {
+                return safeMoves[Math.floor(Math.random() * safeMoves.length)];
+            }
+            // If no safe moves exist, fall back to any random move
             return possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
         }
 
