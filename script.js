@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const SWAPPED = 'swapped';
     let AI_DIFFICULTY = 'easy'; // easy, hard1, hard2
     let AI_DEPTH = 5; // Will be set based on difficulty
+    let ANALYSIS_MODE = false;
 
     const boardElement = document.getElementById('game-board');
     const resetBtn = document.getElementById('reset-btn');
@@ -607,17 +608,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // (findBestAIMove simulation logic remains the same, but calls updated evaluateBoardState and allowsOpponentWin)
-    function findBestAIMove() {
+    function findBestAIMove(boardState = board) {
         let possibleMoves = [];
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
-                if (board[r][c] && board[r][c].player === PLAYER_B) {
-                    const moves = calculateLegalMoves(r, c);
+                if (boardState[r][c] && boardState[r][c].player === PLAYER_B) {
+                    const moves = calculateLegalMovesForState(boardState, r, c);
                     moves.forEach(move => {
                         possibleMoves.push({
                             start: { row: r, col: c },
                             end: { row: move.row, col: move.col },
-                            isSwap: !!move.isSwap // Store if it's a swap
+                            isSwap: !!move.isSwap
                         });
                     });
                 }
@@ -628,17 +629,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // First, check for immediate winning moves
         for (const move of possibleMoves) {
-            const tempBoard = cloneBoard(board);
+            const tempBoard = cloneBoard(boardState);
             const { start, end } = move;
-            
-            // Apply move to temporary board
             const movingPiece = tempBoard[start.row][start.col];
             const targetPiece = tempBoard[end.row][end.col];
-
+    
             if (!targetPiece) {
-                tempBoard[end.row][end.col] = {...movingPiece};
+                tempBoard[end.row][end.col] = { ...movingPiece };
                 tempBoard[start.row][start.col] = null;
-                // Reset swapped pieces
                 for (let r = 0; r < ROWS; r++) {
                     for (let c = 0; c < COLS; c++) {
                         if (tempBoard[r][c]?.state === SWAPPED) {
@@ -647,13 +645,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
             } else {
-                tempBoard[end.row][end.col] = {...movingPiece, state: SWAPPED};
-                tempBoard[start.row][start.col] = {...targetPiece, state: SWAPPED};
+                tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+                tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
             }
-
-            // Check if this move wins
+    
             if (checkWinConditionForState(tempBoard, PLAYER_B).win) {
-                return move; // Return winning move immediately
+                if (ANALYSIS_MODE) {
+                    console.log(`Found immediate winning move: ${start.row},${start.col} to ${end.row},${end.col}`);
+                }
+                return move;
             }
         }
 
@@ -663,7 +663,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let safeMoves = [];
             for (const move of possibleMoves) {
                 // Test each move on a cloned board
-                const tempBoard = cloneBoard(board);
+                const tempBoard = cloneBoard(boardState);
                 const {start, end} = move;
                 
                 // Apply move to temporary board
@@ -688,17 +688,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Check if this move allows Player A to win on their *next* turn
                 // Use allowsOpponentWin with depth 1 for easy difficulty
-                if (!allowsOpponentWin(tempBoard, PLAYER_A, 1)) {
+                const isSafe = !allowsOpponentWin(tempBoard, PLAYER_A, 1);
+                if (ANALYSIS_MODE) {
+                    console.log(`Evaluating move: ${start.row},${start.col} to ${end.row},${end.col} - Safe: ${isSafe}`);
+                }
+                if (isSafe) {
                     safeMoves.push(move);
                 }
             }
-
-            // If there are safe moves, pick randomly from those
-            if (safeMoves.length > 0) {
-                return safeMoves[Math.floor(Math.random() * safeMoves.length)];
+            if (ANALYSIS_MODE) {
+                console.log('Safe moves:', safeMoves.map(m => `${m.start.row},${m.start.col} to ${m.end.row},${m.end.col}`));
+                if (safeMoves.length === 0) {
+                    console.log('No safe moves found; selecting from all possible moves.');
+                }
             }
-            // If no safe moves exist, fall back to any random move
-            return possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
+            const movesToChoose = safeMoves.length > 0 ? safeMoves : possibleMoves;
+            return movesToChoose[Math.floor(Math.random() * movesToChoose.length)];
         }
 
         let bestScore = -Infinity;
@@ -784,21 +789,27 @@ document.addEventListener('DOMContentLoaded', () => {
     // (allowsOpponentWin simulation logic remains the same, but calls updated checkWinConditionForState)
     function allowsOpponentWin(boardState, opponentPlayer, depth = AI_DEPTH, alpha = -Infinity, beta = Infinity) {
         if (depth <= 0) return false;
-
+    
         // Early exit - check immediate win
         if (checkWinConditionForState(boardState, opponentPlayer).win) {
+            if (ANALYSIS_MODE) {
+                console.log('Opponent has already won in this state.');
+            }
             return true;
         }
-
+    
         // Check transposition table using serialized key
         const boardKey = serializeBoardState(boardState);
         if (transpositionTable.has(boardKey)) {
             const cachedEntry = transpositionTable.get(boardKey);
             if (cachedEntry.depth >= depth) {
+                if (ANALYSIS_MODE) {
+                    console.log(`Using cached result for board state: ${boardKey}, depth: ${cachedEntry.depth}, value: ${cachedEntry.value}`);
+                }
                 return cachedEntry.value;
             }
         }
-
+    
         // Get all opponent's possible moves
         let opponentMoves = [];
         for (let r = 0; r < ROWS; r++) {
@@ -811,18 +822,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         }
-
-        // Move ordering optimization
+    
+        // Move ordering optimization: Prioritize moves that might lead to a win
         let immediateWinMoves = [];
         let otherMoves = [];
         let moveStates = new Map();
-
+    
         for (const move of opponentMoves) {
             const {start, end} = move;
             const afterOpponentMove = cloneBoard(boardState);
             const movingPiece = afterOpponentMove[start.row][start.col];
             const targetPiece = afterOpponentMove[end.row][end.col];
-
+    
             if (!targetPiece) {
                 afterOpponentMove[end.row][end.col] = {...movingPiece};
                 afterOpponentMove[start.row][start.col] = null;
@@ -838,26 +849,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 afterOpponentMove[start.row][start.col] = { ...targetPiece, state: SWAPPED };
             }
             moveStates.set(move, afterOpponentMove);
-
+    
             if (checkWinConditionForState(afterOpponentMove, opponentPlayer).win) {
                 immediateWinMoves.push(move);
             } else {
                 otherMoves.push(move);
             }
         }
-
+    
         const orderedOpponentMoves = [...immediateWinMoves, ...otherMoves];
-
+    
         // Check each move using the ordered list
         for (const move of orderedOpponentMoves) {
             const afterOpponentMove = moveStates.get(move);
-
             if (checkWinConditionForState(afterOpponentMove, opponentPlayer).win) {
+                if (ANALYSIS_MODE) {
+                    console.log(`Opponent can win with move: ${move.start.row},${move.start.col} to ${move.end.row},${move.end.col}`);
+                }
                 transpositionTable.set(boardKey, {value: true, depth: depth});
                 return true;
             }
-
-            // Recursive search for both hard1 and hard2 modes
+    
+            // Recursive search for harder difficulties
             if ((AI_DIFFICULTY === 'hard1' || AI_DIFFICULTY === 'hard2') && depth > 1) {
                 const currentPlayer = opponentPlayer === PLAYER_A ? PLAYER_B : PLAYER_A;
                 if (!hasValidResponse(afterOpponentMove, currentPlayer, depth - 1, -beta, -alpha)) {
@@ -871,7 +884,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         }
-
+    
         transpositionTable.set(boardKey, {value: false, depth: depth});
         return false;
     }
@@ -1019,11 +1032,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Heuristic components (Weights need tuning!)
         const ADVANCE_WEIGHT = 10;
-        const BACK_ROW_PENALTY = -20; // Penalty for Player B being on row 0
+        const BACK_ROW_PENALTY = -2; // Penalty for Player B being on row 0
         const CONNECTIVITY_WEIGHT = 5;
-        const FOUR_IN_ROW_PENALTY = -30;
-        const SWAP_BONUS = 8; // Bonus for making a swap
-        const RESTRICT_OPPONENT_WEIGHT = 2;
+        const FOUR_IN_ROW_PENALTY = -4;
+        const SWAP_BONUS = 2; // Bonus for making a swap
+        const RESTRICT_OPPONENT_WEIGHT = 3;
         const CENTER_CONTROL_WEIGHT = 1; // Slight bonus for pieces near center cols (1, 2)
         const CENTER_SQUARES_WEIGHT = 1; // Slight bonus rows (3,4)
         const ROW_COUNT_WEIGHT = 2;
@@ -1051,8 +1064,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             score += BACK_ROW_PENALTY;
                         }
 
-                        // Connectivity Score
-                        playerConnectivity += countFriendlyNeighbors(boardState, r, c, player);
+                        // Connectivity Score only do this count for pieces mid-board
+                        if (r > 1 && r < ROWS - 1){
+                            playerConnectivity += countFriendlyNeighbors(boardState, r, c, player);
+                        }
 
                         // Center Control
                         if (c === 1 || c === 2) {
@@ -1066,7 +1081,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     } else { // Opponent piece (Player A)
                         opponentCount++;
                         playerHorizontalRow = 0; // Reset count on opponent piece
-                        opponentConnectivity += countFriendlyNeighbors(boardState, r, c, opponent);
+                        if (r> 1 && r < ROWS-1) {
+                            opponentConnectivity += countFriendlyNeighbors(boardState, r, c, opponent);
+                        }
                         // Could add opponent advancement penalty here (A wants lower index)
                         // score -= ADVANCE_WEIGHT * (ROWS - 1 - r); // Penalize AI if opponent advances
                     }
@@ -1375,5 +1392,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }).join('')
         ).join('|');
     }
-
+    function analyzeHistoricalMove() {
+        if (currentHistoryIndex !== undefined && currentHistoryIndex > 0) {
+            const historicalBoard = moveHistory[currentHistoryIndex - 1].boardAfter;
+            ANALYSIS_MODE = true;
+            const bestMove = findBestAIMove(historicalBoard);
+            ANALYSIS_MODE = false;
+            console.log('Best move for this board state:', bestMove);
+        } else {
+            console.log('No historical move selected.');
+        }
+    }    
+    window.analyzeHistoricalMove = analyzeHistoricalMove;
 });
