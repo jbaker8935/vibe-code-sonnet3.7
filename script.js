@@ -539,6 +539,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     const currentLegalMoves = calculateLegalMoves(bestMove.start.row, bestMove.start.col);
                     if (currentLegalMoves.some(m => m.row === bestMove.end.row && m.col === bestMove.end.col)) {
                         makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col);
+
+                        // Check if Player A is in a winning position after AI's move
+                        const winCheckResult = checkWinCondition(PLAYER_A);
+                        if (winCheckResult.win) {
+                            gameOver = true;
+                            winner = PLAYER_A;
+                            winPath = winCheckResult.path;
+                            renderBoard(); // Render final board state with win path highlight
+                            handleWin(winner);
+                            return; // Exit early since the game is over
+                        }
                     } else {
                         console.error("AI Logic Error: Chosen move is not legal after re-selection?", bestMove, currentLegalMoves);
                         deselectPiece(); // Clean up selection
