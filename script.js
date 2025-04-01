@@ -236,14 +236,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 img.src = 'images/hardware-chip-outline.svg';
                 difficultyBtn.title = 'AI Difficulty: Hard Level 1';
                 break;
+            // case 'hard1':
+            //     AI_DIFFICULTY = 'hard2';
+            //     AI_DEPTH = 5;
+            //     const img2 = difficultyBtn.querySelector('img');
+            //     img2.src = 'images/skull-outline.svg';
+            //     difficultyBtn.title = 'AI Difficulty: Hard Level 2';
+            //     break;
+            // case 'hard2':
             case 'hard1':
-                AI_DIFFICULTY = 'hard2';
-                AI_DEPTH = 5;
-                const img2 = difficultyBtn.querySelector('img');
-                img2.src = 'images/skull-outline.svg';
-                difficultyBtn.title = 'AI Difficulty: Hard Level 2';
-                break;
-            case 'hard2':
                 AI_DIFFICULTY = 'easy';
                 AI_DEPTH = 1;
                 difficultyBtn.classList.remove('hard');
