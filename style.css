@@ -51,6 +51,25 @@ body {
     /* box-sizing: border-box; */ /* Included in global '*' */
 }
 
+.cell.win-path {
+    background-color: rgba(255, 215, 0, 0.7) !important; /* Gold highlight with increased opacity */
+}
+
+.cell.win-path-second {
+    background-color: rgba(0, 191, 255, 0.7) !important; /* Blue highlight with increased opacity */
+}
+
+/* Ensure these have higher specificity than the checkerboard pattern */
+.cell.light.win-path,
+.cell.dark.win-path {
+    background-color: rgba(255, 215, 0, 0.7) !important;
+}
+
+.cell.light.win-path-second,
+.cell.dark.win-path-second {
+    background-color: rgba(0, 191, 255, 0.7) !important;
+}
+
 /* Checkerboard Pattern */
 .cell.light { background-color: #e0e0e0; }
 .cell.dark { background-color: #a0a0a0; }

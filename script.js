@@ -87,18 +87,19 @@ document.addEventListener('DOMContentLoaded', () => {
     // (renderBoard function remains the same, it renders based on the board array)
     function renderBoard(boardState = board) {
         boardElement.innerHTML = '';
-        boardElement.classList.remove('game-over'); // Remove game over visual cues if any
+        boardElement.classList.remove('game-over');
 
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
                 const cell = document.createElement('div');
                 cell.classList.add('cell');
-                cell.dataset.row = r; // Internal row index (0-7)
+                cell.dataset.row = r;
                 cell.dataset.col = c;
 
                 // Checkerboard pattern
                 cell.classList.add(((r + c) % 2 === 0) ? 'light' : 'dark');
 
+                // Add piece if present
                 const pieceData = boardState[r][c];
                 if (pieceData) {
                     const pieceImg = document.createElement('img');
@@ -108,24 +109,43 @@ document.addEventListener('DOMContentLoaded', () => {
                     cell.appendChild(pieceImg);
                 }
 
-                // Add highlights AFTER adding piece
+                // Add highlights
                 if (selectedPiece && selectedPiece.row === r && selectedPiece.col === c) {
                     cell.classList.add('selected');
                 }
 
                 if (legalMoves.some(move => move.row === r && move.col === c)) {
                     cell.classList.add('legal-move');
-                     // Add specific class if it's a swap target
-                    const targetPiece = boardState[r][c];
-                    if (targetPiece && targetPiece.player !== currentPlayer) {
-                         cell.classList.add('swap-target');
+                    if (boardState[r][c] && boardState[r][c].player !== currentPlayer) {
+                        cell.classList.add('swap-target');
                     }
                 }
 
-                // Only show win path if we're viewing the final position
-                if (winPath.length > 0 && (currentHistoryIndex === undefined || currentHistoryIndex === moveHistory.length)) {
-                    if (winPath.some(pos => pos.row === r && pos.col === c)) {
-                        cell.classList.add('win-path');
+                // Win path highlighting
+                if (gameOver && winner) {
+                    // Get current state win paths from move history
+                    const lastMove = moveHistory[moveHistory.length - 1];
+                    if (lastMove && lastMove.winPaths) {
+                        if (winner === 'both') {
+                            // Check both paths
+                            if (lastMove.winPaths.current.some(pos => pos.row === r && pos.col === c)) {
+                                cell.classList.add('win-path');
+                            }
+                            if (lastMove.winPaths.other.some(pos => pos.row === r && pos.col === c)) {
+                                if (cell.classList.contains('win-path')) {
+                                    cell.classList.remove('win-path');
+                                    cell.classList.add('win-path-second');
+                                } else {
+                                    cell.classList.add('win-path-second');
+                                }
+                            }
+                        } else {
+                            // Single winner
+                            const winningPath = lastMove.winPaths[winner];
+                            if (winningPath && winningPath.some(pos => pos.row === r && pos.col === c)) {
+                                cell.classList.add('win-path');
+                            }
+                        }
                     }
                 }
 
@@ -134,19 +154,19 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         
+        // Add score display and move counter if game is over
         if (gameOver) {
             boardElement.classList.add('game-over');
-            // Always show move counter during history viewing
+            
             if (currentHistoryIndex !== undefined) {
                 const moveCount = document.createElement('div');
                 moveCount.classList.add('move-counter');
-                moveCount.textContent = currentHistoryIndex === undefined || currentHistoryIndex === moveHistory.length ? 
+                moveCount.textContent = currentHistoryIndex === moveHistory.length ? 
                     'Final Position' : 
                     `Move ${currentHistoryIndex} of ${moveHistory.length}`;
                 boardElement.appendChild(moveCount);
             }
 
-            // Add score display
             const scoreDisplay = document.createElement('div');
             scoreDisplay.classList.add('score-display');
             scoreDisplay.innerHTML = `
@@ -154,13 +174,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div id="score-b">Player B: ${playerBScore}</div>
             `;
             boardElement.appendChild(scoreDisplay);
-
-            // Update the scores in the controls division
-            const controlScoreA = document.getElementById('control-score-a');
-            const controlScoreB = document.getElementById('control-score-b');
-            if (controlScoreA) controlScoreA.textContent = ` ${playerAScore}`;
-            if (controlScoreB) controlScoreB.textContent = ` ${playerBScore}`;
         }
+
+        // Update control scores
+        const controlScoreA = document.getElementById('control-score-a');
+        const controlScoreB = document.getElementById('control-score-b');
+        if (controlScoreA) controlScoreA.textContent = `${playerAScore}`;
+        if (controlScoreB) controlScoreB.textContent = `${playerBScore}`;
 
         if (gameOver) {
             updateMoveCounter();
@@ -331,12 +351,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const move = legalMoves.find(m => m.row === endRow && m.col === endCol);
         if (!move) {
             console.error("Move error: Invalid target cell.");
-             deselectPiece(); // Deselect if move was invalid
-             renderBoard();
+            deselectPiece();
+            renderBoard();
             return;
         }
 
-        // Record state *before* the move for history
+        // Record state before the move for history
         const boardBefore = cloneBoard(board);
         moveHistory.push({
             player: currentPlayer,
@@ -345,7 +365,7 @@ document.addEventListener('DOMContentLoaded', () => {
             boardBefore: boardBefore
         });
 
-
+        // Apply the move
         const movingPiece = board[startRow][startCol];
         const targetPiece = board[endRow][endCol];
 
@@ -353,43 +373,98 @@ document.addEventListener('DOMContentLoaded', () => {
             // Move to empty cell
             board[endRow][endCol] = movingPiece;
             board[startRow][startCol] = null;
-            unmarkAllSwapped(); // Reset swapped status on empty move
-            console.log(`Player ${currentPlayer} moved ${startRow},${startCol} to ${endRow},${endCol}. Swapped pieces reset.`);
-        } else if (targetPiece.player !== currentPlayer && targetPiece.state === NORMAL) {
+            unmarkAllSwapped();
+        } else {
             // Swap move
             board[endRow][endCol] = { ...movingPiece, state: SWAPPED };
             board[startRow][startCol] = { ...targetPiece, state: SWAPPED };
-             console.log(`Player ${currentPlayer} swapped ${startRow},${startCol} with ${endRow},${endCol}. Both marked SWAPPED.`);
-        } else {
-             console.error("Illegal move logic error!"); // Should have been caught by legalMoves check
-             return;
         }
 
         // Store the state after the move
         moveHistory[moveHistory.length - 1].boardAfter = cloneBoard(board);
-
         deselectPiece();
 
-        // Check for win BEFORE switching player
-        const winCheckResult = checkWinCondition(currentPlayer); // << Uses updated checkWinCondition
-        if (winCheckResult.win) {
-             gameOver = true;
-             winner = currentPlayer;
-             winPath = winCheckResult.path;
-             renderBoard(); // Render final board state with win path highlight
-             handleWin(winner);
+        // Check for win conditions for BOTH players
+        const currentPlayerCheck = checkWinConditionForState(board, currentPlayer);
+        const otherPlayer = currentPlayer === PLAYER_A ? PLAYER_B : PLAYER_A;
+        const otherPlayerCheck = checkWinConditionForState(board, otherPlayer);
+
+        console.log("Win check results:", { 
+            currentPlayer,
+            currentPlayerWin: currentPlayerCheck.win,
+            otherPlayerWin: otherPlayerCheck.win,
+            currentPath: currentPlayerCheck.path,
+            otherPath: otherPlayerCheck.path
+        });
+
+        if (currentPlayerCheck.win || otherPlayerCheck.win) {
+            gameOver = true;
+            
+            if (currentPlayerCheck.win && otherPlayerCheck.win) {
+                // Simultaneous win scenario
+                winner = 'both';
+                // Store both winning paths in the move history
+                moveHistory[moveHistory.length - 1].winPaths = {
+                    current: currentPlayerCheck.path,
+                    other: otherPlayerCheck.path
+                };
+                
+                // First render the board without highlights
+                renderBoard();
+                
+                // Add BOTH winning paths
+                if (currentPlayerCheck.path) {
+                    currentPlayerCheck.path.forEach(pos => {
+                        const cell = boardElement.querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`);
+                        if (cell) {
+                            cell.classList.add('win-path');
+                            console.log('Adding win-path to', pos.row, pos.col);
+                        }
+                    });
+                }
+                
+                if (otherPlayerCheck.path) {
+                    otherPlayerCheck.path.forEach(pos => {
+                        const cell = boardElement.querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`);
+                        if (cell) {
+                            if (cell.classList.contains('win-path')) {
+                                // If cell is already part of first path, use second style
+                                cell.classList.remove('win-path');
+                                cell.classList.add('win-path-second');
+                            } else {
+                                cell.classList.add('win-path-second');
+                            }
+                            console.log('Adding win-path-second to', pos.row, pos.col);
+                        }
+                    });
+                }
+            } else {
+                // Single player win
+                winner = currentPlayerCheck.win ? currentPlayer : otherPlayer;
+                winPath = currentPlayerCheck.win ? currentPlayerCheck.path : otherPlayerCheck.path;
+                moveHistory[moveHistory.length - 1].winPaths = {
+                    [winner]: winPath
+                };
+                // Render board with single win path
+                renderBoard();
+                // Add highlights after rendering
+                winPath.forEach(pos => {
+                    const cell = boardElement.querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`);
+                    if (cell) {
+                        cell.classList.add('win-path');
+                    }
+                });
+            }
+            
+            handleWin(winner);
         } else {
-             // Important: Render the board with Player A's move BEFORE switching players
-             renderBoard();
-             
-             // Switch player and handle AI turn
-             switchPlayer();
-             if (currentPlayer === PLAYER_B && !gameOver) {
-                 // Small delay before AI starts thinking to ensure the board is rendered
-                 setTimeout(() => {
-                     triggerAIMove();
-                 }, 50);
-             }
+            renderBoard();
+            switchPlayer();
+            if (currentPlayer === PLAYER_B && !gameOver) {
+                setTimeout(() => {
+                    triggerAIMove();
+                }, 50);
+            }
         }
     }
 
@@ -422,11 +497,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const visited = Array(ROWS).fill(null).map(() => Array(COLS).fill(false));
         const queue = []; // Queue for BFS: stores {row, col, path}
 
-        // Find all starting pieces for the player in their designated 'start' row
+        // Find starting pieces for the player in their designated 'start' row
         for (let c = 0; c < COLS; c++) {
-            // Ensure the piece exists and belongs to the player before starting BFS from it
             if (board[startRow] && board[startRow][c] && board[startRow][c].player === player) {
-                queue.push({ row: startRow, col: c, path: [{ row: startRow, col: c }] });
+                queue.push({ 
+                    row: startRow, 
+                    col: c, 
+                    path: [{ row: startRow, col: c }] 
+                });
                 visited[startRow][c] = true;
             }
         }
@@ -468,19 +546,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     function handleWin(winningPlayer) {
-         console.log(`Game Over! Player ${winningPlayer} wins!`);
-         // Update scores
-         if (winningPlayer === PLAYER_A) {
-             playerAScore++;
-         } else {
-             playerBScore++;
-         }
-         updateScoreDisplay();
-         
-         winMessage.textContent = `Player ${winningPlayer} Wins!`;
-         showOverlay(winOverlay);
-         historyBtn.disabled = false; // Enable history button
-         currentHistoryIndex = moveHistory.length; // Initialize at final position
+        console.log(`Game Over! ${winningPlayer === 'both' ? 'Both players win!' : 'Player ' + winningPlayer + ' wins!'}`);
+    
+        // Update scores
+        if (winningPlayer === 'both') {
+            playerAScore++;
+            playerBScore++;
+        } else if (winningPlayer === PLAYER_A) {
+            playerAScore++;
+        } else {
+            playerBScore++;
+        }
+        
+        updateScoreDisplay();
+        
+        winMessage.textContent = winningPlayer === 'both' ? 
+            "Hey, You Both Win!" : 
+            `Player ${winningPlayer} Wins!`;
+        
+        showOverlay(winOverlay);
+        historyBtn.disabled = false;
+        currentHistoryIndex = moveHistory.length;
 
          // Auto-close win overlay after 5 seconds
          setTimeout(() => {
@@ -531,41 +617,25 @@ document.addEventListener('DOMContentLoaded', () => {
             clearTimeout(spinnerShowTimeout);
 
             const executeMoveAction = () => {
-                if (bestMove) {
-                    console.log("AI chooses move:", bestMove);
-                    // Ensure piece selection happens before makeMove
-                    selectPiece(bestMove.start.row, bestMove.start.col);
-                    // Double-check legality right before making the move
-                    // Need to recalculate legal moves after selecting the piece
-                    const currentLegalMoves = calculateLegalMoves(bestMove.start.row, bestMove.start.col);
-                    if (currentLegalMoves.some(m => m.row === bestMove.end.row && m.col === bestMove.end.col)) {
-                        makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col);
-
-                        // Check if Player A is in a winning position after AI's move
-                        const winCheckResult = checkWinCondition(PLAYER_A);
-                        if (winCheckResult.win) {
-                            gameOver = true;
-                            winner = PLAYER_A;
-                            winPath = winCheckResult.path;
-                            renderBoard(); // Render final board state with win path highlight
-                            handleWin(winner);
-                            return; // Exit early since the game is over
+                    if (bestMove) {
+                        console.log("AI chooses move:", bestMove);
+                        selectPiece(bestMove.start.row, bestMove.start.col);
+                        const currentLegalMoves = calculateLegalMoves(bestMove.start.row, bestMove.start.col);
+                        if (currentLegalMoves.some(m => m.row === bestMove.end.row && m.col === bestMove.end.col)) {
+                            makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col);
+                            return;
+                        } else {
+                            console.error("AI Logic Error: Chosen move is not legal after re-selection?", bestMove, currentLegalMoves);
+                            deselectPiece();
+                            renderBoard();
+                            console.warn("AI failed to make a legal move. Switching back to Player A.");
+                            switchPlayer();
                         }
                     } else {
-                        console.error("AI Logic Error: Chosen move is not legal after re-selection?", bestMove, currentLegalMoves);
-                        deselectPiece(); // Clean up selection
-                        renderBoard(); // Re-render board state
-                        // Potentially switch back to player A or handle error state
-                        console.warn("AI failed to make a legal move. Switching back to Player A.");
-                        switchPlayer(); // Switch back if AI failed
+                        console.warn("AI has no legal moves!");
+                        switchPlayer();
                     }
-                } else {
-                    console.warn("AI has no legal moves!");
-                    // If AI has no moves, it's likely a stalemate or an issue.
-                    // For now, just log it and give turn back. Consider adding stalemate detection.
-                    switchPlayer(); // Give turn back to Player A
-                }
-            };
+                };
 
             // Decide whether to show/hide spinner based on actual duration
             const timeSpinnerShouldHaveStarted = startTime + spinnerDelay;
@@ -991,20 +1061,30 @@ document.addEventListener('DOMContentLoaded', () => {
          const targetRow = (player === PLAYER_A) ? 1 : ROWS - 2; // A targets near top (idx 1), B targets near bottom (idx 6)
 
          const visited = Array(ROWS).fill(null).map(() => Array(COLS).fill(false));
-         const queue = []; // {row, col, path} - path not strictly needed here, just for consistency
+         const queue = []; // Queue for BFS: stores {row, col, path}
 
+         // Find starting pieces for the player in their designated 'start' row
          for (let c = 0; c < COLS; c++) {
-             // Ensure the piece exists and belongs to the player before starting BFS from it
              if (boardState[startRow] && boardState[startRow][c] && boardState[startRow][c].player === player) {
-                 queue.push({ row: startRow, col: c, path: [{ row: startRow, col: c }] });
+                 queue.push({ 
+                     row: startRow, 
+                     col: c, 
+                     path: [{ row: startRow, col: c }] 
+                 });
                  visited[startRow][c] = true;
              }
          }
 
          while (queue.length > 0) {
-             const { row, col } = queue.shift(); // Path details ignored for simple win check
-             if (row === targetRow) return { win: true };
+             const current = queue.shift();
+             const { row, col, path } = current;
 
+             // Check if we reached the target row - IMPORTANT: Return the complete path!
+             if (row === targetRow) {
+                 return { win: true, path: path }; // Return the complete winning path
+             }
+
+             // Explore neighbors
              for (let dr = -1; dr <= 1; dr++) {
                  for (let dc = -1; dc <= 1; dc++) {
                      if (dr === 0 && dc === 0) continue;
@@ -1014,15 +1094,16 @@ document.addEventListener('DOMContentLoaded', () => {
                      // Check bounds, if visited, and if it's the player's piece
                      if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS &&
                          !visited[nr][nc] &&
-                         boardState[nr] && boardState[nr][nc] && boardState[nr][nc].player === player) // Added check for boardState[nr] existence
+                         boardState[nr] && boardState[nr][nc] && boardState[nr][nc].player === player)
                      {
                          visited[nr][nc] = true;
-                         queue.push({ row: nr, col: nc, path: [] }); // Path details ignored
+                         queue.push({ row: nr, col: nc, path: [...path, { row: nr, col: nc }] }); // Include complete path to current position
                      }
                  }
              }
          }
-         return { win: false };
+
+         return { win: false, path: [] };
      }
 
 
@@ -1416,4 +1497,76 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }    
     window.analyzeHistoricalMove = analyzeHistoricalMove;
+
+    function setupTestPosition() {
+        // Clear the board first
+        board = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
+        
+        // Setup the position from bottom to top (row 7 to 0)
+        const position = [
+            '....',  // row 0 (top)
+            '.Bw.',
+            '.wbb',
+            'wbb.',
+            'wbw.',
+            'bbw.',
+            'WW..',
+            '....'   // row 7 (bottom)
+        ];
+
+        // Fill the board based on the test position
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const piece = position[r][c];
+                switch (piece) {
+                    case 'w':
+                        board[r][c] = { player: PLAYER_A, state: SWAPPED };
+                        break;
+                    case 'W':
+                        board[r][c] = { player: PLAYER_A, state: NORMAL };
+                        break;
+                    case 'b':
+                        board[r][c] = { player: PLAYER_B, state: SWAPPED };
+                        break;
+                    case 'B':
+                        board[r][c] = { player: PLAYER_B, state: NORMAL };
+                        break;
+                }
+            }
+        }
+        
+        currentPlayer = PLAYER_B; // Set to Player B's turn
+        selectedPiece = null;
+        legalMoves = [];
+        moveHistory = [];
+        gameOver = false;
+        winner = null;
+        winPath = [];
+        historyBtn.disabled = true;
+        DEBUG = true; // Enable debug logging
+        AI_DIFFICULTY = 'easy'; // Force easy mode for testing
+        AI_DEPTH = 1;
+
+        renderBoard();
+        updateStatusMessage();
+        hideAllOverlays();
+        updateScoreDisplay();
+        transpositionTable.clear();
+
+        // Log the initial win condition check for both players
+        const playerAWin = checkWinConditionForState(board, PLAYER_A);
+        const playerBWin = checkWinConditionForState(board, PLAYER_B);
+        console.log('Initial win check:', {
+            playerA: playerAWin,
+            playerB: playerBWin
+        });
+
+        // Trigger AI move since it's Player B's turn
+        setTimeout(() => {
+            triggerAIMove();
+        }, 100);
+    }
+
+    // For testing in console
+    window.setupTestPosition = setupTestPosition;
 });
