@@ -121,8 +121,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 }
 
-                // Win path highlighting
-                if (gameOver && winner) {
+                // Win path highlighting - only show on final move
+                if (gameOver && winner && 
+                    (currentHistoryIndex === undefined || currentHistoryIndex === moveHistory.length)) {
                     // Get current state win paths from move history
                     const lastMove = moveHistory[moveHistory.length - 1];
                     if (lastMove && lastMove.winPaths) {
