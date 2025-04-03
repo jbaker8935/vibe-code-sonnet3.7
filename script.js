@@ -5,9 +5,105 @@ document.addEventListener('DOMContentLoaded', () => {
     const PLAYER_B = 'B'; // Black
     const NORMAL = 'normal';
     const SWAPPED = 'swapped';
-    let AI_DIFFICULTY = 'easy'; // easy, hard1, hard2
+    let AI_DIFFICULTY = 'easy'; // easy, hard1, hard2, hard_ai
     let AI_DEPTH = 5; // Will be set based on difficulty
     let ANALYSIS_MODE = false;
+    let tfModel = null; // TensorFlow.js model
+
+    // Load TensorFlow.js model
+    async function loadTFJSModel() {
+        try {
+            console.log("Loading TensorFlow.js model...");
+            
+            // Define the model architecture manually
+            const model = tf.sequential();
+            model.add(tf.layers.dense({
+                inputShape: [33],
+                units: 128,
+                activation: 'relu',
+                name: 'dense'
+            }));
+            model.add(tf.layers.dense({
+                units: 128,
+                activation: 'relu',
+                name: 'dense_1'
+            }));
+            model.add(tf.layers.dense({
+                units: 256,
+                activation: 'relu',
+                name: 'dense_2'
+            }));
+            model.add(tf.layers.dense({
+                units: 121,
+                activation: 'linear',
+                name: 'output_layer'
+            }));
+            
+            // Compile the model
+            model.compile({
+                optimizer: 'adam',
+                loss: 'meanSquaredError'
+            });
+            
+            // Try to load weights
+            try {
+                console.log("Loading weights from: ./tfjs_model/web_model/model.json");
+                const loadedModel = await tf.loadLayersModel('./tfjs_model/web_model/model.json');
+                
+                // If loaded successfully, use its weights for our defined model
+                const sourceWeights = loadedModel.getWeights();
+                
+                // Validate if we have the correct number of weights
+                console.log(`Loaded model has ${sourceWeights.length} weight tensors`);
+                
+                // Only try to set weights if there are enough weight tensors
+                if (sourceWeights.length >= 6) {
+                    // Transfer the weights to our model (first 3 layers, 6 weight tensors)
+                    const weights = [
+                        sourceWeights[0], sourceWeights[1],  // Layer 1 weights and biases
+                        sourceWeights[2], sourceWeights[3],  // Layer 2 weights and biases
+                        sourceWeights[4], sourceWeights[5],  // Layer 3 weights and biases
+                    ];
+                    
+                    // Initialize the output layer with random weights
+                    const outputKernel = tf.randomNormal([256, 121], 0, 0.05);
+                    const outputBias = tf.zeros([121]);
+                    weights.push(outputKernel, outputBias);
+                    
+                    // Set the weights
+                    model.setWeights(weights);
+                    console.log("Weights transferred successfully");
+                }
+                
+                // Clean up the loaded model to free memory
+                loadedModel.dispose();
+            } catch (loadError) {
+                console.warn("Could not load pre-trained weights, using randomly initialized weights:", loadError);
+                // Continue with randomly initialized weights
+            }
+            
+            tfModel = model;
+            console.log("TensorFlow.js model created and initialized successfully");
+            
+            // Enable the hard_ai option once the model is loaded
+            document.getElementById('difficulty-btn').classList.add('model-loaded');
+            return true;
+        } catch (error) {
+            console.error("Failed to create TensorFlow.js model:", error);
+            return false;
+        }
+    }
+
+    // Try to load the model
+    try {
+        if (typeof tf !== 'undefined') {
+            loadTFJSModel();
+        } else {
+            console.warn("TensorFlow.js is not available. 'AI' difficulty option will not use the neural network model.");
+        }
+    } catch (e) {
+        console.warn("Error initializing TensorFlow.js:", e);
+    }
 
     const boardElement = document.getElementById('game-board');
     const resetBtn = document.getElementById('reset-btn');
@@ -257,22 +353,42 @@ document.addEventListener('DOMContentLoaded', () => {
                 img.src = 'images/hardware-chip-outline.svg';
                 difficultyBtn.title = 'AI Difficulty: Hard Level 1';
                 break;
-            // case 'hard1':
-            //     AI_DIFFICULTY = 'hard2';
-            //     AI_DEPTH = 5;
-            //     const img2 = difficultyBtn.querySelector('img');
-            //     img2.src = 'images/skull-outline.svg';
-            //     difficultyBtn.title = 'AI Difficulty: Hard Level 2';
-            //     break;
-            // case 'hard2':
             case 'hard1':
+                // Only allow hard_ai if model is loaded
+                if (tfModel) {
+                    AI_DIFFICULTY = 'hard_ai';
+                    AI_DEPTH = 1; // Depth doesn't matter for neural network
+                    difficultyBtn.classList.add('ai');
+                    const imgAI = difficultyBtn.querySelector('img');
+                    imgAI.src = 'images/skull-outline.svg';
+                    difficultyBtn.title = 'AI Difficulty: Neural Network';
+                } else {
+                    AI_DIFFICULTY = 'easy';
+                    AI_DEPTH = 1;
+                    difficultyBtn.classList.remove('hard');
+                    difficultyBtn.classList.remove('ai');
+                    const img3 = difficultyBtn.querySelector('img');
+                    img3.src = 'images/happy-outline.svg';
+                    difficultyBtn.title = 'AI Difficulty: Easy';
+                }
+                break;
+            case 'hard_ai':
                 AI_DIFFICULTY = 'easy';
                 AI_DEPTH = 1;
                 difficultyBtn.classList.remove('hard');
+                difficultyBtn.classList.remove('ai');
                 const img3 = difficultyBtn.querySelector('img');
                 img3.src = 'images/happy-outline.svg';
                 difficultyBtn.title = 'AI Difficulty: Easy';
                 break;
+            // case 'hard2':
+            //     AI_DIFFICULTY = 'easy';
+            //     AI_DEPTH = 1;
+            //     difficultyBtn.classList.remove('hard');
+            //     const img3 = difficultyBtn.querySelector('img');
+            //     img3.src = 'images/happy-outline.svg';
+            //     difficultyBtn.title = 'AI Difficulty: Easy';
+            //     break;
         }
         console.log(`AI Difficulty switched to: ${AI_DIFFICULTY} (depth: ${AI_DEPTH})`);
     });
@@ -548,7 +664,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleWin(winningPlayer) {
         console.log(`Game Over! ${winningPlayer === 'both' ? 'Both players win!' : 'Player ' + winningPlayer + ' wins!'}`);
-    
+
         // Update scores
         if (winningPlayer === 'both') {
             playerAScore++;
@@ -737,6 +853,72 @@ document.addEventListener('DOMContentLoaded', () => {
                     console.log(`Found immediate winning move: ${start.row},${start.col} to ${end.row},${end.col}`);
                 }
                 return move;
+            }
+        }
+
+        // If using neural network model
+        if (AI_DIFFICULTY === 'hard_ai' && tfModel) {
+            console.log("Using neural network for move selection");
+            let bestMove = null;
+            let bestScore = -Infinity;
+            
+            for (const move of possibleMoves) {
+                // Create a copy of the board with the move applied
+                const tempBoard = cloneBoard(boardState);
+                const { start, end } = move;
+                const movingPiece = tempBoard[start.row][start.col];
+                const targetPiece = tempBoard[end.row][end.col];
+                
+                if (!targetPiece) {
+                    tempBoard[end.row][end.col] = { ...movingPiece };
+                    tempBoard[start.row][start.col] = null;
+                    // Reset swapped pieces
+                    for (let r = 0; r < ROWS; r++) {
+                        for (let c = 0; c < COLS; c++) {
+                            if (tempBoard[r][c]?.state === SWAPPED) {
+                                tempBoard[r][c].state = NORMAL;
+                            }
+                        }
+                    }
+                } else {
+                    tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+                    tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
+                }
+                
+                // Check if this move allows Player A to win immediately
+                if (allowsOpponentWin(tempBoard, PLAYER_A)) {
+                    continue; // Skip moves that allow opponent to win
+                }
+                
+                // Convert board state to neural network input
+                const input = boardToNNInput(tempBoard);
+                
+                // Use the model to predict the value of this board state
+                try {
+                    const inputTensor = tf.tensor2d([input]);
+                    const prediction = tfModel.predict(inputTensor);
+                    const score = prediction.dataSync()[0];
+                    inputTensor.dispose();
+                    prediction.dispose();
+                    
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestMove = move;
+                    }
+                    
+                    if (ANALYSIS_MODE) {
+                        console.log(`Move ${start.row},${start.col} to ${end.row},${end.col}: score ${score}`);
+                    }
+                } catch (error) {
+                    console.error("Error in neural network prediction:", error);
+                }
+            }
+            
+            if (bestMove) {
+                return bestMove;
+            } else {
+                console.warn("Neural network failed to find a good move, falling back to easy mode");
+                // Fall through to easy mode as a backup
             }
         }
 
@@ -1476,6 +1658,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 cell ? `${cell.player}${cell.state[0]}` : '_'  // Use first letter of state
             ).join('')
         ).join('|');
+    }
+
+    // Serialize board for TF model input
+    function boardToNNInput(boardState) {
+        // Create a 33-element input array for the neural network
+        // 1-32: 8x4 board representation (8 rows x 4 columns)
+        // 33: Current player (1 for PLAYER_B, -1 for PLAYER_A)
+        
+        const input = new Array(33).fill(0);
+        
+        // Fill the first 32 elements with board representation
+        // Each cell is: 1 for PLAYER_B, -1 for PLAYER_A, 0 for empty
+        let idx = 0;
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const cell = boardState[r][c];
+                if (cell) {
+                    // Encode PLAYER_B as 1, PLAYER_A as -1
+                    input[idx] = cell.player === PLAYER_B ? 1 : -1;
+                    
+                    // If piece is swapped, add a smaller value to represent its state
+                    if (cell.state === SWAPPED) {
+                        input[idx] *= 0.5; // Swapped pieces have half value to distinguish them
+                    }
+                }
+                idx++;
+            }
+        }
+        
+        // Last element is current player: 1 for PLAYER_B (AI), -1 for PLAYER_A (opponent)
+        input[32] = 1; // Always PLAYER_B when evaluating in findBestAIMove
+        
+        return input;
     }
 
     function serializeBoardState(boardState) {
