@@ -4,6 +4,7 @@ import time
 import os
 import copy
 import tensorflow as tf
+import argparse
 from collections import deque
 
 from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B
@@ -78,9 +79,9 @@ def get_opponent_action(env):
         
     return best_action
 
-def create_agent_variant(base_agent, noise_scale=NOISE_SCALE):
+def create_agent_variant(base_agent, noise_scale=NOISE_SCALE, epsilon=0.05):
     """Create a variant of the base agent by adding Gaussian noise to its weights."""
-    variant = DQNAgent(epsilon=0.05)  # Lower epsilon since we want mostly exploitation
+    variant = DQNAgent(epsilon=epsilon)  # Variable epsilon based on parameter
     
     # Get the base agent's weights and apply noise
     weights = base_agent.model.get_weights()
@@ -128,12 +129,13 @@ def run_match(env, agent_a, agent_b, max_steps=MAX_STEPS_PER_EPISODE):
     # If max steps reached, it's a draw
     return 'DRAW'
 
-def run_tournament(base_agent, num_variants=NUM_VARIANTS, matches_per_pair=TOURNAMENT_MATCHES):
+def run_tournament(base_agent, num_variants=NUM_VARIANTS, matches_per_pair=TOURNAMENT_MATCHES, direct_phase2=False):
     """Run a round-robin tournament between variants of the base agent."""
     print("\n----- STARTING TOURNAMENT -----")
     
-    # Create variants
-    variants = [create_agent_variant(base_agent) for _ in range(num_variants)]
+    # Create variants - use epsilon=0.01 for direct_phase2_training
+    epsilon_value = 0.01 if direct_phase2 else 0.05
+    variants = [create_agent_variant(base_agent, epsilon=epsilon_value) for _ in range(num_variants)]
     variants.append(base_agent)  # Include the base agent in the tournament
     
     # Initialize scores dictionary
@@ -260,7 +262,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES):
     
     return agent
 
-def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES):
+def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_phase2=False):
     """Phase 2: Tournament self-play training."""
     print("\n===== STARTING PHASE 2: TOURNAMENT SELF-PLAY =====")
     
@@ -323,7 +325,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES):
         # Run tournament and update best agent
         if e % TOURNAMENT_FREQ == 0:
             print(f"\nRunning tournament at episode {e}")
-            best_agent = run_tournament(agent)
+            best_agent = run_tournament(agent, direct_phase2=direct_phase2)
             
             # Update tournament agent with best weights
             tournament_agent = copy.deepcopy(best_agent)
@@ -355,60 +357,113 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES):
     
     return agent
 
-if __name__ == "__main__":
-    # Initialize agent for curriculum learning
+def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_file="switcharoo_dqn_direct_phase2_final.weights.h5"):
+    """Run Phase 2 training directly with an existing model file as input."""
+    print(f"\n===== STARTING DIRECT PHASE 2 TRAINING WITH MODEL: {model_file} =====")
+    
+    # Initialize agent with the fixed epsilon value of 0.01
     agent = DQNAgent(
-        epsilon=0.10,
-        epsilon_decay=.999,
+        epsilon=0.01,  # Fixed epsilon value for direct Phase 2 training
+        epsilon_decay=1.0,  # No decay since we want to keep epsilon fixed
         epsilon_min=0.01,
         replay_buffer_size=1000000,
         batch_size=64,
         target_update_freq=100
     )
     
-    # Check for existing checkpoints
+    # Load the provided model file
+    try:
+        agent.load(model_file)
+        print(f"Successfully loaded model from {model_file}")
+    except Exception as e:
+        print(f"Error loading model from {model_file}: {e}")
+        return None
+    
+    # Run Phase 2 training
     start_episode = 1
-    try:
-        # Specify the directory where checkpoints are stored
-        checkpoint_dir = "./"  # Update this to the correct directory if needed
-        checkpoints = [f for f in os.listdir(checkpoint_dir) if f.startswith("switcharoo_dqn_checkpoint_e")]
+    agent = phase2_training(agent, start_episode, episodes, direct_phase2=True)
+    
+    # Save the final model
+    final_checkpoint_file = CHECKPOINT_FILE.format(episodes)
+    agent.save(final_checkpoint_file)
+    agent.save(final_model_file)
+    print(f"Direct Phase 2 training completed. Final models saved to {final_checkpoint_file} and {final_model_file}")
+    
+    return agent
 
-        if checkpoints:
-            # Sort checkpoints by episode number
-            latest_checkpoint = max(
-                checkpoints,
-                key=lambda x: int(x.split('_e')[-1].split('.weights')[0])
-            )
-            start_episode = int(latest_checkpoint.split('_e')[-1].split('.weights')[0]) + 1
-            agent.load(os.path.join(checkpoint_dir, latest_checkpoint))
-            print(f"Resuming from checkpoint {latest_checkpoint} at episode {start_episode}")
-        else:
-            print("No checkpoints found. Starting from scratch.")
-    except Exception as e:
-        print(f"Error loading checkpoint: {e}")
+if __name__ == "__main__":
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description="Curriculum Training for Switcharoo DQN Agent")
+    parser.add_argument("--phase2-only", action="store_true", help="Run only Phase 2 training")
+    parser.add_argument("--model-file", type=str, help="Path to an existing model file to load for direct Phase 2 training")
+    parser.add_argument("--episodes", type=int, default=PHASE2_EPISODES, help=f"Number of episodes for Phase 2 training (default: {PHASE2_EPISODES})")
+    parser.add_argument("--final-model-file", type=str, default="switcharoo_dqn_direct_phase2_final.weights.h5", 
+                        help="Filename for the final model (default: switcharoo_dqn_direct_phase2_final.weights.h5)")
+    args = parser.parse_args()
+    
+    # Direct Phase 2 Training Mode
+    if args.phase2_only and args.model_file:
+        print(f"Starting direct Phase 2 training with model: {args.model_file}")
+        direct_phase2_training(
+            model_file=args.model_file,
+            episodes=args.episodes,
+            final_model_file=args.final_model_file
+        )
+    else:
+        # Standard Curriculum Training (Phase 1 + Phase 2)
+        # Initialize agent for curriculum learning
+        agent = DQNAgent(
+            epsilon=0.10,
+            epsilon_decay=.999,
+            epsilon_min=0.01,
+            replay_buffer_size=1000000,
+            batch_size=64,
+            target_update_freq=100
+        )
+        
+        # Check for existing checkpoints
         start_episode = 1
-    
-    # Check if Phase 1 is completed
-    phase1_completed = os.path.exists(BASE_MODEL_FILE)
-    
-    try:
-        # Phase 1: Train against random opponent
-        if not phase1_completed:
-            agent = phase1_training(agent, start_episode)
-            start_episode = 1  # Reset episode counter for Phase 2
-        else:
-            print(f"Phase 1 model found: {BASE_MODEL_FILE}. Loading...")
-            agent.load(BASE_MODEL_FILE)
+        try:
+            # Specify the directory where checkpoints are stored
+            checkpoint_dir = "./"  # Update this to the correct directory if needed
+            checkpoints = [f for f in os.listdir(checkpoint_dir) if f.startswith("switcharoo_dqn_checkpoint_e")]
+
+            if checkpoints:
+                # Sort checkpoints by episode number
+                latest_checkpoint = max(
+                    checkpoints,
+                    key=lambda x: int(x.split('_e')[-1].split('.weights')[0])
+                )
+                start_episode = int(latest_checkpoint.split('_e')[-1].split('.weights')[0]) + 1
+                agent.load(os.path.join(checkpoint_dir, latest_checkpoint))
+                print(f"Resuming from checkpoint {latest_checkpoint} at episode {start_episode}")
+            else:
+                print("No checkpoints found. Starting from scratch.")
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}")
+            start_episode = 1
         
-        # Phase 2: Tournament self-play
-        agent = phase2_training(agent, start_episode)
+        # Check if Phase 1 is completed
+        phase1_completed = os.path.exists(BASE_MODEL_FILE)
         
-        print("Curriculum training completed successfully!")
-        
-    except KeyboardInterrupt:
-        print("\nTraining interrupted by user")
-        save_checkpoint(agent, start_episode, emergency=True)
-    except Exception as e:
-        print(f"\nTraining crashed with error: {e}")
-        save_checkpoint(agent, start_episode, emergency=True)
-        raise
+        try:
+            # Phase 1: Train against random opponent
+            if not phase1_completed:
+                agent = phase1_training(agent, start_episode)
+                start_episode = 1  # Reset episode counter for Phase 2
+            else:
+                print(f"Phase 1 model found: {BASE_MODEL_FILE}. Loading...")
+                agent.load(BASE_MODEL_FILE)
+            
+            # Phase 2: Tournament self-play
+            agent = phase2_training(agent, start_episode)
+            
+            print("Curriculum training completed successfully!")
+            
+        except KeyboardInterrupt:
+            print("\nTraining interrupted by user")
+            save_checkpoint(agent, start_episode, emergency=True)
+        except Exception as e:
+            print(f"\nTraining crashed with error: {e}")
+            save_checkpoint(agent, start_episode, emergency=True)
+            raise
