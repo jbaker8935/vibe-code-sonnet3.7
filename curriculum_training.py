@@ -6,6 +6,7 @@ import copy
 import tensorflow as tf
 import argparse
 from collections import deque
+import wandb
 
 from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B
 from dqn_agent import DQNAgent
@@ -28,6 +29,9 @@ BASE_MODEL_FILE = "switcharoo_dqn_curriculum_phase1.weights.h5"
 TOURNAMENT_MODEL_FILE = "switcharoo_dqn_tournament_best.weights.h5"
 CHECKPOINT_FILE = "switcharoo_dqn_checkpoint_e{}.weights.h5"
 TFJS_MODEL_FILE = "./switcharoo_tfjs_model/tf_model.weights.h5"
+
+WANDB_PROJECT = "switcharoo-dqn"
+WANDB_ENTITY = "farmerjohn1958-self"  # Replace with your wandb username
 
 def get_opponent_action(env):
     """Improved policy for the opponent: uses board evaluation instead of random moves."""
@@ -175,10 +179,39 @@ def run_tournament(base_agent, num_variants=NUM_VARIANTS, matches_per_pair=TOURN
     for i, score in scores.items():
         print(f"Variant {i}: {score} points")
     
-    return variants[best_idx]
+    return variants[best_idx], best_score, total_matches
 
-def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES):
+def init_wandb(enable_wandb, run_name, group_name=None):
+    """Initialize wandb with error handling"""
+    if not enable_wandb:
+        return False
+        
+    try:
+        wandb.init(
+            project=WANDB_PROJECT,
+            entity=WANDB_ENTITY,
+            name=run_name,
+            group=group_name,
+            config={
+                "epsilon": agent.epsilon,
+                "epsilon_decay": agent.epsilon_decay,
+                "epsilon_min": agent.epsilon_min,
+                "batch_size": agent.batch_size,
+                "replay_buffer_size": agent.memory.maxlen,
+                "target_update_freq": agent.target_update_freq
+            }
+        )
+        return True
+    except Exception as e:
+        print(f"\nWarning: Failed to initialize wandb: {e}")
+        print("Continuing training without wandb logging...")
+        return False
+
+def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wandb=True):
     """Phase 1: Train against a random opponent."""
+    # Initialize wandb
+    wandb_enabled = init_wandb(enable_wandb, "phase1_training")
+
     print("\n===== STARTING PHASE 1: TRAINING AGAINST RANDOM OPPONENT =====")
     
     env = SwitcharooEnv()
@@ -238,6 +271,23 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES):
         avg_score = np.mean(scores)
         win_rate = np.mean(wins)
         
+        # Log metrics to wandb only if initialization succeeded
+        if wandb_enabled:
+            try:
+                wandb.log({
+                    "episode": e,
+                    "episode_reward": episode_reward,
+                    "avg_score": avg_score,
+                    "win_rate": win_rate,
+                    "epsilon": agent.epsilon,
+                    "memory_size": len(agent.memory),
+                    "steps": agent_steps,
+                    "time_per_episode": time.time() - episode_start
+                })
+            except Exception as e:
+                print(f"\nWarning: Failed to log to wandb: {e}")
+                wandb_enabled = False
+
         # Save best model
         if avg_score > best_avg_score and len(scores) >= 50:
             best_avg_score = avg_score
@@ -260,10 +310,18 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES):
     agent.save(BASE_MODEL_FILE)
     print(f"Phase 1 training completed. Final model saved to {BASE_MODEL_FILE}")
     
+    if wandb_enabled:
+        try:
+            wandb.finish()
+        except:
+            pass
     return agent
 
-def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_phase2=False):
+def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_phase2=False, enable_wandb=True):
     """Phase 2: Tournament self-play training."""
+    # Initialize wandb
+    wandb_enabled = init_wandb(enable_wandb, "phase2_training")
+
     print("\n===== STARTING PHASE 2: TOURNAMENT SELF-PLAY =====")
     
     env = SwitcharooEnv()
@@ -344,10 +402,34 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
             losses.append(0)
             draws.append(1)
         
+        # Log metrics to wandb only if initialization succeeded
+        win_rate = np.mean(wins)
+        loss_rate = np.mean(losses)
+        draw_rate = np.mean(draws)
+        avg_score = np.mean(scores)
+
+        if wandb_enabled:
+            try:
+                wandb.log({
+                    "episode": e,
+                    "episode_reward": episode_reward,
+                    "avg_score": avg_score,
+                    "win_rate": win_rate,
+                    "loss_rate": loss_rate,
+                    "draw_rate": draw_rate,
+                    "epsilon": agent.epsilon,
+                    "memory_size": len(agent.memory),
+                    "steps": agent_steps,
+                    "timeout_rate": 1.0 if info.get('timeout', False) else 0.0
+                })
+            except Exception as e:
+                print(f"\nWarning: Failed to log to wandb: {e}")
+                wandb_enabled = False
+
         # Run tournament and update best agent
         if e % TOURNAMENT_FREQ == 0:
             print(f"\nRunning tournament at episode {e}")
-            best_agent = run_tournament(agent, direct_phase2=direct_phase2)
+            best_agent, tournament_best_score, tournament_matches = run_tournament(agent, direct_phase2=direct_phase2)
             
             # Update tournament agent with best weights
             tournament_agent = copy.deepcopy(best_agent)
@@ -357,6 +439,18 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
             agent = copy.deepcopy(best_agent)
             
             print(f"Tournament completed - new best agent selected")
+            
+            # Additional tournament metrics
+            if wandb_enabled:
+                try:
+                    wandb.log({
+                        "tournament_episode": e,
+                        "tournament_best_score": tournament_best_score,
+                        "tournament_matches": tournament_matches
+                    })
+                except Exception as e:
+                    print(f"\nWarning: Failed to log tournament metrics to wandb: {e}")
+                    wandb_enabled = False
         
         # Periodic checkpoint
         if e % SAVE_FREQ == 0:
@@ -381,9 +475,14 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
     agent.save_for_tfjs(TFJS_MODEL_FILE)
     print(f"Phase 2 training completed. Final model saved.")
     
+    if wandb_enabled:
+        try:
+            wandb.finish()
+        except:
+            pass
     return agent
 
-def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_file="switcharoo_dqn_direct_phase2_final.weights.h5"):
+def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_file="switcharoo_dqn_direct_phase2_final.weights.h5", enable_wandb=True):
     """Run Phase 2 training directly with an existing model file as input."""
     print(f"\n===== STARTING DIRECT PHASE 2 TRAINING WITH MODEL: {model_file} =====")
     
@@ -407,7 +506,7 @@ def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_fil
     
     # Run Phase 2 training
     start_episode = 1
-    agent = phase2_training(agent, start_episode, episodes, direct_phase2=True)
+    agent = phase2_training(agent, start_episode, episodes, direct_phase2=True, enable_wandb=enable_wandb)
     
     # Save the final model
     final_checkpoint_file = CHECKPOINT_FILE.format(episodes)
@@ -425,7 +524,20 @@ if __name__ == "__main__":
     parser.add_argument("--episodes", type=int, default=PHASE2_EPISODES, help=f"Number of episodes for Phase 2 training (default: {PHASE2_EPISODES})")
     parser.add_argument("--final-model-file", type=str, default="switcharoo_dqn_direct_phase2_final.weights.h5", 
                         help="Filename for the final model (default: switcharoo_dqn_direct_phase2_final.weights.h5)")
+    parser.add_argument("--wandb-project", type=str, default=WANDB_PROJECT,
+                       help="Weights & Biases project name")
+    parser.add_argument("--wandb-entity", type=str, default=WANDB_ENTITY,
+                       help="Weights & Biases entity/username")
+    parser.add_argument("--disable-wandb", action="store_true",
+                       help="Disable Weights & Biases logging")
+    parser.add_argument("--resume", action="store_true",
+                       help="Resume training from latest checkpoint if available")
     args = parser.parse_args()
+
+    # Update wandb settings from args
+    WANDB_PROJECT = args.wandb_project
+    WANDB_ENTITY = args.wandb_entity
+    enable_wandb = not args.disable_wandb
     
     # Direct Phase 2 Training Mode
     if args.phase2_only and args.model_file:
@@ -433,7 +545,8 @@ if __name__ == "__main__":
         direct_phase2_training(
             model_file=args.model_file,
             episodes=args.episodes,
-            final_model_file=args.final_model_file
+            final_model_file=args.final_model_file,
+            enable_wandb=enable_wandb
         )
     else:
         # Standard Curriculum Training (Phase 1 + Phase 2)
@@ -447,27 +560,30 @@ if __name__ == "__main__":
             target_update_freq=100
         )
         
-        # Check for existing checkpoints
+        # Check for existing checkpoints only if resume flag is set
         start_episode = 1
-        try:
-            # Specify the directory where checkpoints are stored
-            checkpoint_dir = "./"  # Update this to the correct directory if needed
-            checkpoints = [f for f in os.listdir(checkpoint_dir) if f.startswith("switcharoo_dqn_checkpoint_e")]
+        if args.resume:
+            try:
+                # Specify the directory where checkpoints are stored
+                checkpoint_dir = "./"  # Update this to the correct directory if needed
+                checkpoints = [f for f in os.listdir(checkpoint_dir) if f.startswith("switcharoo_dqn_checkpoint_e")]
 
-            if checkpoints:
-                # Sort checkpoints by episode number
-                latest_checkpoint = max(
-                    checkpoints,
-                    key=lambda x: int(x.split('_e')[-1].split('.weights')[0])
-                )
-                start_episode = int(latest_checkpoint.split('_e')[-1].split('.weights')[0]) + 1
-                agent.load(os.path.join(checkpoint_dir, latest_checkpoint))
-                print(f"Resuming from checkpoint {latest_checkpoint} at episode {start_episode}")
-            else:
-                print("No checkpoints found. Starting from scratch.")
-        except Exception as e:
-            print(f"Error loading checkpoint: {e}")
-            start_episode = 1
+                if checkpoints:
+                    # Sort checkpoints by episode number
+                    latest_checkpoint = max(
+                        checkpoints,
+                        key=lambda x: int(x.split('_e')[-1].split('.weights')[0])
+                    )
+                    start_episode = int(latest_checkpoint.split('_e')[-1].split('.weights')[0]) + 1
+                    agent.load(os.path.join(checkpoint_dir, latest_checkpoint))
+                    print(f"Resuming from checkpoint {latest_checkpoint} at episode {start_episode}")
+                else:
+                    print("No checkpoints found. Starting from scratch.")
+            except Exception as e:
+                print(f"Error loading checkpoint: {e}")
+                start_episode = 1
+        else:
+            print("Starting new training session from scratch.")
         
         # Check if Phase 1 is completed
         phase1_completed = os.path.exists(BASE_MODEL_FILE)
@@ -475,14 +591,14 @@ if __name__ == "__main__":
         try:
             # Phase 1: Train against random opponent
             if not phase1_completed:
-                agent = phase1_training(agent, start_episode)
+                agent = phase1_training(agent, start_episode, enable_wandb=enable_wandb)
                 start_episode = 1  # Reset episode counter for Phase 2
             else:
                 print(f"Phase 1 model found: {BASE_MODEL_FILE}. Loading...")
                 agent.load(BASE_MODEL_FILE)
             
             # Phase 2: Tournament self-play
-            agent = phase2_training(agent, start_episode)
+            agent = phase2_training(agent, start_episode, enable_wandb=enable_wandb)
             
             print("Curriculum training completed successfully!")
             
