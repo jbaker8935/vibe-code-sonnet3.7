@@ -4,6 +4,7 @@ from tensorflow import keras
 from dqn_agent import DQNAgent
 import numpy as np
 import json
+from game_env import NUM_ACTIONS
 
 def convert_model_for_tfjs():
     # Initialize the agent to load the weights
@@ -17,7 +18,7 @@ def convert_model_for_tfjs():
     )
     
     # Load the weights using the agent's method
-    weights_file = "switcharoo_dqn_checkpoint_e85000.weights.h5"
+    weights_file = "switcharoo_dqn_tournament_best.weights.h5"
     agent.load(weights_file)
     print(f"Model weights loaded from {weights_file} using DQNAgent.")
 
@@ -39,14 +40,30 @@ def convert_model_for_tfjs():
     # Extract input shape from the agent's model
     input_shape = agent.model.inputs[0].shape[1]  # Should be 33
     
-    # Create a new model with the EXACT same architecture PLUS an output layer
-    complete_model = keras.Sequential([
-        keras.layers.InputLayer(input_shape=(input_shape,), name="input_layer"),
-        keras.layers.Dense(128, activation='relu', name="dense"),
-        keras.layers.Dense(128, activation='relu', name="dense_1"),
-        keras.layers.Dense(256, activation='relu', name="dense_2"),
-        keras.layers.Dense(121, activation='linear', name="output_layer")  # Missing output layer
-    ])
+    # Create a new model with the EXACT same architecture as in DQNAgent
+    input_layer = keras.layers.Input(shape=(input_shape,), name="input_layer")
+    
+    # Reshape the board state for spatial processing
+    board_input = keras.layers.Lambda(lambda x: x[:, :-1], name="board_input")(input_layer)
+    board_reshaped = keras.layers.Reshape((8, 4, 1), name="board_reshape")(board_input)
+    
+    # Process board state with Conv2D layers
+    x1 = keras.layers.Conv2D(32, (3, 2), activation='relu', padding='same', name="conv2d_1")(board_reshaped)
+    x1 = keras.layers.Conv2D(64, (3, 2), activation='relu', padding='same', name="conv2d_2")(x1)
+    x1 = keras.layers.Flatten(name="flatten")(x1)
+    
+    # Process player indicator
+    player_input = keras.layers.Lambda(lambda x: x[:, -1:], name="player_input")(input_layer)
+    
+    # Combine features
+    combined = keras.layers.Concatenate(name="concatenate")([x1, player_input])
+    x = keras.layers.Dense(256, activation='relu', name="dense_1")(combined)
+    x = keras.layers.Dense(128, activation='relu', name="dense_2")(x)
+    
+    # Output layer
+    output = keras.layers.Dense(NUM_ACTIONS, activation='linear', name="output")(x)
+    
+    complete_model = keras.Model(inputs=input_layer, outputs=output)
     
     # Set the weights for the first 3 dense layers
     layer_weights = []

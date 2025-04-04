@@ -55,13 +55,24 @@ class DQNAgent:
         self.update_target_model() # Initialize target model weights
 
     def _build_model(self):
-        """Builds a simpler feedforward network model optimized for mobile devices."""
-        # Input layer
+        """Builds a network that emphasizes positional patterns."""
         input_layer = layers.Input(shape=(self.state_size,))
         
-        # Simple feedforward network with fewer parameters
-        # No reshape or convolutional layers, greatly reducing complexity
-        x = layers.Dense(128, activation='relu')(input_layer)
+        # Reshape the board state for spatial processing
+        board_input = layers.Lambda(lambda x: x[:, :-1])(input_layer)  # Exclude player indicator
+        board_reshaped = layers.Reshape((8, 4, 1))(board_input)
+        
+        # Process board state
+        x1 = layers.Conv2D(32, (3, 2), activation='relu', padding='same')(board_reshaped)
+        x1 = layers.Conv2D(64, (3, 2), activation='relu', padding='same')(x1)
+        x1 = layers.Flatten()(x1)
+        
+        # Process player indicator
+        player_input = layers.Lambda(lambda x: x[:, -1:])(input_layer)
+        
+        # Combine features
+        combined = layers.Concatenate()([x1, player_input])
+        x = layers.Dense(256, activation='relu')(combined)
         x = layers.Dense(128, activation='relu')(x)
         
         # Output layer

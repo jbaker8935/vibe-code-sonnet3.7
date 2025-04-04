@@ -8,6 +8,7 @@ from numba import njit
 # --- Constants ---
 ROWS = 8
 COLS = 4
+MAX_STEPS_PER_EPISODE = 300  # Maximum steps before forcing a draw
 
 # Numerical Player IDs (Used internally and in JIT functions)
 PLAYER_A_ID = 1
@@ -180,35 +181,44 @@ def _check_win_condition_jit(board, player_id):
 
 @njit(cache=True)
 def _evaluate_board_jit(board, player_id):
-
     rows, cols = board.shape
     start_row = rows - 2 if player_id == PLAYER_A_ID else 1
     target_row = 1 if player_id == PLAYER_A_ID else rows - 2
-    active_row_count=0
-    back_row_count=0
-    on_start=0
-    on_target=0
-    for r in range(1, rows- 1):
+    
+    # Add forward progress tracking
+    forward_progress = 0
+    piece_count = 0
+    
+    for r in range(rows):
         for c in range(cols):
-            piece = board[start_row, c]
+            piece = board[r, c]
             if piece != EMPTY_CELL and _get_piece_player_id(piece) == player_id:
-                active_row_count+=1
-                if r == start_row:
-                    on_start=1
-                if r == target_row:
-                    on_target=1
-                break
+                piece_count += 1
+                # Reward being closer to target row
+                if player_id == PLAYER_A_ID:
+                    forward_progress += (rows - r)  # Higher score for being closer to top
+                else:
+                    forward_progress += r  # Higher score for being closer to bottom
 
-    for c in range(cols):
-        piece = board[0 if player_id == PLAYER_A_ID else rows - 1, c]
-        if piece != EMPTY_CELL and _get_piece_player_id(piece) == player_id:
-            back_row_count+=1
-    # board score range -1 to 3  
-    score = ((on_start+on_target) + 2 * active_row_count - back_row_count) * 0.5
-
-    # Ensure the score is valid
-    if np.isnan(score) or np.isinf(score):
-        score = 0.0  # Fallback to a neutral score
+    # Normalize forward progress
+    avg_progress = forward_progress / max(piece_count, 1)
+    
+    # Original evaluation components
+    active_row_count = 0
+    back_row_count = 0
+    on_start = 0
+    on_target = 0
+    
+    # ...existing counting code...
+    
+    # Modified scoring that heavily weights forward progress
+    score = (
+        (on_start + on_target) * 0.5 +  # Base position score
+        2.0 * active_row_count +         # Active pieces
+        -1.0 * back_row_count +          # Penalize back row pieces
+        3.0 * (avg_progress / rows)      # Normalized forward progress bonus
+    )
+    
     return score
 
 
@@ -218,7 +228,8 @@ class SwitcharooEnv:
     def __init__(self):
         self.board = np.zeros((ROWS, COLS), dtype=np.int8)
         self.current_player_id = PLAYER_A_ID
-        self.winner_id = 0 # 0: None, 1: A, 2: B, 3: Draw
+        self.winner_id = 0  # 0: None, 1: A, 2: B, 3: Draw
+        self.step_count = 0  # Add step counter
         self.reset()
 
     def reset(self):
@@ -226,6 +237,7 @@ class SwitcharooEnv:
         self.board.fill(EMPTY_CELL)
         self.current_player_id = PLAYER_A_ID
         self.winner_id = 0
+        self.step_count = 0  # Reset step counter
 
         for r in range(ROWS):
             for c in range(COLS):
@@ -316,6 +328,7 @@ class SwitcharooEnv:
         Performs a move based on the action index.
         Returns: (next_state, reward, done, info)
         """
+        self.step_count += 1  # Increment step counter
         move = self._action_index_to_move(action_index)
         current_player_id = self.current_player_id # Store before potential switch
 
@@ -358,11 +371,15 @@ class SwitcharooEnv:
                 done = True
             else:
                 # Game continues
-                reward = -0.1 # Small penalty per step
+                turn_number_penalty = -0.2 * (1.0 + (self.step_count / MAX_STEPS_PER_EPISODE) ** 2)
+                reward = turn_number_penalty
+
                 if move_type == 'swap':
-                    reward += 1.0 # Small bonus for swapping
-                # add heuristic score which is a delta for the move.
-                reward+= (_evaluate_board_jit(self.board, current_player_id) - current_score)
+                    reward += 3.0  # Increased swap bonus to encourage aggressive play
+                    
+                # Modify the heuristic score to reward forward progress
+                position_delta = _evaluate_board_jit(self.board, current_player_id) - current_score
+                reward += position_delta * 3.0  # Increased weight of position improvements
 
                 done = False
 

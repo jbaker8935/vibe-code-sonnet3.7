@@ -104,7 +104,7 @@ def run_match(env, agent_a, agent_b, max_steps=MAX_STEPS_PER_EPISODE):
     for step in range(max_steps):
         current_player = env.current_player
         
-        if current_player == PLAYER_A:
+        if (current_player == PLAYER_A):
             # Agent A's turn
             legal_actions = env.get_legal_action_indices(player=PLAYER_A)
             if not legal_actions:
@@ -269,6 +269,8 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
     env = SwitcharooEnv()
     scores = deque(maxlen=100)
     wins = deque(maxlen=100)
+    losses = deque(maxlen=100)  # Track losses
+    draws = deque(maxlen=100)   # Track draws
     tournament_agent = copy.deepcopy(agent)
     
     for e in range(start_episode, episodes + 1):
@@ -309,6 +311,14 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
             
             if done:
                 break
+            
+            # Force end game if taking too long
+            if step >= MAX_STEPS_PER_EPISODE - 1:
+                done = True
+                reward = -50.0  # Heavy penalty for timeout
+                info['winner'] = 'DRAW'
+                info['timeout'] = True
+                break
         
         # Additional training at episode end
         if len(agent.memory) > agent.batch_size:
@@ -320,7 +330,19 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
         
         # Track performance
         scores.append(episode_reward)
-        wins.append(1 if info.get('winner') == PLAYER_B else 0)
+        # Track game outcome
+        if info.get('winner') == PLAYER_B:
+            wins.append(1)
+            losses.append(0)
+            draws.append(0)
+        elif info.get('winner') == PLAYER_A:
+            wins.append(0)
+            losses.append(1)
+            draws.append(0)
+        else:  # Draw
+            wins.append(0)
+            losses.append(0)
+            draws.append(1)
         
         # Run tournament and update best agent
         if e % TOURNAMENT_FREQ == 0:
@@ -343,10 +365,14 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
         # Display progress
         if e % 100 == 0:
             win_rate = np.mean(wins)
+            loss_rate = np.mean(losses)
+            draw_rate = np.mean(draws)
             avg_score = np.mean(scores)
             print(f"Phase 2 - Episode: {e}/{episodes} | "
                   f"Score: {episode_reward:.2f} | "
                   f"Win Rate: {win_rate:.2f} | "
+                  f"Loss Rate: {loss_rate:.2f} | "
+                  f"Draw Rate: {draw_rate:.2f} | "
                   f"Epsilon: {agent.epsilon:.4f} | "
                   f"Avg Score: {avg_score:.2f}")
     
