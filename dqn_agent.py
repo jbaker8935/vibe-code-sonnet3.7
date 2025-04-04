@@ -90,7 +90,7 @@ class DQNAgent:
         
         # Add attention mechanism to focus on relevant historical states
         attention = layers.Dense(64, activation='tanh')(x2)
-        attention = layers.Dense(1, activation='softmax', use_bias=False)(attention)
+        attention = layers.Dense(1, activation='sigmoid', use_bias=False)(attention)  # Changed from softmax
         x2 = layers.Multiply()([x2, attention])
         
         # Bidirectional LSTM to better capture move patterns

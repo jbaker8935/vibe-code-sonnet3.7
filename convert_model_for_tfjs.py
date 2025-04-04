@@ -4,7 +4,7 @@ from tensorflow import keras
 from dqn_agent import DQNAgent
 import numpy as np
 import json
-from game_env import NUM_ACTIONS
+from game_env import NUM_ACTIONS, ROWS, COLS
 
 def convert_model_for_tfjs():
     # Initialize the agent to load the weights
@@ -70,9 +70,9 @@ def convert_model_for_tfjs():
     )(x2)
     x2 = keras.layers.TimeDistributed(keras.layers.Flatten(), name="history_flatten")(x2)
     
-    # Attention mechanism
+    # Attention mechanism with sigmoid instead of softmax
     attention = keras.layers.Dense(64, activation='tanh', name="attention_dense")(x2)
-    attention = keras.layers.Dense(1, activation='softmax', use_bias=False, name="attention_scores")(attention)
+    attention = keras.layers.Dense(1, activation='sigmoid', use_bias=False, name="attention_scores")(attention)
     x2 = keras.layers.Multiply(name="attention_multiply")([x2, attention])
     
     # Bidirectional LSTM layers
