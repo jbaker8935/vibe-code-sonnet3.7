@@ -217,6 +217,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
     env = SwitcharooEnv()
     scores = deque(maxlen=100)
     wins = deque(maxlen=100)
+    losses = deque(maxlen=100)  # Add losses tracking
+    draws = deque(maxlen=100)   # Add draws tracking
     best_avg_score = float('-inf')
     
     for e in range(start_episode, episodes + 1):
@@ -267,10 +269,25 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         
         # Track performance
         scores.append(episode_reward)
-        wins.append(1 if info.get('winner') == PLAYER_B else 0)
+        # Track game outcome
+        if info.get('winner') == PLAYER_B:
+            wins.append(1)
+            losses.append(0)
+            draws.append(0)
+        elif info.get('winner') == PLAYER_A:
+            wins.append(0)
+            losses.append(1)
+            draws.append(0)
+        else:  # Draw
+            wins.append(0)
+            losses.append(0)
+            draws.append(1)
+            
         avg_score = np.mean(scores)
         win_rate = np.mean(wins)
-        
+        loss_rate = np.mean(losses)
+        draw_rate = np.mean(draws)
+
         # Log metrics to wandb only if initialization succeeded
         if wandb_enabled:
             try:
@@ -279,6 +296,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                     "episode_reward": episode_reward,
                     "avg_score": avg_score,
                     "win_rate": win_rate,
+                    "loss_rate": loss_rate,
+                    "draw_rate": draw_rate,
                     "epsilon": agent.epsilon,
                     "memory_size": len(agent.memory),
                     "steps": agent_steps,
@@ -303,6 +322,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
             print(f"Phase 1 - Episode: {e}/{episodes} | "
                   f"Score: {episode_reward:.2f} | "
                   f"Win Rate: {win_rate:.2f} | "
+                  f"Loss Rate: {loss_rate:.2f} | "
+                  f"Draw Rate: {draw_rate:.2f} | "
                   f"Epsilon: {agent.epsilon:.4f} | "
                   f"Avg Score: {avg_score:.2f}")
     
