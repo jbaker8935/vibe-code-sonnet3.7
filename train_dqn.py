@@ -4,6 +4,7 @@ from collections import deque
 import time
 import os
 import tensorflow as tf
+from numba import njit
 
 from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B
 from dqn_agent import DQNAgent
@@ -77,6 +78,13 @@ def get_opponent_action(env):
         
     return best_action
 
+@njit(cache=True)
+def _validate_reward(reward):
+    """JIT-compiled reward validation."""
+    if np.isnan(reward) or np.isinf(reward):
+        return 0.0
+    return reward
+
 # Safely replay the experience to handle tensor conversion errors
 def safe_replay(agent):
     try:
@@ -147,13 +155,7 @@ if __name__ == "__main__":
 
                     action = agent.act(state, legal_actions)
                     next_state, reward, done, info = env.step(action)
-
-                    # Ensure reward is valid
-                    if np.isnan(reward) or np.isinf(reward):
-                        print(f"Warning: Invalid reward detected ({reward}). Setting reward to 0.")
-                        reward = 0.0
-
-                    # Remember this experience for the agent
+                    reward = _validate_reward(reward)  # Use JIT for reward validation
                     agent.remember(state, action, reward, next_state, done)
                     episode_reward += reward
                     agent_steps += 1

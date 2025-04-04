@@ -9,6 +9,9 @@ from numba import njit
 ROWS = 8
 COLS = 4
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps before forcing a draw
+HISTORY_LENGTH = 8  # Increased to catch 4 moves from each player
+EARLY_GAME_MOVES = 40  # First 20 moves by each player
+MID_GAME_MOVES = 60   # Next 10 moves by each player
 
 # Numerical Player IDs (Used internally and in JIT functions)
 PLAYER_A_ID = 1
@@ -179,47 +182,55 @@ def _check_win_condition_jit(board, player_id):
 
     return False
 
+@njit(parallel=True, cache=True)
+def _evaluate_board_batch(boards, player_id):
+    """Evaluates multiple board states in parallel."""
+    num_boards = boards.shape[0]
+    scores = np.zeros(num_boards, dtype=np.float32)
+    
+    for i in numba.prange(num_boards):
+        scores[i] = _evaluate_board_jit(boards[i], player_id)
+    
+    return scores
+
+@njit(parallel=True, cache=True)
+def _get_legal_moves_batch(boards, player_id):
+    """Gets legal moves for multiple boards in parallel."""
+    num_boards = boards.shape[0]
+    all_moves = []
+    
+    for i in numba.prange(num_boards):
+        moves = _get_legal_moves_jit(boards[i], player_id)
+        all_moves.append(moves)
+    
+    return all_moves
+
+# Modify the existing _evaluate_board_jit to be more efficient
 @njit(cache=True)
 def _evaluate_board_jit(board, player_id):
+    """Optimized board evaluation with vectorized operations."""
     rows, cols = board.shape
-    start_row = rows - 2 if player_id == PLAYER_A_ID else 1
     target_row = 1 if player_id == PLAYER_A_ID else rows - 2
     
-    # Add forward progress tracking
-    forward_progress = 0
-    piece_count = 0
+    # Vectorized piece counting and progress calculation
+    piece_positions = np.where((board == (A_NORMAL if player_id == PLAYER_A_ID else B_NORMAL)) | 
+                             (board == (A_SWAPPED if player_id == PLAYER_A_ID else B_SWAPPED)))
     
-    for r in range(rows):
-        for c in range(cols):
-            piece = board[r, c]
-            if piece != EMPTY_CELL and _get_piece_player_id(piece) == player_id:
-                piece_count += 1
-                # Reward being closer to target row
-                if player_id == PLAYER_A_ID:
-                    forward_progress += (rows - r)  # Higher score for being closer to top
-                else:
-                    forward_progress += r  # Higher score for being closer to bottom
-
-    # Normalize forward progress
-    avg_progress = forward_progress / max(piece_count, 1)
+    if len(piece_positions[0]) == 0:
+        return -100.0  # Penalize states with no pieces
     
-    # Original evaluation components
-    active_row_count = 0
-    back_row_count = 0
-    on_start = 0
-    on_target = 0
+    # Calculate forward progress using vectorized operations
+    if player_id == PLAYER_A_ID:
+        progress = np.sum(rows - piece_positions[0])  # Distance from bottom
+    else:
+        progress = np.sum(piece_positions[0])  # Distance from top
+        
+    # Calculate positional bonuses
+    target_pieces = np.sum(piece_positions[0] == target_row)
+    avg_progress = progress / len(piece_positions[0])
     
-    # ...existing counting code...
-    
-    # Modified scoring that heavily weights forward progress
-    score = (
-        (on_start + on_target) * 0.5 +  # Base position score
-        2.0 * active_row_count +         # Active pieces
-        -1.0 * back_row_count +          # Penalize back row pieces
-        3.0 * (avg_progress / rows)      # Normalized forward progress bonus
-    )
-    
-    return score
+    return (target_pieces * 2.0 +  # Heavily weight pieces on target row
+            avg_progress * 3.0)    # Weight forward progress
 
 
 # --- Environment Class ---
@@ -230,6 +241,7 @@ class SwitcharooEnv:
         self.current_player_id = PLAYER_A_ID
         self.winner_id = 0  # 0: None, 1: A, 2: B, 3: Draw
         self.step_count = 0  # Add step counter
+        self.move_history = deque(maxlen=HISTORY_LENGTH)  # Store recent board states
         self.reset()
 
     def reset(self):
@@ -238,6 +250,9 @@ class SwitcharooEnv:
         self.current_player_id = PLAYER_A_ID
         self.winner_id = 0
         self.step_count = 0  # Reset step counter
+        self.move_history.clear()
+        for _ in range(HISTORY_LENGTH):
+            self.move_history.append(np.zeros((ROWS, COLS), dtype=np.int8))
 
         for r in range(ROWS):
             for c in range(COLS):
@@ -248,17 +263,18 @@ class SwitcharooEnv:
         return self._get_state()
 
     def _get_state(self):
-        """Enhanced state representation with more meaningful features."""
-        # Base state (current implementation)
+        """Enhanced state representation including move history."""
+        # Current board state
         flat_board = self.board.flatten().astype(np.float32)
         
-        # 1. Create normalized state representation
-        state = np.zeros(NUM_CELLS + 1, dtype=np.float32)
+        # Flatten and normalize historical states
+        history_states = np.array([board.flatten() for board in self.move_history])
+        flat_history = history_states.flatten().astype(np.float32) / 4.0
         
-        # 2. Normalize board values (0-4) to (0-1) range for better neural network processing
+        # Combine current state, history, and player indicator
+        state = np.zeros(NUM_CELLS + (NUM_CELLS * HISTORY_LENGTH) + 1, dtype=np.float32)
         state[:NUM_CELLS] = flat_board / 4.0
-        
-        # 3. Add current player info (0.0 for A, 1.0 for B)
+        state[NUM_CELLS:-1] = flat_history
         state[-1] = 0.0 if self.current_player_id == PLAYER_A_ID else 1.0
         
         return state
@@ -370,17 +386,37 @@ class SwitcharooEnv:
                 reward = 0.0 # Draw reward
                 done = True
             else:
-                # Game continues
-                turn_number_penalty = -0.2 * (1.0 + (self.step_count / MAX_STEPS_PER_EPISODE) ** 2)
-                reward = turn_number_penalty
-
+                # Game continues - Modified reward structure
+                reward = 0.0  # Base reward
+                
                 if move_type == 'swap':
-                    reward += 3.0  # Increased swap bonus to encourage aggressive play
-                    
-                # Modify the heuristic score to reward forward progress
+                    reward += 3.0  # Keep swap bonus
+                
+                # Position improvement reward
                 position_delta = _evaluate_board_jit(self.board, current_player_id) - current_score
-                reward += position_delta * 3.0  # Increased weight of position improvements
-
+                reward += position_delta * 3.0
+                
+                # Enhanced repetition detection
+                piece_moved = None
+                for hist_board in self.move_history:
+                    if np.array_equal(self.board, hist_board):
+                        # Direct position repeat
+                        reward -= 5.0
+                        break
+                    
+                    # Check if any piece is moving back to a previous position
+                    # Compare current move against positions in history
+                    diff = self.board - hist_board
+                    if np.count_nonzero(diff) <= 4:  # Only a few pieces different
+                        overlap = np.logical_and(diff != 0, hist_board != 0)
+                        if np.any(overlap):
+                            # A piece moved back to a previous position
+                            reward -= 3.0
+                            break
+                
+                # Add current board to history
+                self.move_history.append(self.board.copy())
+                
                 done = False
 
         next_state = self._get_state()

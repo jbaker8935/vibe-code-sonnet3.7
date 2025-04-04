@@ -4,6 +4,14 @@ from collections import deque
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+from numba import njit
+import numba
+
+# Import constants and functions from game_env
+from game_env import (
+    ROWS, COLS, NUM_ACTIONS, PLAYER_B_ID,
+    _evaluate_board_batch, _apply_move_jit, _evaluate_board_jit
+)
 
 # Configure GPU
 physical_devices = tf.config.list_physical_devices('GPU')
@@ -25,7 +33,8 @@ else:
 from game_env import ROWS, COLS, NUM_ACTIONS
 
 # DQN Agent Configuration
-STATE_SIZE = ROWS * COLS + 1 # Board state + current player indicator
+HISTORY_LENGTH = 8  # Match game_env.py
+STATE_SIZE = (ROWS * COLS) * (HISTORY_LENGTH + 1) + 1  # Current board + history + player
 ACTION_SIZE = NUM_ACTIONS
 
 class DQNAgent:
@@ -55,27 +64,44 @@ class DQNAgent:
         self.update_target_model() # Initialize target model weights
 
     def _build_model(self):
-        """Builds a network that emphasizes positional patterns."""
+        """Enhanced network that processes both current state and history."""
         input_layer = layers.Input(shape=(self.state_size,))
         
-        # Reshape the board state for spatial processing
-        board_input = layers.Lambda(lambda x: x[:, :-1])(input_layer)  # Exclude player indicator
-        board_reshaped = layers.Reshape((8, 4, 1))(board_input)
+        # Split current board and history
+        current_board = layers.Lambda(lambda x: x[:, :ROWS*COLS])(input_layer)
+        history_boards = layers.Lambda(lambda x: x[:, ROWS*COLS:-1])(input_layer)
+        player_input = layers.Lambda(lambda x: x[:, -1:])(input_layer)
         
-        # Process board state
-        x1 = layers.Conv2D(32, (3, 2), activation='relu', padding='same')(board_reshaped)
+        # Process current board
+        current_reshaped = layers.Reshape((8, 4, 1))(current_board)
+        x1 = layers.Conv2D(32, (3, 2), activation='relu', padding='same')(current_reshaped)
         x1 = layers.Conv2D(64, (3, 2), activation='relu', padding='same')(x1)
         x1 = layers.Flatten()(x1)
         
-        # Process player indicator
-        player_input = layers.Lambda(lambda x: x[:, -1:])(input_layer)
+        # Process history boards
+        history_reshaped = layers.Reshape((HISTORY_LENGTH, 8, 4, 1))(
+            layers.Reshape((HISTORY_LENGTH, ROWS*COLS))(history_boards)
+        )
+        
+        # Use TimeDistributed to apply same Conv2D to each history board
+        x2 = layers.TimeDistributed(layers.Conv2D(32, (3, 2), activation='relu', padding='same'))(history_reshaped)
+        x2 = layers.TimeDistributed(layers.Conv2D(64, (3, 2), activation='relu', padding='same'))(x2)
+        x2 = layers.TimeDistributed(layers.Flatten())(x2)
+        
+        # Add attention mechanism to focus on relevant historical states
+        attention = layers.Dense(64, activation='tanh')(x2)
+        attention = layers.Dense(1, activation='softmax', use_bias=False)(attention)
+        x2 = layers.Multiply()([x2, attention])
+        
+        # Bidirectional LSTM to better capture move patterns
+        x2 = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(x2)
+        x2 = layers.Bidirectional(layers.LSTM(64))(x2)
         
         # Combine features
-        combined = layers.Concatenate()([x1, player_input])
+        combined = layers.Concatenate()([x1, x2, player_input])
         x = layers.Dense(256, activation='relu')(combined)
         x = layers.Dense(128, activation='relu')(x)
         
-        # Output layer
         output = layers.Dense(self.action_size, activation='linear')(x)
         
         model = keras.Model(inputs=input_layer, outputs=output)
@@ -215,6 +241,57 @@ class DQNAgent:
         # Epsilon decay removed from here
             
         return loss  # Return loss tensor directly, not numpy()
+
+    def act_batch(self, states, legal_actions_list):
+        """Batch version of act() for improved performance."""
+        if np.random.rand() <= self.epsilon:
+            return [random.choice(actions) for actions in legal_actions_list]
+        
+        # Get Q-values for all states at once
+        states_tensor = tf.convert_to_tensor(states)
+        q_values_batch = self.model(states_tensor, training=False).numpy()
+        
+        selected_actions = []
+        for i, (q_values, legal_actions) in enumerate(zip(q_values_batch, legal_actions_list)):
+            # Filter for legal actions
+            legal_q_values = np.take(q_values, legal_actions)
+            max_q = np.max(legal_q_values)
+            best_indices = np.where(np.isclose(legal_q_values, max_q, rtol=1e-5))[0]
+            
+            if len(best_indices) > 1:
+                # Use vectorized board evaluation for tiebreaking
+                board_states = np.tile(states[i][:-1].reshape(8, 4), (len(best_indices), 1, 1))
+                board_states = (board_states * 4).astype(np.int8)
+                
+                # Generate all potential next states in parallel
+                move_indices = [legal_actions[idx] for idx in best_indices]
+                next_boards = self._get_next_boards_batch(board_states, move_indices)
+                
+                # Evaluate all boards in parallel using imported function
+                scores = _evaluate_board_batch(next_boards, PLAYER_B_ID)
+                best_action_idx = move_indices[np.argmax(scores)]
+            else:
+                best_action_idx = legal_actions[best_indices[0]]
+                
+            selected_actions.append(best_action_idx)
+        
+        return selected_actions
+
+    # Note: Remove the njit decorator from this method since it's a class method
+    # and can't be easily JIT compiled. The core operations are still JIT compiled
+    # through the imported functions.
+    def _get_next_boards_batch(self, board_states, move_indices):
+        """Generate next board states for multiple moves in parallel."""
+        num_boards = len(move_indices)
+        next_boards = np.zeros((num_boards, 8, 4), dtype=np.int8)
+        
+        for i in range(num_boards):  # Removed parallel processing since this is a class method
+            board_copy = board_states[i].copy()
+            start_r, start_c, end_r, end_c = self._get_move_from_action(move_indices[i])
+            _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
+            next_boards[i] = board_copy
+            
+        return next_boards
 
     def load(self, name):
         """Loads model weights from a file."""

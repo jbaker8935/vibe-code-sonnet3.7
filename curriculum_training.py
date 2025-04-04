@@ -7,6 +7,7 @@ import tensorflow as tf
 import argparse
 from collections import deque
 import wandb
+from numba import njit
 
 from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B
 from dqn_agent import DQNAgent
@@ -207,6 +208,13 @@ def init_wandb(enable_wandb, run_name, group_name=None):
         print("Continuing training without wandb logging...")
         return False
 
+@njit(cache=True)
+def _validate_reward(reward):
+    """JIT-compiled reward validation."""
+    if np.isnan(reward) or np.isinf(reward):
+        return 0.0
+    return reward
+
 def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wandb=True):
     """Phase 1: Train against a random opponent."""
     # Initialize wandb
@@ -237,10 +245,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 
                 action = agent.act(state, legal_actions)
                 next_state, reward, done, info = env.step(action)
-                
-                if np.isnan(reward) or np.isinf(reward):
-                    reward = 0.0
-                
+                reward = _validate_reward(reward)  # Use JIT for reward validation
                 agent.remember(state, action, reward, next_state, done)
                 episode_reward += reward
                 agent_steps += 1
@@ -367,10 +372,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 
                 action = agent.act(state, legal_actions)
                 next_state, reward, done, info = env.step(action)
-                
-                if np.isnan(reward) or np.isinf(reward):
-                    reward = 0.0
-                
+                reward = _validate_reward(reward)  # Use JIT for reward validation
                 agent.remember(state, action, reward, next_state, done)
                 episode_reward += reward
                 agent_steps += 1
@@ -573,7 +575,7 @@ if __name__ == "__main__":
         # Standard Curriculum Training (Phase 1 + Phase 2)
         # Initialize agent for curriculum learning
         agent = DQNAgent(
-            epsilon=0.10,
+            epsilon=1.0,
             epsilon_decay=.999,
             epsilon_min=0.01,
             replay_buffer_size=1000000,
