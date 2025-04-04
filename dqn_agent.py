@@ -30,11 +30,12 @@ else:
     print("No GPU available. Running on CPU.")
 
 # Import constants from the environment
-from game_env import ROWS, COLS, NUM_ACTIONS
+from game_env import ROWS, COLS, NUM_ACTIONS, HISTORY_LENGTH
 
-# DQN Agent Configuration
-HISTORY_LENGTH = 8  # Match game_env.py
-STATE_SIZE = 5 + (HISTORY_LENGTH * 5) + 1  # Current board (5) + history + player indicator
+# State size calculation for binary representation
+BINARY_BOARD_SIZE = 5  # 5 uint32 values per board
+STATE_SIZE = BINARY_BOARD_SIZE + (HISTORY_LENGTH * BINARY_BOARD_SIZE) + 1  # Current + history + player
+
 ACTION_SIZE = NUM_ACTIONS
 
 from binary_board import board_to_binary, binary_to_board
@@ -120,25 +121,22 @@ class DQNAgent:
         Chooses an action using epsilon-greedy policy, considering only legal moves.
         Uses board evaluation as a tiebreaker when multiple actions have the same Q-value.
         """
-        import numpy as np
+        from binary_board import binary_to_board
+        from game_env import _evaluate_board_jit, _apply_move_jit, PLAYER_B_ID
         
-        if not legal_actions_indices: # Should not happen if game logic is correct
+        if not legal_actions_indices:
             print("Warning: No legal actions available in act method.")
-            return np.random.randint(self.action_size) # Fallback, though problematic
+            return np.random.randint(self.action_size)
 
         if np.random.rand() <= self.epsilon:
-            # Exploration: Choose a random legal action
             return random.choice(legal_actions_indices)
         else:
-            # Exploitation: Choose the best legal action based on Q-values
             state_tensor = tf.convert_to_tensor(state)
-            state_tensor = tf.expand_dims(state_tensor, 0) # Add batch dimension
-            act_values = self.model(state_tensor, training=False) # Get Q-values from model
+            state_tensor = tf.expand_dims(state_tensor, 0)
+            act_values = self.model(state_tensor, training=False)
 
-            # Vectorized filtering of Q-values for legal actions
+            # Handle NaN values
             q_values = act_values.numpy()[0]
-
-            # Handle NaN values in Q-values
             if np.isnan(q_values).any():
                 print("Warning: NaN detected in Q-values. Using fallback values.")
                 q_values = np.zeros_like(q_values)
@@ -146,57 +144,59 @@ class DQNAgent:
             legal_q_values = np.take(q_values, legal_actions_indices)
             max_q = np.max(legal_q_values)
             
-            # Find actions with Q-values close to the maximum (allowing for small numerical differences)
+            # Find actions with Q-values close to the maximum
             best_indices = np.where(np.isclose(legal_q_values, max_q, rtol=1e-5))[0]
             
-            # If multiple actions have effectively the same Q-value, use board evaluation as a tiebreaker
+            # If multiple actions have effectively the same Q-value, use board evaluation
             if len(best_indices) > 1:
-                from game_env import _evaluate_board_jit, _apply_move_jit, PLAYER_B_ID
-                
-                # Get the current board state and reshape it
-                board_state = state[:-1].reshape((8, 4))  # Reshape to 8x4 board
-                board_state = (board_state * 4).astype(np.int8)  # Scale back from 0-1 to 0-4
+                # Get the current binary board state and convert to regular board
+                current_binary = state[:5]  # First 5 values are current board state
+                board_state = binary_to_board(current_binary.astype(np.uint32))
                 
                 best_score = float('-inf')
-                best_action_idx = legal_actions_indices[best_indices[0]]  # Default to first action if evaluation fails
+                best_action_idx = legal_actions_indices[best_indices[0]]
                 
                 for idx in best_indices:
                     action_idx = legal_actions_indices[idx]
-                    # Convert action index to move
-                    start_r, start_c, end_r, end_c = self._get_move_from_action(action_idx)
-                    
-                    # Create a copy of the board to simulate the move
+                    move = self._get_move_from_action(action_idx)
+                    if move is None:
+                        continue
+                        
+                    start_r, start_c, end_r, end_c = move
                     board_copy = board_state.copy()
                     
-                    # Apply the move on the copied board
                     _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
-                    
-                    # Evaluate the resulting board state
                     score = _evaluate_board_jit(board_copy, PLAYER_B_ID)
                     
-                    # Keep track of the best score and action
                     if score > best_score:
                         best_score = score
                         best_action_idx = action_idx
-                
+                        
                 return best_action_idx
-            
-            # If there's just one best action, return it directly
+                
             return legal_actions_indices[best_indices[0]]
     
     def _get_move_from_action(self, action_index):
         """Converts an action index to (start_r, start_c, end_r, end_c) coordinates."""
-        from game_env import DIRECTIONS, COLS
+        from game_env import DIRECTIONS, COLS, ROWS
         
-        direction_index = action_index % 8  # 8 directions
+        if not (0 <= action_index < self.action_size):
+            return None
+
+        direction_index = action_index % 8
         start_cell_index = action_index // 8
-        
+
         start_r = start_cell_index // COLS
         start_c = start_cell_index % COLS
-        
+
         dr, dc = DIRECTIONS[direction_index]
         end_r, end_c = start_r + dr, start_c + dc
-        
+
+        # Validate coordinates
+        if not (0 <= start_r < ROWS and 0 <= start_c < COLS and 
+                0 <= end_r < ROWS and 0 <= end_c < COLS):
+            return None
+
         return start_r, start_c, end_r, end_c
 
     @tf.function
