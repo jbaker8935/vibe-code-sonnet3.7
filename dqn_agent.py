@@ -34,7 +34,7 @@ from game_env import ROWS, COLS, NUM_ACTIONS
 
 # DQN Agent Configuration
 HISTORY_LENGTH = 8  # Match game_env.py
-STATE_SIZE = (ROWS * COLS) * (HISTORY_LENGTH + 1) + 1  # Current board + history + player
+STATE_SIZE = 5 + (HISTORY_LENGTH * 5) + 1  # Current board (5) + history + player indicator
 ACTION_SIZE = NUM_ACTIONS
 
 from binary_board import board_to_binary, binary_to_board
@@ -69,24 +69,29 @@ class DQNAgent:
         """Neural network that processes binary board representation."""
         input_layer = layers.Input(shape=(self.state_size,))
         
-        # Split current board and history
-        current_board = layers.Lambda(lambda x: x[:, :5])(input_layer)  # First 5 uint32 values
-        history_boards = layers.Lambda(lambda x: x[:, 5:-1])(input_layer)  # Next 5*HISTORY_LENGTH values
+        # Current board is 5 uint32 values
+        current_board = layers.Lambda(lambda x: x[:, :5])(input_layer)
+        
+        # History is HISTORY_LENGTH boards × 5 uint32 values each
+        history_size = HISTORY_LENGTH * 5
+        history_boards = layers.Lambda(lambda x: x[:, 5:5+history_size])(input_layer)
+        
+        # Player input is the last value
         player_input = layers.Lambda(lambda x: x[:, -1:])(input_layer)
         
         # Process current binary board
         x1 = layers.Dense(256, activation='relu')(current_board)
         x1 = layers.Dense(128, activation='relu')(x1)
         
-        # Process history binary boards
+        # Process history binary boards - reshape to (batch_size, HISTORY_LENGTH, 5)
         history_reshaped = layers.Reshape((HISTORY_LENGTH, 5))(history_boards)
         
-        # Add attention mechanism to focus on relevant historical states
+        # Add attention mechanism
         attention = layers.Dense(64, activation='tanh')(history_reshaped)
         attention = layers.Dense(1, activation='sigmoid')(attention)
         x2 = layers.Multiply()([history_reshaped, attention])
         
-        # Bidirectional LSTM for temporal patterns
+        # Process temporal patterns
         x2 = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(x2)
         x2 = layers.Bidirectional(layers.LSTM(64))(x2)
         

@@ -1,101 +1,69 @@
 import os
 import tensorflow as tf
 from tensorflow import keras
-from dqn_agent import DQNAgent
 import numpy as np
-import json
-from game_env import NUM_ACTIONS, ROWS, COLS, HISTORY_LENGTH
+from game_env import NUM_ACTIONS, HISTORY_LENGTH
 
 def convert_model_for_tfjs():
-    # Initialize the agent to load the weights
-    agent = DQNAgent(
-        epsilon=0.0,  # Dummy values
-        epsilon_decay=1.0,
-        epsilon_min=0.0,
-        replay_buffer_size=1000,
-        batch_size=64,
-        target_update_freq=100
-    )
+    """Convert the DQN model to TensorFlow.js format with correct binary board shapes."""
     
-    # Load the weights using the agent's method
-    weights_file = "switcharoo_dqn_tournament_best.weights.h5"
-    agent.load(weights_file)
-    print(f"Model weights loaded from {weights_file} using DQNAgent.")
-
-    # Print the model summary to verify architecture
-    print("\nOriginal model summary:")
-    agent.model.summary()
-    
-    # Extract the actual number of layers and shapes
-    orig_weights = agent.model.get_weights()
-    print(f"\nNumber of weight arrays in original model: {len(orig_weights)}")
-    for i, w in enumerate(orig_weights):
-        print(f"  Weight {i} shape: {w.shape}")
-
-    # Create output directory
-    output_dir = "tfjs_model"
-    os.makedirs(output_dir, exist_ok=True)
+    # Calculate input shape based on binary representation
+    BINARY_BOARD_SIZE = 5  # 5 uint32 values per board state
+    STATE_SIZE = BINARY_BOARD_SIZE + (HISTORY_LENGTH * BINARY_BOARD_SIZE) + 1  # Current + history + player
     
     # Create a new model with the binary board architecture
-    input_shape = 5 + (5 * HISTORY_LENGTH) + 1  # 5 binary masks + history + player
+    input_layer = keras.layers.Input(shape=(STATE_SIZE,))
     
-    input_layer = keras.layers.Input(shape=(input_shape,))
-    
-    # Split inputs
-    current_board = keras.layers.Lambda(lambda x: x[:, :5])(input_layer)
-    history_boards = keras.layers.Lambda(lambda x: x[:, 5:-1])(input_layer)
+    # Split inputs into current board, history, and player indicator
+    current_board = keras.layers.Lambda(lambda x: x[:, :BINARY_BOARD_SIZE])(input_layer)
+    history_boards = keras.layers.Lambda(lambda x: x[:, BINARY_BOARD_SIZE:-1])(input_layer)
     player_input = keras.layers.Lambda(lambda x: x[:, -1:])(input_layer)
     
     # Process current binary board
     x1 = keras.layers.Dense(256, activation='relu')(current_board)
     x1 = keras.layers.Dense(128, activation='relu')(x1)
     
-    # Process history
-    history_reshaped = keras.layers.Reshape((HISTORY_LENGTH, 5))(history_boards)
+    # Process history - reshape to (batch_size, HISTORY_LENGTH, BINARY_BOARD_SIZE)
+    history_reshaped = keras.layers.Reshape((HISTORY_LENGTH, BINARY_BOARD_SIZE))(history_boards)
+    
+    # Add attention mechanism
     attention = keras.layers.Dense(64, activation='tanh')(history_reshaped)
     attention = keras.layers.Dense(1, activation='sigmoid')(attention)
     x2 = keras.layers.Multiply()([history_reshaped, attention])
     
+    # Process temporal patterns
     x2 = keras.layers.Bidirectional(keras.layers.LSTM(128, return_sequences=True))(x2)
     x2 = keras.layers.Bidirectional(keras.layers.LSTM(64))(x2)
     
+    # Combine features
     combined = keras.layers.Concatenate()([x1, x2, player_input])
     x = keras.layers.Dense(256, activation='relu')(combined)
     x = keras.layers.Dense(128, activation='relu')(x)
     
+    # Output layer - one value per possible action
     output = keras.layers.Dense(NUM_ACTIONS, activation='linear')(x)
     
-    complete_model = keras.Model(inputs=input_layer, outputs=output)
+    # Create and compile model
+    model = keras.Model(inputs=input_layer, outputs=output)
+    model.compile(optimizer='adam', loss='mse')
     
-    # Set the weights for the first 3 dense layers
-    layer_weights = []
-    for i in range(len(orig_weights)):
-        layer_weights.append(orig_weights[i])
-        
-    # Add random weights for the output layer
-    output_kernel = np.random.normal(0, 0.05, (256, 121))
-    output_bias = np.zeros(121)
-    layer_weights.extend([output_kernel, output_bias])
+    # Print model summary for verification
+    print("\nModel Architecture:")
+    model.summary()
     
-    # Set all weights
-    complete_model.set_weights(layer_weights)
-    print("\nWeights set for complete model (including output layer)")
-    
-    # Print the complete model summary
-    print("\nComplete model summary:")
-    complete_model.summary()
-    
-    # Save the complete model in H5 format
-    h5_path = f"{output_dir}/model.h5"
-    complete_model.save(h5_path)
-    print(f"\nComplete model saved to {h5_path}")
-    
-    # Create a web subdirectory
+    # Create output directories
+    output_dir = "tfjs_model"
+    os.makedirs(output_dir, exist_ok=True)
     web_model_dir = f"{output_dir}/web_model"
     os.makedirs(web_model_dir, exist_ok=True)
     
-    # Create a model.json file with explicit input shape
-    model_config = complete_model.to_json()
+    # Save the model in H5 format
+    h5_path = f"{output_dir}/model.h5"
+    model.save(h5_path)
+    print(f"\nModel saved to {h5_path}")
+    
+    # Save model architecture to JSON
+    model_config = model.to_json()
     with open(f"{web_model_dir}/model.json", "w") as f:
         f.write(model_config)
     print(f"Model architecture saved to {web_model_dir}/model.json")
