@@ -37,6 +37,8 @@ HISTORY_LENGTH = 8  # Match game_env.py
 STATE_SIZE = (ROWS * COLS) * (HISTORY_LENGTH + 1) + 1  # Current board + history + player
 ACTION_SIZE = NUM_ACTIONS
 
+from binary_board import board_to_binary, binary_to_board
+
 class DQNAgent:
     def __init__(self, state_size=STATE_SIZE, action_size=ACTION_SIZE,
                  learning_rate=0.001, gamma=0.99, epsilon=1.0,
@@ -64,36 +66,27 @@ class DQNAgent:
         self.update_target_model() # Initialize target model weights
 
     def _build_model(self):
-        """Enhanced network that processes both current state and history."""
+        """Neural network that processes binary board representation."""
         input_layer = layers.Input(shape=(self.state_size,))
         
         # Split current board and history
-        current_board = layers.Lambda(lambda x: x[:, :ROWS*COLS])(input_layer)
-        history_boards = layers.Lambda(lambda x: x[:, ROWS*COLS:-1])(input_layer)
+        current_board = layers.Lambda(lambda x: x[:, :5])(input_layer)  # First 5 uint32 values
+        history_boards = layers.Lambda(lambda x: x[:, 5:-1])(input_layer)  # Next 5*HISTORY_LENGTH values
         player_input = layers.Lambda(lambda x: x[:, -1:])(input_layer)
         
-        # Process current board
-        current_reshaped = layers.Reshape((8, 4, 1))(current_board)
-        x1 = layers.Conv2D(32, (3, 2), activation='relu', padding='same')(current_reshaped)
-        x1 = layers.Conv2D(64, (3, 2), activation='relu', padding='same')(x1)
-        x1 = layers.Flatten()(x1)
+        # Process current binary board
+        x1 = layers.Dense(256, activation='relu')(current_board)
+        x1 = layers.Dense(128, activation='relu')(x1)
         
-        # Process history boards
-        history_reshaped = layers.Reshape((HISTORY_LENGTH, 8, 4, 1))(
-            layers.Reshape((HISTORY_LENGTH, ROWS*COLS))(history_boards)
-        )
-        
-        # Use TimeDistributed to apply same Conv2D to each history board
-        x2 = layers.TimeDistributed(layers.Conv2D(32, (3, 2), activation='relu', padding='same'))(history_reshaped)
-        x2 = layers.TimeDistributed(layers.Conv2D(64, (3, 2), activation='relu', padding='same'))(x2)
-        x2 = layers.TimeDistributed(layers.Flatten())(x2)
+        # Process history binary boards
+        history_reshaped = layers.Reshape((HISTORY_LENGTH, 5))(history_boards)
         
         # Add attention mechanism to focus on relevant historical states
-        attention = layers.Dense(64, activation='tanh')(x2)
-        attention = layers.Dense(1, activation='sigmoid', use_bias=False)(attention)  # Changed from softmax
-        x2 = layers.Multiply()([x2, attention])
+        attention = layers.Dense(64, activation='tanh')(history_reshaped)
+        attention = layers.Dense(1, activation='sigmoid')(attention)
+        x2 = layers.Multiply()([history_reshaped, attention])
         
-        # Bidirectional LSTM to better capture move patterns
+        # Bidirectional LSTM for temporal patterns
         x2 = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(x2)
         x2 = layers.Bidirectional(layers.LSTM(64))(x2)
         

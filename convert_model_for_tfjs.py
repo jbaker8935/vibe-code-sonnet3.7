@@ -4,7 +4,7 @@ from tensorflow import keras
 from dqn_agent import DQNAgent
 import numpy as np
 import json
-from game_env import NUM_ACTIONS, ROWS, COLS
+from game_env import NUM_ACTIONS, ROWS, COLS, HISTORY_LENGTH
 
 def convert_model_for_tfjs():
     # Initialize the agent to load the weights
@@ -36,62 +36,34 @@ def convert_model_for_tfjs():
     output_dir = "tfjs_model"
     os.makedirs(output_dir, exist_ok=True)
     
-    # Create a complete model with the missing output layer
-    # Extract input shape from the agent's model
-    input_shape = agent.model.inputs[0].shape[1]  # Should be 33
+    # Create a new model with the binary board architecture
+    input_shape = 5 + (5 * HISTORY_LENGTH) + 1  # 5 binary masks + history + player
     
-    # Create a new model with the EXACT same architecture as in DQNAgent
-    input_layer = keras.layers.Input(shape=(input_shape,), name="input_layer")
+    input_layer = keras.layers.Input(shape=(input_shape,))
     
-    # Split current board and history
-    current_board = keras.layers.Lambda(lambda x: x[:, :ROWS*COLS], name="current_board")(input_layer)
-    history_boards = keras.layers.Lambda(lambda x: x[:, ROWS*COLS:-1], name="history_boards")(input_layer)
-    player_input = keras.layers.Lambda(lambda x: x[:, -1:], name="player_input")(input_layer)
+    # Split inputs
+    current_board = keras.layers.Lambda(lambda x: x[:, :5])(input_layer)
+    history_boards = keras.layers.Lambda(lambda x: x[:, 5:-1])(input_layer)
+    player_input = keras.layers.Lambda(lambda x: x[:, -1:])(input_layer)
     
-    # Process current board
-    current_reshaped = keras.layers.Reshape((8, 4, 1), name="current_reshape")(current_board)
-    x1 = keras.layers.Conv2D(32, (3, 2), activation='relu', padding='same', name="current_conv1")(current_reshaped)
-    x1 = keras.layers.Conv2D(64, (3, 2), activation='relu', padding='same', name="current_conv2")(x1)
-    x1 = keras.layers.Flatten(name="current_flatten")(x1)
+    # Process current binary board
+    x1 = keras.layers.Dense(256, activation='relu')(current_board)
+    x1 = keras.layers.Dense(128, activation='relu')(x1)
     
-    # Process history boards
-    history_reshaped = keras.layers.Reshape((8, 8, 4, 1), name="history_reshape")(
-        keras.layers.Reshape((8, ROWS*COLS))(history_boards)
-    )
+    # Process history
+    history_reshaped = keras.layers.Reshape((HISTORY_LENGTH, 5))(history_boards)
+    attention = keras.layers.Dense(64, activation='tanh')(history_reshaped)
+    attention = keras.layers.Dense(1, activation='sigmoid')(attention)
+    x2 = keras.layers.Multiply()([history_reshaped, attention])
     
-    # TimeDistributed layers for history processing
-    x2 = keras.layers.TimeDistributed(
-        keras.layers.Conv2D(32, (3, 2), activation='relu', padding='same'),
-        name="history_conv1"
-    )(history_reshaped)
-    x2 = keras.layers.TimeDistributed(
-        keras.layers.Conv2D(64, (3, 2), activation='relu', padding='same'),
-        name="history_conv2"
-    )(x2)
-    x2 = keras.layers.TimeDistributed(keras.layers.Flatten(), name="history_flatten")(x2)
+    x2 = keras.layers.Bidirectional(keras.layers.LSTM(128, return_sequences=True))(x2)
+    x2 = keras.layers.Bidirectional(keras.layers.LSTM(64))(x2)
     
-    # Attention mechanism with sigmoid instead of softmax
-    attention = keras.layers.Dense(64, activation='tanh', name="attention_dense")(x2)
-    attention = keras.layers.Dense(1, activation='sigmoid', use_bias=False, name="attention_scores")(attention)
-    x2 = keras.layers.Multiply(name="attention_multiply")([x2, attention])
+    combined = keras.layers.Concatenate()([x1, x2, player_input])
+    x = keras.layers.Dense(256, activation='relu')(combined)
+    x = keras.layers.Dense(128, activation='relu')(x)
     
-    # Bidirectional LSTM layers
-    x2 = keras.layers.Bidirectional(
-        keras.layers.LSTM(128, return_sequences=True),
-        name="bilstm1"
-    )(x2)
-    x2 = keras.layers.Bidirectional(
-        keras.layers.LSTM(64),
-        name="bilstm2"
-    )(x2)
-    
-    # Combine features
-    combined = keras.layers.Concatenate(name="concatenate")([x1, x2, player_input])
-    x = keras.layers.Dense(256, activation='relu', name="dense1")(combined)
-    x = keras.layers.Dense(128, activation='relu', name="dense2")(x)
-    
-    # Output layer
-    output = keras.layers.Dense(NUM_ACTIONS, activation='linear', name="output")(x)
+    output = keras.layers.Dense(NUM_ACTIONS, activation='linear')(x)
     
     complete_model = keras.Model(inputs=input_layer, outputs=output)
     

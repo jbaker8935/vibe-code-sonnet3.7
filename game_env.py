@@ -235,6 +235,8 @@ def _evaluate_board_jit(board, player_id):
 
 # --- Environment Class ---
 
+from binary_board import board_to_binary, binary_to_board
+
 class SwitcharooEnv:
     def __init__(self):
         self.board = np.zeros((ROWS, COLS), dtype=np.int8)
@@ -263,18 +265,20 @@ class SwitcharooEnv:
         return self._get_state()
 
     def _get_state(self):
-        """Enhanced state representation including move history."""
-        # Current board state
-        flat_board = self.board.flatten().astype(np.float32)
+        """Enhanced state representation using binary board encoding."""
+        # Convert current board to binary
+        current_binary = board_to_binary(self.board)
         
-        # Flatten and normalize historical states
-        history_states = np.array([board.flatten() for board in self.move_history])
-        flat_history = history_states.flatten().astype(np.float32) / 4.0
-        
+        # Convert history boards to binary
+        history_binary = np.zeros((HISTORY_LENGTH * 5), dtype=np.uint32)
+        for i, board in enumerate(self.move_history):
+            binary = board_to_binary(board)
+            history_binary[i*5:(i+1)*5] = binary
+            
         # Combine current state, history, and player indicator
-        state = np.zeros(NUM_CELLS + (NUM_CELLS * HISTORY_LENGTH) + 1, dtype=np.float32)
-        state[:NUM_CELLS] = flat_board / 4.0
-        state[NUM_CELLS:-1] = flat_history
+        state = np.zeros(5 + (5 * HISTORY_LENGTH) + 1, dtype=np.float32)
+        state[:5] = current_binary
+        state[5:-1] = history_binary
         state[-1] = 0.0 if self.current_player_id == PLAYER_A_ID else 1.0
         
         return state
