@@ -159,12 +159,13 @@ document.addEventListener('DOMContentLoaded', () => {
         winner = null;
         winPath = [];
 
-        // Place pieces - REVERSED ORIENTATION
+        // Place pieces - EXPERIMENTAL STARTING POSITIONS:
+        // PLAYER_B now starts in rows 2 and 3; PLAYER_A now starts in rows 4 and 5.
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
-                if (r < 2) { // Player B (Black) at top (rows 0, 1 -> displayed as 8, 7)
+                if (r >= 2 && r < 4) { 
                     board[r][c] = { player: PLAYER_B, state: NORMAL };
-                } else if (r >= ROWS - 2) { // Player A (White) at bottom (rows 6, 7 -> displayed as 2, 1)
+                } else if (r >= 4 && r < 6) { 
                     board[r][c] = { player: PLAYER_A, state: NORMAL };
                 }
             }
@@ -1482,11 +1483,14 @@ document.addEventListener('DOMContentLoaded', () => {
          }
          initialStateDiv.addEventListener('click', () => {
              const initialBoard = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
-              // Recreate initial state based on NEW orientation
+              // Recreate initial state with experimental positions:
               for (let r = 0; r < ROWS; r++) {
                  for (let c = 0; c < COLS; c++) {
-                     if (r < 2) initialBoard[r][c] = { player: PLAYER_B, state: NORMAL }; // B top
-                      else if (r >= ROWS - 2) initialBoard[r][c] = { player: PLAYER_A, state: NORMAL }; // A bottom
+                     if (r >= 2 && r < 4) {
+                         initialBoard[r][c] = { player: PLAYER_B, state: NORMAL };
+                     } else if (r >= 4 && r < 6) {
+                         initialBoard[r][c] = { player: PLAYER_A, state: NORMAL };
+                     }
                  }
              }
              currentHistoryIndex = 0;
@@ -1516,8 +1520,8 @@ document.addEventListener('DOMContentLoaded', () => {
              const initialBoard = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
              for (let r = 0; r < ROWS; r++) {
                  for (let c = 0; c < COLS; c++) {
-                     if (r < 2) initialBoard[r][c] = { player: PLAYER_B, state: NORMAL };
-                     else if (r >= ROWS - 2) initialBoard[r][c] = { player: PLAYER_A, state: NORMAL };
+                     if (r >= 2 && r < 4) initialBoard[r][c] = { player: PLAYER_B, state: NORMAL };
+                     else if (r >= 4 && r < 6) initialBoard[r][c] = { player: PLAYER_A, state: NORMAL };
                  }
              }
              renderBoard(initialBoard);
@@ -1612,12 +1616,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (currentHistoryIndex === moveHistory.length) {
             restoreFinalState();
         } else if (currentHistoryIndex === 0) {
-            // Show initial board state
+            // Show initial board state with experimental positions:
             const initialBoard = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
             for (let r = 0; r < ROWS; r++) {
                 for (let c = 0; c < COLS; c++) {
-                    if (r < 2) initialBoard[r][c] = { player: PLAYER_B, state: NORMAL };
-                    else if (r >= ROWS - 2) initialBoard[r][c] = { player: PLAYER_A, state: NORMAL };
+                    if (r >= 2 && r < 4) {
+                        initialBoard[r][c] = { player: PLAYER_B, state: NORMAL };
+                    } else if (r >= 4 && r < 6) {
+                        initialBoard[r][c] = { player: PLAYER_A, state: NORMAL };
+                    }
                 }
             }
             renderBoard(initialBoard);
@@ -1694,10 +1701,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function serializeBoardState(boardState) {
+        // Create a simple string representation that avoids JSON.parse/stringify errors
         return boardState.map(row => 
             row.map(cell => {
                 if (!cell) return '_';
-                return `${cell.player}${cell.state === 'normal' ? 'N' : 'S'}`;
+                return `${cell.player}${cell.state === NORMAL ? 'N' : 'S'}`;
             }).join('')
         ).join('|');
     }
