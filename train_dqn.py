@@ -6,7 +6,7 @@ import os
 import tensorflow as tf
 from numba import njit
 
-from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B
+from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B, _scale_reward_jit, _board_in_history_jit
 from dqn_agent import DQNAgent
 
 # Training Configuration
@@ -28,13 +28,22 @@ def save_checkpoint(agent, episode, emergency=False):
     return filename
 
 # --- Opponent Policy (Player A) ---
-def get_opponent_action(env):
-    """Improved policy for the opponent (Player A) using board evaluation."""
+def get_opponent_action(env, opponent_epsilon=0.3):
+    """Improved policy for the opponent (Player A) using board evaluation.
+    
+    Args:
+        env: Game environment
+        opponent_epsilon: Probability of choosing a random move (0.0 to 1.0)
+    """
     from game_env import _evaluate_board_jit, _apply_move_jit, PLAYER_A_ID
     
     legal_actions = env.get_legal_action_indices(player=PLAYER_A)
     if not legal_actions:
         return None # No legal moves
+    
+    # Random move with probability opponent_epsilon
+    if random.random() < opponent_epsilon:
+        return random.choice(legal_actions)
     
     # Get the current board state
     board_state = env.board.copy()
@@ -156,12 +165,16 @@ if __name__ == "__main__":
                     action = agent.act(state, legal_actions)
                     next_state, reward, done, info = env.step(action)
                     reward = _validate_reward(reward)  # Use JIT for reward validation
+                    
+                    # Apply reward scaling based on episode progress
+                    reward = _scale_reward_jit(reward, step, MAX_STEPS_PER_EPISODE)
+                    
                     agent.remember(state, action, reward, next_state, done)
                     episode_reward += reward
                     agent_steps += 1
 
                 else: # Player A's turn (Opponent)
-                    action = get_opponent_action(env)
+                    action = get_opponent_action(env, opponent_epsilon=0.3)
                     if action is None:
                         # Opponent has no moves, should result in a win/draw handled by env.step
                         break # End episode if opponent is stuck

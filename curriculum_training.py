@@ -8,6 +8,7 @@ import argparse
 from collections import deque
 import wandb
 from numba import njit
+from random import choice  # Add this import for selecting random initial positions
 
 from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B
 from dqn_agent import DQNAgent
@@ -17,11 +18,12 @@ from train_dqn import save_checkpoint, safe_replay
 PHASE1_EPISODES = 50000      # Episodes for Phase 1 (random opponent) 50000
 PHASE2_EPISODES = 100000     # Episodes for Phase 2 (self-play) 100000
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps per episode
+REPLAY_FREQUENCY = 1          # Frequency of replay buffer sampling
 
 # Tournament Configuration
 TOURNAMENT_FREQ = 1000       # How often to run tournaments
 NUM_VARIANTS = 4             # Number of agent variants for tournament
-NOISE_SCALE = 0.02          # Scale of Gaussian noise to apply to weights
+NOISE_SCALE = 0.05          # Scale of Gaussian noise to apply to weights
 TOURNAMENT_MATCHES = 20      # Matches per pair in tournament
 SAVE_FREQ = 5000             # Save model weights every N episodes
 
@@ -34,13 +36,127 @@ TFJS_MODEL_FILE = "./switcharoo_tfjs_model/tf_model.weights.h5"
 WANDB_PROJECT = "switcharoo-dqn"
 WANDB_ENTITY = "farmerjohn1958-self"  # Replace with your wandb username
 
-def get_opponent_action(env):
-    """Improved policy for the opponent: uses board evaluation instead of random moves."""
+initial_position_base = [
+    """\
+BBBB
+BBBB
+....
+....
+....
+....
+AAAA
+AAAA""",
+    """\
+....
+BBBB
+BBBB
+....
+....
+AAAA
+AAAA
+....""",
+    """\
+....
+....
+BBBB
+BBBB
+AAAA
+AAAA
+....
+....""",
+    """\
+BB..
+BB..
+BB..
+BB..
+AA..
+AA..
+AA..
+AA..""",
+    """\
+..BB
+..BB
+..BB
+..BB
+..AA
+..AA
+..AA
+..AA""",
+    """\
+.BB.
+.BB.
+.BB.
+.BB.
+.AA.
+.AA.
+.AA.
+.AA.""",
+    """\
+BB..
+BB..
+BB..
+BB..
+..AA
+..AA
+..AA
+..AA""",
+    """\
+BBBB
+BB..
+BB..
+....
+....
+..AA
+..AA
+AAAA""",
+    """\
+..BB
+..BB
+BBBB
+....
+....
+AAAA
+AA..
+AA..""",
+    """\
+B...
+BB..
+BBB.
+BB..
+..AA
+.AAA
+..AA
+...A""",
+    """\
+B..B
+.BB.
+.BB.
+B..B
+A..A
+.AA.
+.AA.
+A..A"""
+]
+
+initial_position = initial_position_base
+
+
+def get_opponent_action(env, opponent_epsilon=0.3):
+    """Improved policy for the opponent: uses board evaluation instead of random moves.
+    
+    Args:
+        env: Game environment
+        opponent_epsilon: Probability of choosing a random move (0.0 to 1.0)
+    """
     from game_env import _evaluate_board_jit, _apply_move_jit, PLAYER_A_ID
     
     legal_actions = env.get_legal_action_indices(player=PLAYER_A)
     if not legal_actions:
         return None # No legal moves
+    
+    # Random move with probability opponent_epsilon
+    if random.random() < opponent_epsilon:
+        return random.choice(legal_actions)
     
     # Get the current board state
     board_state = env.board.copy()
@@ -104,7 +220,7 @@ def create_agent_variant(base_agent, noise_scale=NOISE_SCALE, epsilon=0.05):
 
 def run_match(env, agent_a, agent_b, max_steps=MAX_STEPS_PER_EPISODE):
     """Run a single match between two agents and return the winner."""
-    state = env.reset()
+    state = env.reset(choice(initial_position))  # Pass random initial position
     
     for step in range(max_steps):
         current_player = env.current_player
@@ -215,6 +331,8 @@ def _validate_reward(reward):
         return 0.0
     return reward
 
+
+
 def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wandb=True):
     """Phase 1: Train against a random opponent."""
     # Initialize wandb
@@ -229,8 +347,14 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
     draws = deque(maxlen=100)   # Add draws tracking
     best_avg_score = float('-inf')
     
+    # Start with high opponent randomness that decreases over time
+    opponent_epsilon_start = 0.9
+    opponent_epsilon_end = 0.1
+    opponent_epsilon_decay = (opponent_epsilon_end / opponent_epsilon_start) ** (1 / episodes)
+    opponent_epsilon = opponent_epsilon_start
+    
     for e in range(start_episode, episodes + 1):
-        state = env.reset()
+        state = env.reset(choice(initial_position))  # Pass random initial position
         episode_reward = 0
         agent_steps = 0
         episode_start = time.time()
@@ -250,7 +374,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 episode_reward += reward
                 agent_steps += 1
             else:
-                action = get_opponent_action(env)
+                # Use current opponent_epsilon value
+                action = get_opponent_action(env, opponent_epsilon=opponent_epsilon)
                 if action is None:
                     break
                 
@@ -258,7 +383,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
             
             state = next_state
             
-            if len(agent.memory) > agent.batch_size and agent_steps % 1 == 0:
+            if len(agent.memory) > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:
                 safe_replay(agent)
             
             if done:
@@ -271,6 +396,9 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         # Apply epsilon decay after each episode
         if agent.epsilon > agent.epsilon_min:
             agent.epsilon *= agent.epsilon_decay
+            
+        # Decay opponent epsilon
+        opponent_epsilon *= opponent_epsilon_decay
         
         # Track performance
         scores.append(episode_reward)
@@ -304,6 +432,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                     "loss_rate": loss_rate,
                     "draw_rate": draw_rate,
                     "epsilon": agent.epsilon,
+                    "opponent_epsilon": opponent_epsilon,
                     "memory_size": len(agent.memory),
                     "steps": agent_steps,
                     "time_per_episode": time.time() - episode_start
@@ -330,6 +459,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                   f"Loss Rate: {loss_rate:.2f} | "
                   f"Draw Rate: {draw_rate:.2f} | "
                   f"Epsilon: {agent.epsilon:.4f} | "
+                  f"Opponent Epsilon: {opponent_epsilon:.4f} | "
                   f"Avg Score: {avg_score:.2f}")
     
     # Save final Phase 1 model
@@ -358,7 +488,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
     tournament_agent = copy.deepcopy(agent)
     
     for e in range(start_episode, episodes + 1):
-        state = env.reset()
+        state = env.reset(choice(initial_position))  # Pass random initial position
         episode_reward = 0
         agent_steps = 0
         
@@ -387,7 +517,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
             
             state = next_state
             
-            if len(agent.memory) > agent.batch_size and agent_steps % 1 == 0:
+            if len(agent.memory) > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:
                 safe_replay(agent)
             
             if done:
@@ -576,9 +706,9 @@ if __name__ == "__main__":
         # Initialize agent for curriculum learning
         agent = DQNAgent(
             epsilon=1.0,
-            epsilon_decay=.999,
+            epsilon_decay=.9995,
             epsilon_min=0.01,
-            replay_buffer_size=1000000,
+            replay_buffer_size=500000,
             batch_size=64,
             target_update_freq=100
         )

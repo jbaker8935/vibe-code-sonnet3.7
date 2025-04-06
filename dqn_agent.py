@@ -280,16 +280,32 @@ class DQNAgent:
     # through the imported functions.
     def _get_next_boards_batch(self, board_states, move_indices):
         """Generate next board states for multiple moves in parallel."""
-        num_boards = len(move_indices)
-        next_boards = np.zeros((num_boards, 8, 4), dtype=np.int8)
+        from game_env import _simulate_moves_batch_jit, DIRECTIONS, COLS, ROWS
         
-        for i in range(num_boards):  # Removed parallel processing since this is a class method
-            board_copy = board_states[i].copy()
-            start_r, start_c, end_r, end_c = self._get_move_from_action(move_indices[i])
-            _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
-            next_boards[i] = board_copy
+        num_boards = len(move_indices)
+        moves = []
+        
+        # Convert action indices to moves
+        for i in range(num_boards):
+            action_index = move_indices[i]
+            direction_index = action_index % 8
+            start_cell_index = action_index // 8
             
-        return next_boards
+            start_r = start_cell_index // COLS
+            start_c = start_cell_index % COLS
+            
+            dr, dc = DIRECTIONS[direction_index]
+            end_r, end_c = start_r + dr, start_c + dc
+            
+            # Skip invalid moves (shouldn't happen with legal actions)
+            if not (0 <= start_r < ROWS and 0 <= start_c < COLS and 
+                    0 <= end_r < ROWS and 0 <= end_c < COLS):
+                continue
+                
+            moves.append((start_r, start_c, end_r, end_c))
+        
+        # Use the JIT-optimized function for parallel simulation
+        return _simulate_moves_batch_jit(board_states[0], moves, PLAYER_B_ID)
 
     def load(self, name):
         """Loads model weights from a file."""

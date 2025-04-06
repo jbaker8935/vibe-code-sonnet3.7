@@ -53,6 +53,51 @@ NUM_ACTIONS = NUM_CELLS * NUM_DIRECTIONS # 32 * 8 = 256
 # --- Numba JIT Helper Functions ---
 
 @njit(cache=True)
+def parse_initial_position_jit(position_str, a_normal, b_normal, empty_cell):
+    """JIT-compiled function to convert string representation of a board to a numerical board array.
+    
+    Args:
+        position_str: String representation of the board with A for player A, B for player B, and . for empty
+        a_normal: Integer code for player A normal piece
+        b_normal: Integer code for player B normal piece
+        empty_cell: Integer code for empty cell
+        
+    Returns:
+        8x4 numpy array with the parsed board
+    """
+    # Create empty board
+    board = np.zeros((8, 4), dtype=np.int8)
+    
+    # Split the string into rows
+    rows = []
+    current_row = ""
+    for char in position_str:
+        if char == '\n':
+            if current_row:  # Only add non-empty rows
+                rows.append(current_row)
+                current_row = ""
+        elif char not in (' ', '\t', '\r'):  # Skip whitespace
+            current_row += char
+    
+    # Add the last row if it exists
+    if current_row:
+        rows.append(current_row)
+    
+    # Parse each character in each row
+    for r in range(min(len(rows), 8)):
+        row = rows[r]
+        for c in range(min(len(row), 4)):
+            char = row[c]
+            if char == 'A':
+                board[r, c] = a_normal
+            elif char == 'B':
+                board[r, c] = b_normal
+            else:  # Default to empty cell for any other character
+                board[r, c] = empty_cell
+                
+    return board
+
+@njit(cache=True)
 def _is_valid(r, c, rows=ROWS, cols=COLS):
     """Checks if coordinates are within board bounds."""
     return 0 <= r < rows and 0 <= c < cols
@@ -193,6 +238,56 @@ def _evaluate_board_batch(boards, player_id):
     
     return scores
 
+@njit(cache=True)
+def _evaluate_board_jit(board, player_id):
+    """Optimized board evaluation with opponent move checks, row occupancy scoring, and start/target row bonuses."""
+    rows, cols = board.shape
+    start_row = rows - 2 if player_id == PLAYER_A_ID else 1
+    target_row = 1 if player_id == PLAYER_A_ID else rows - 2
+    opponent_id = PLAYER_B_ID if player_id == PLAYER_A_ID else PLAYER_A_ID
+
+    # Check if any opponent move results in a win
+    opponent_moves = _get_legal_moves_jit(board, opponent_id)
+    for move in opponent_moves:
+        start_r, start_c, end_r, end_c = move
+        board_copy = board.copy()
+        _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
+        if _check_win_condition_jit(board_copy, opponent_id):
+            return -100.0  # Penalize if opponent can win in one move
+
+    # Vectorized piece counting and progress calculation
+    piece_positions = np.where((board == (A_NORMAL if player_id == PLAYER_A_ID else B_NORMAL)) | 
+                                (board == (A_SWAPPED if player_id == PLAYER_A_ID else B_SWAPPED)))
+
+    if len(piece_positions[0]) == 0:
+        return -100.0  # Penalize states with no pieces
+
+    # Calculate row occupancy score
+    occupied_rows = np.unique(piece_positions[0])
+    rows_in_range = np.sum((occupied_rows >= 1) & (occupied_rows <= 6))
+    row_occupancy_score = rows_in_range * 1.5  # Weight for row occupancy
+
+    # Check for pieces on start_row and target_row
+    has_piece_on_start_row = start_row in piece_positions[0]
+    has_piece_on_target_row = target_row in piece_positions[0]
+    
+    start_row_bonus = 1.0 if has_piece_on_start_row else 0.0
+    target_row_bonus = 1.0 if has_piece_on_target_row else 0.0
+
+    # Count swapped pieces for the current player
+    swapped_pieces = np.sum(board == (A_SWAPPED if player_id == PLAYER_A_ID else B_SWAPPED))
+    swapped_bonus = swapped_pieces * 2.0  # Bonus for swapped pieces
+
+    # Penalize based on the number of legal moves for the opponent
+    opponent_legal_moves_count = len(opponent_moves)
+    opponent_moves_penalty = opponent_legal_moves_count * -0.5  # Penalty for opponent's legal moves
+
+    return (row_occupancy_score +  # Add row occupancy score
+            start_row_bonus +      # Add bonus for having a piece on start_row
+            target_row_bonus +     # Add bonus for having a piece on target_row
+            swapped_bonus +        # Add bonus for swapped pieces
+            opponent_moves_penalty)  # Subtract penalty for opponent's legal moves
+
 @njit(parallel=True, cache=True)
 def _get_legal_moves_batch(boards, player_id):
     """Gets legal moves for multiple boards in parallel."""
@@ -205,32 +300,229 @@ def _get_legal_moves_batch(boards, player_id):
     
     return all_moves
 
-# Modify the existing _evaluate_board_jit to be more efficient
 @njit(cache=True)
-def _evaluate_board_jit(board, player_id):
-    """Optimized board evaluation with vectorized operations."""
+def _is_move_legal_jit(board, start_r, start_c, end_r, end_c, player_id):
+    """Quickly check if a specific move is legal without generating all possible moves.
+    
+    Args:
+        board: 8x4 numpy array representing the board
+        start_r, start_c: Starting position coordinates
+        end_r, end_c: Ending position coordinates
+        player_id: ID of the player making the move
+        
+    Returns:
+        Boolean indicating whether the move is legal
+    """
+    # Bounds check
+    if not (_is_valid(start_r, start_c) and _is_valid(end_r, end_c)):
+        return False
+    
+    # Check if move is to an adjacent cell
+    if abs(end_r - start_r) > 1 or abs(end_c - start_c) > 1:
+        return False
+    
+    # Check if start position contains the player's piece
+    start_piece = board[start_r, start_c]
+    if start_piece == EMPTY_CELL or _get_piece_player_id(start_piece) != player_id:
+        return False
+    
+    # Check target cell
+    end_piece = board[end_r, end_c]
+    opponent_id = PLAYER_B_ID if player_id == PLAYER_A_ID else PLAYER_A_ID
+    
+    if end_piece == EMPTY_CELL:
+        # Empty cell - always legal
+        return True
+    elif _get_piece_player_id(end_piece) == opponent_id and _is_piece_normal(end_piece):
+        # Can swap with opponent's normal piece
+        return True
+    
+    # All other cases are illegal
+    return False
+
+@njit(parallel=True, cache=True)
+def _simulate_moves_batch_jit(board, moves, player_id):
+    """Simulate multiple moves in parallel and return resulting boards.
+    
+    Args:
+        board: 8x4 numpy array representing the current board state
+        moves: List of tuples (start_r, start_c, end_r, end_c) representing moves to simulate
+        player_id: ID of the player making the moves
+        
+    Returns:
+        Numpy array of shape (num_moves, 8, 4) containing all resulting board states
+    """
+    num_moves = len(moves)
+    result_boards = np.zeros((num_moves, 8, 4), dtype=np.int8)
+    
+    for i in numba.prange(num_moves):
+        result_boards[i] = board.copy()
+        start_r, start_c, end_r, end_c = moves[i]
+        _apply_move_jit(result_boards[i], start_r, start_c, end_r, end_c)
+    
+    return result_boards
+
+@njit(cache=True)
+def _board_in_history_jit(current_board, history_boards):
+    """Check if current board state exists in history array.
+    
+    Args:
+        current_board: 8x4 numpy array representing current board
+        history_boards: Array of shape (history_length, 8, 4) with previous boards
+        
+    Returns:
+        Boolean indicating if the current board matches any in history
+    """
+    for i in range(len(history_boards)):
+        if np.array_equal(current_board, history_boards[i]):
+            return True
+    return False
+
+@njit(cache=True)
+def _scale_reward_jit(reward, episode_step, max_steps=300):
+    """Scale reward based on episode progress to encourage faster wins.
+    
+    Args:
+        reward: Base reward value
+        episode_step: Current step in the episode
+        max_steps: Maximum steps per episode
+        
+    Returns:
+        Scaled reward value
+    """
+    # Incentivize faster wins/progress
+    if reward > 0:
+        # Reward earlier wins more
+        return reward * (1.0 + (max_steps - episode_step) / max_steps)
+    elif reward < 0:
+        # Penalize later losses more
+        return reward * (1.0 + episode_step / max_steps)
+    return reward
+
+@njit(cache=True)
+def _hash_board_state_jit(board):
+    """Create a fast 64-bit hash of the board state for transposition tables.
+    
+    Args:
+        board: 8x4 numpy array representing the board
+        
+    Returns:
+        64-bit integer hash of the board state
+    """
+    hash_value = np.uint64(0)
+    
+    # Use Zobrist hashing approach with pre-defined random values
+    # For simplicity, we'll use a simpler method here
+    for r in range(8):
+        for c in range(4):
+            piece = board[r, c]
+            if piece != 0:
+                # Combine position and piece type into the hash
+                position_value = r * 4 + c
+                hash_value ^= np.uint64(piece * 37 + position_value * 41)
+                hash_value = np.uint64(hash_value * 17 + 23)  # Simple prime number mixing
+    
+    return hash_value
+
+@njit(cache=True)
+def _find_winning_path_jit(board, player_id):
+    """Find a winning path using BFS, returns path if found.
+    
+    Args:
+        board: 8x4 numpy array representing the board
+        player_id: ID of the player to check for win
+        
+    Returns:
+        List of (row, col) coordinates for the winning path, or empty list if no win
+    """
     rows, cols = board.shape
+    start_row = rows - 2 if player_id == PLAYER_A_ID else 1
     target_row = 1 if player_id == PLAYER_A_ID else rows - 2
     
-    # Vectorized piece counting and progress calculation
-    piece_positions = np.where((board == (A_NORMAL if player_id == PLAYER_A_ID else B_NORMAL)) | 
-                             (board == (A_SWAPPED if player_id == PLAYER_A_ID else B_SWAPPED)))
+    visited = np.zeros((rows, cols), dtype=numba.boolean)
+    # Parent array to reconstruct path (stores flattened indices)
+    parent = np.full((rows, cols), -1, dtype=np.int32)
     
-    if len(piece_positions[0]) == 0:
-        return -100.0  # Penalize states with no pieces
+    # Use a list as a queue for Numba compatibility
+    queue = []
     
-    # Calculate forward progress using vectorized operations
-    if player_id == PLAYER_A_ID:
-        progress = np.sum(rows - piece_positions[0])  # Distance from bottom
-    else:
-        progress = np.sum(piece_positions[0])  # Distance from top
+    # Initialize queue with starting pieces
+    for c in range(cols):
+        piece = board[start_row, c]
+        if piece != EMPTY_CELL and _get_piece_player_id(piece) == player_id:
+            queue.append((start_row, c))
+            visited[start_row, c] = True
+            # Self is the parent of start positions
+            parent[start_row, c] = start_row * cols + c
+    
+    # Run BFS
+    head = 0
+    target_found = False
+    target_r, target_c = -1, -1
+    
+    while head < len(queue) and not target_found:
+        r, c = queue[head]
+        head += 1
         
-    # Calculate positional bonuses
-    target_pieces = np.sum(piece_positions[0] == target_row)
-    avg_progress = progress / len(piece_positions[0])
+        if r == target_row:
+            target_found = True
+            target_r, target_c = r, c
+            break
+        
+        for i in range(NUM_DIRECTIONS):
+            dr, dc = DIRECTIONS[i]
+            nr, nc = r + dr, c + dc
+            
+            if _is_valid(nr, nc, rows, cols) and not visited[nr, nc]:
+                neighbor_piece = board[nr, nc]
+                if neighbor_piece != EMPTY_CELL and _get_piece_player_id(neighbor_piece) == player_id:
+                    visited[nr, nc] = True
+                    queue.append((nr, nc))
+                    # Store parent position for path reconstruction
+                    parent[nr, nc] = r * cols + c
     
-    return (target_pieces * 2.0 +  # Heavily weight pieces on target row
-            avg_progress * 3.0)    # Weight forward progress
+    # Return empty list if no path found - FIX: Specify the return type as a list of tuples
+    if not target_found:
+        return [(0, 0) for _ in range(0)]  # Empty list with explicit tuple type
+    
+    # Reconstruct the path
+    path = []
+    current_r, current_c = target_r, target_c
+    
+    while True:
+        path.append((current_r, current_c))
+        parent_index = parent[current_r, current_c]
+        
+        # If we reached a start position (parent points to self)
+        if parent_index == current_r * cols + current_c:
+            break
+            
+        current_r = parent_index // cols
+        current_c = parent_index % cols
+    
+    # Reverse path to get it from start to target
+    path.reverse()
+    return path
+
+@njit(parallel=True, cache=True)
+def board_to_binary_batch(boards):
+    """Convert batch of boards to binary representation in parallel.
+    
+    Args:
+        boards: Numpy array of shape (num_boards, 8, 4) containing board states
+        
+    Returns:
+        Numpy array of shape (num_boards, 5) with binary board representations
+    """
+    from binary_board import board_to_binary
+    
+    num_boards = boards.shape[0]
+    binary_boards = np.zeros((num_boards, 5), dtype=np.uint32)
+    
+    for i in numba.prange(num_boards):
+        binary_boards[i] = board_to_binary(boards[i])
+    
+    return binary_boards
 
 
 # --- Environment Class ---
@@ -246,8 +538,11 @@ class SwitcharooEnv:
         self.move_history = deque(maxlen=HISTORY_LENGTH)  # Store recent board states
         self.reset()
 
-    def reset(self):
-        """Resets the game to the initial state."""
+    def reset(self, initial_state=None):
+        """
+        Resets the game to the initial state.
+        If `initial_state` is provided, it should be a string describing the board.
+        """
         self.board.fill(EMPTY_CELL)
         self.current_player_id = PLAYER_A_ID
         self.winner_id = 0
@@ -256,12 +551,18 @@ class SwitcharooEnv:
         for _ in range(HISTORY_LENGTH):
             self.move_history.append(np.zeros((ROWS, COLS), dtype=np.int8))
 
-        for r in range(ROWS):
-            for c in range(COLS):
-                if r < 2: # Player B (Black) at top
-                    self.board[r, c] = B_NORMAL
-                elif r >= ROWS - 2: # Player A (White) at bottom
-                    self.board[r, c] = A_NORMAL
+        if initial_state:
+            # Use the JIT-compiled function to parse the initial state
+            self.board = parse_initial_position_jit(initial_state, A_NORMAL, B_NORMAL, EMPTY_CELL)
+        else:
+            # Default initial state
+            for r in range(ROWS):
+                for c in range(COLS):
+                    if (r < 2):  # Player B (Black) at top
+                        self.board[r, c] = B_NORMAL
+                    elif (r > 5):  # Player A (White) at bottom
+                        self.board[r, c] = A_NORMAL
+
         return self._get_state()
 
     def _get_state(self):
@@ -338,10 +639,16 @@ class SwitcharooEnv:
         return start_r, start_c, end_r, end_c
 
     def check_win_condition(self, player=None):
-        """Checks if the given player (A or B) has won."""
+        """Checks if the given player (A or B) has won and returns the winning path if any."""
         player_id = PLAYER_ID_MAP[player] if player else self.current_player_id
-        # Call the JIT compiled function
-        return _check_win_condition_jit(self.board, player_id)
+        
+        # First use the faster win check to see if there's a win at all
+        if _check_win_condition_jit(self.board, player_id):
+            # If a win is detected, call the path-finding function to get the actual path
+            win_path = _find_winning_path_jit(self.board, player_id)
+            return True, win_path
+        
+        return False, []
 
     def step(self, action_index):
         """
@@ -372,8 +679,9 @@ class SwitcharooEnv:
         move_type_code = _apply_move_jit(self.board, start_r, start_c, end_r, end_c)
         move_type = 'empty' if move_type_code == 1 else 'swap'
 
-        # Check for win condition for the current player (using JIT)
-        if _check_win_condition_jit(self.board, current_player_id):
+        # Check for win condition for the current player (using JIT with path finding)
+        has_won, win_path = self.check_win_condition(ID_PLAYER_MAP[current_player_id])
+        if has_won:
             self.winner_id = current_player_id
             reward = 100.0 # Win reward
             done = True
