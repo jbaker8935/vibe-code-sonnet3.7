@@ -95,30 +95,26 @@ def _validate_reward(reward):
     return reward
 
 # Safely replay the experience to handle tensor conversion errors
-def safe_replay(agent):
+def safe_replay(agent, num_batches=5):
+    """Safe replay function with error handling and batched updates."""
     try:
-        loss = agent.replay()
-        # We can log the loss here if needed, but we need to convert to numpy OUTSIDE
-        # the tf.function context
-        # if loss is not None:
-        #     loss_value = loss.numpy()  # Only convert to numpy if needed for logging
-    except ValueError as e:
-        if "Expected values" in str(e) and "to be a dense tensor with shape" in str(e):
-            # This is the shape mismatch error we're seeing
-            print("Warning: Skipped replay batch due to tensor shape mismatch.")
-            # Optional: Clear some memory to avoid the same problematic batch
-            if len(agent.memory) > agent.batch_size * 2:  # Only clear if we have enough samples
-                for _ in range(agent.batch_size):
-                    agent.memory.popleft()  # Remove some old experiences
-        else:
-            # For other value errors, raise them
-            raise e
-    except AttributeError as e:
-        if "'SymbolicTensor' object has no attribute 'numpy'" in str(e):
-            # This is the error we just fixed
-            print("Warning: SymbolicTensor numpy() error. Update your code.")
-        else:
-            raise e
+        # Run multiple minibatch updates in sequence
+        for _ in range(num_batches):
+            loss = agent.replay()
+    except Exception as e:
+        print(f"Error during replay: {e}")
+        # Try rebuilding the model if there was an error
+        # (rare but can happen with certain memory/graph issues)
+        try:
+            print("Attempting to rebuild model...")
+            old_weights = agent.model.get_weights()
+            agent.model = agent._build_model()
+            agent.model.set_weights(old_weights)
+            agent.update_target_model()
+            print("Model rebuilt successfully.")
+        except Exception as rebuild_error:
+            print(f"Failed to rebuild model: {rebuild_error}")
+            # No point in re-raising, just continue training
 
 # --- Training Loop ---
 if __name__ == "__main__":

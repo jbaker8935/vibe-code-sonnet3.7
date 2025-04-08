@@ -9,7 +9,7 @@ from numba import njit
 ROWS = 8
 COLS = 4
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps before forcing a draw
-HISTORY_LENGTH = 8  # Increased to catch 4 moves from each player
+HISTORY_LENGTH = 4  # Store 2 moves per player (reduced from 8)
 EARLY_GAME_MOVES = 40  # First 20 moves by each player
 MID_GAME_MOVES = 60   # Next 10 moves by each player
 
@@ -72,7 +72,7 @@ def parse_initial_position_jit(position_str, a_normal, b_normal, empty_cell):
     rows = []
     current_row = ""
     for char in position_str:
-        if char == '\n':
+        if (char == '\n'):
             if current_row:  # Only add non-empty rows
                 rows.append(current_row)
                 current_row = ""
@@ -240,7 +240,7 @@ def _evaluate_board_batch(boards, player_id):
 
 @njit(cache=True)
 def _evaluate_board_jit(board, player_id):
-    """Optimized board evaluation with opponent move checks, row occupancy scoring, and start/target row bonuses."""
+    """Optimized board evaluation with opponent move checks and position scoring."""
     rows, cols = board.shape
     start_row = rows - 2 if player_id == PLAYER_A_ID else 1
     target_row = 1 if player_id == PLAYER_A_ID else rows - 2
@@ -257,7 +257,7 @@ def _evaluate_board_jit(board, player_id):
 
     # Vectorized piece counting and progress calculation
     piece_positions = np.where((board == (A_NORMAL if player_id == PLAYER_A_ID else B_NORMAL)) | 
-                                (board == (A_SWAPPED if player_id == PLAYER_A_ID else B_SWAPPED)))
+                              (board == (A_SWAPPED if player_id == PLAYER_A_ID else B_SWAPPED)))
 
     if len(piece_positions[0]) == 0:
         return -100.0  # Penalize states with no pieces
@@ -524,6 +524,27 @@ def board_to_binary_batch(boards):
     
     return binary_boards
 
+@njit(cache=True)
+def _calculate_action_indices_jit(legal_moves, directions):
+    """JIT-compiled function to convert moves to action indices."""
+    legal_indices = []
+    
+    for start_r, start_c, end_r, end_c in legal_moves:
+        dr, dc = end_r - start_r, end_c - start_c
+        
+        # Find direction index
+        direction_index = -1
+        for i in range(len(directions)):
+            if directions[i, 0] == dr and directions[i, 1] == dc:
+                direction_index = i
+                break
+                
+        if direction_index != -1:
+            start_cell_index = start_r * 4 + start_c  # Using COLS=4 directly for JIT
+            action_index = start_cell_index * 8 + direction_index  # Using NUM_DIRECTIONS=8 directly
+            legal_indices.append(action_index)
+    
+    return legal_indices
 
 # --- Environment Class ---
 
@@ -535,7 +556,8 @@ class SwitcharooEnv:
         self.current_player_id = PLAYER_A_ID
         self.winner_id = 0  # 0: None, 1: A, 2: B, 3: Draw
         self.step_count = 0  # Add step counter
-        self.move_history = deque(maxlen=HISTORY_LENGTH)  # Store recent board states
+        self.move_history_a = deque(maxlen=2)  # Store last 2 moves for player A
+        self.move_history_b = deque(maxlen=2)  # Store last 2 moves for player B
         self.reset()
 
     def reset(self, initial_state=None):
@@ -547,9 +569,12 @@ class SwitcharooEnv:
         self.current_player_id = PLAYER_A_ID
         self.winner_id = 0
         self.step_count = 0  # Reset step counter
-        self.move_history.clear()
-        for _ in range(HISTORY_LENGTH):
-            self.move_history.append(np.zeros((ROWS, COLS), dtype=np.int8))
+        self.move_history_a.clear()
+        self.move_history_b.clear()
+        # Initialize with zero boards
+        for _ in range(2):
+            self.move_history_a.append(np.zeros((ROWS, COLS), dtype=np.int8))
+            self.move_history_b.append(np.zeros((ROWS, COLS), dtype=np.int8))
 
         if initial_state:
             # Use the JIT-compiled function to parse the initial state
@@ -566,18 +591,21 @@ class SwitcharooEnv:
         return self._get_state()
 
     def _get_state(self):
-        """Enhanced state representation using binary board encoding."""
+        """Enhanced state representation using binary board encoding with player-specific history."""
         # Convert current board to binary
         current_binary = board_to_binary(self.board)
         
-        # Convert history boards to binary
-        history_binary = np.zeros((HISTORY_LENGTH * 5), dtype=np.uint32)
-        for i, board in enumerate(self.move_history):
+        # Get history for current player
+        player_history = self.move_history_a if self.current_player_id == PLAYER_A_ID else self.move_history_b
+        
+        # Convert history boards to binary (2 previous states)
+        history_binary = np.zeros((2 * 5), dtype=np.uint32)
+        for i, board in enumerate(player_history):
             binary = board_to_binary(board)
             history_binary[i*5:(i+1)*5] = binary
             
-        # Combine current state, history, and player indicator
-        state = np.zeros(5 + (5 * HISTORY_LENGTH) + 1, dtype=np.float32)
+        # Combine current state, player's history, and player indicator
+        state = np.zeros(5 + (5 * 2) + 1, dtype=np.float32)  # reduced size: 5 + 10 + 1 = 16
         state[:5] = current_binary
         state[5:-1] = history_binary
         state[-1] = 0.0 if self.current_player_id == PLAYER_A_ID else 1.0
@@ -596,26 +624,8 @@ class SwitcharooEnv:
 
     def get_legal_action_indices(self, player=None):
         """Returns a list of valid action indices for the current player."""
-        legal_moves = self.get_legal_moves(player) # Uses JIT function internally
-        legal_indices = []
-        for start_r, start_c, end_r, end_c in legal_moves:
-            dr, dc = end_r - start_r, end_c - start_c
-            # Find direction index (can be slow if done many times, but ok here)
-            direction_index = -1
-            for i in range(NUM_DIRECTIONS):
-                if DIRECTIONS[i, 0] == dr and DIRECTIONS[i, 1] == dc:
-                    direction_index = i
-                    break
-
-            if direction_index != -1:
-                start_cell_index = start_r * COLS + start_c
-                action_index = start_cell_index * NUM_DIRECTIONS + direction_index
-                legal_indices.append(action_index)
-            else:
-                 # Should not happen if DIRECTIONS is correct
-                 print(f"Error: Invalid direction ({dr}, {dc}) derived from legal move.")
-
-        return legal_indices
+        legal_moves = self.get_legal_moves(player)  # Uses JIT function internally
+        return _calculate_action_indices_jit(legal_moves, DIRECTIONS)
 
     def _action_index_to_move(self, action_index):
         """Converts an action index back to (start_r, start_c, end_r, end_c)."""
@@ -710,7 +720,7 @@ class SwitcharooEnv:
                 
                 # Enhanced repetition detection
                 piece_moved = None
-                for hist_board in self.move_history:
+                for hist_board in self.move_history_a if current_player_id == PLAYER_A_ID else self.move_history_b:
                     if np.array_equal(self.board, hist_board):
                         # Direct position repeat
                         reward -= 5.0
@@ -726,8 +736,11 @@ class SwitcharooEnv:
                             reward -= 3.0
                             break
                 
-                # Add current board to history
-                self.move_history.append(self.board.copy())
+                # Add current board to appropriate history
+                if current_player_id == PLAYER_A_ID:
+                    self.move_history_a.append(self.board.copy())
+                else:
+                    self.move_history_b.append(self.board.copy())
                 
                 done = False
 

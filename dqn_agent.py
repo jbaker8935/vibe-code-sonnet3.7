@@ -34,7 +34,7 @@ from game_env import ROWS, COLS, NUM_ACTIONS, HISTORY_LENGTH
 
 # State size calculation for binary representation
 BINARY_BOARD_SIZE = 5  # 5 uint32 values per board
-STATE_SIZE = BINARY_BOARD_SIZE + (HISTORY_LENGTH * BINARY_BOARD_SIZE) + 1  # Current + history + player
+STATE_SIZE = BINARY_BOARD_SIZE + (2 * BINARY_BOARD_SIZE) + 1  # Current + 2 previous moves + player
 
 ACTION_SIZE = NUM_ACTIONS
 
@@ -73,8 +73,8 @@ class DQNAgent:
         # Current board is 5 uint32 values
         current_board = layers.Lambda(lambda x: x[:, :5])(input_layer)
         
-        # History is HISTORY_LENGTH boards × 5 uint32 values each
-        history_size = HISTORY_LENGTH * 5
+        # History is 2 boards × 5 uint32 values each
+        history_size = 2 * 5
         history_boards = layers.Lambda(lambda x: x[:, 5:5+history_size])(input_layer)
         
         # Player input is the last value
@@ -84,17 +84,17 @@ class DQNAgent:
         x1 = layers.Dense(256, activation='relu')(current_board)
         x1 = layers.Dense(128, activation='relu')(x1)
         
-        # Process history binary boards - reshape to (batch_size, HISTORY_LENGTH, 5)
-        history_reshaped = layers.Reshape((HISTORY_LENGTH, 5))(history_boards)
+        # Process history binary boards - reshape to (batch_size, 2, 5)
+        history_reshaped = layers.Reshape((2, 5))(history_boards)
         
         # Add attention mechanism
-        attention = layers.Dense(64, activation='tanh')(history_reshaped)
+        attention = layers.Dense(32, activation='tanh')(history_reshaped)
         attention = layers.Dense(1, activation='sigmoid')(attention)
         x2 = layers.Multiply()([history_reshaped, attention])
         
-        # Process temporal patterns
-        x2 = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(x2)
-        x2 = layers.Bidirectional(layers.LSTM(64))(x2)
+        # Process temporal patterns with smaller LSTM due to reduced history
+        x2 = layers.Bidirectional(layers.LSTM(64, return_sequences=True))(x2)
+        x2 = layers.Bidirectional(layers.LSTM(32))(x2)
         
         # Combine features
         combined = layers.Concatenate()([x1, x2, player_input])
@@ -131,9 +131,10 @@ class DQNAgent:
         if np.random.rand() <= self.epsilon:
             return random.choice(legal_actions_indices)
         else:
-            state_tensor = tf.convert_to_tensor(state)
+            state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
             state_tensor = tf.expand_dims(state_tensor, 0)
-            act_values = self.model(state_tensor, training=False)
+            # Use the optimized prediction function
+            act_values = self.predict_batch(state_tensor)
 
             # Handle NaN values
             q_values = act_values.numpy()[0]
@@ -236,9 +237,13 @@ class DQNAgent:
         if self.update_counter % self.target_update_freq == 0:
             self.update_target_model()
             
-        # Epsilon decay removed from here
-            
         return loss  # Return loss tensor directly, not numpy()
+        
+    # Add a new optimized batch prediction method
+    @tf.function
+    def predict_batch(self, states_tensor):
+        """TF function optimized prediction for multiple states at once."""
+        return self.model(states_tensor, training=False)
 
     def act_batch(self, states, legal_actions_list):
         """Batch version of act() for improved performance."""
