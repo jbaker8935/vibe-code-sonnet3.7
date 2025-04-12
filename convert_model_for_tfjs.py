@@ -14,37 +14,25 @@ ACTION_SIZE = NUM_ACTIONS
 
 def create_model():
     """Creates a model matching the DQNAgent architecture exactly by copying its _build_model method."""
-    # Create the same model as in DQNAgent._build_model
     input_layer = layers.Input(shape=(STATE_SIZE,))
-    
-    # Split inputs exactly as in DQNAgent
+
+    # Current board is 5 uint32 values
     current_board = layers.Lambda(lambda x: x[:, :5])(input_layer)
-    history_size = HISTORY_LENGTH * 5
-    history_boards = layers.Lambda(lambda x: x[:, 5:5+history_size])(input_layer)
+
+    # Player input is the last value
     player_input = layers.Lambda(lambda x: x[:, -1:])(input_layer)
-    
-    # Process current binary board - EXACT code from DQNAgent
+
+    # Process current binary board
     x1 = layers.Dense(256, activation='relu')(current_board)
     x1 = layers.Dense(128, activation='relu')(x1)
-    
-    # Process history with attention - EXACT code from DQNAgent
-    history_reshaped = layers.Reshape((HISTORY_LENGTH, 5))(history_boards)
-    attention = layers.Dense(64, activation='tanh')(history_reshaped)
-    attention = layers.Dense(1, activation='sigmoid')(attention)
-    x2 = layers.Multiply()([history_reshaped, attention])
-    
-    # Process temporal patterns - EXACT code from DQNAgent
-    x2 = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(x2)
-    x2 = layers.Bidirectional(layers.LSTM(64))(x2)
-    
-    # Combine features - EXACT code from DQNAgent
-    combined = layers.Concatenate()([x1, x2, player_input])
+
+    # Combine features
+    combined = layers.Concatenate()([x1, player_input])
     x = layers.Dense(256, activation='relu')(combined)
     x = layers.Dense(128, activation='relu')(x)
-    
-    # Output layer - EXACT code from DQNAgent
+
     output = layers.Dense(ACTION_SIZE, activation='linear')(x)
-    
+
     model = keras.Model(inputs=input_layer, outputs=output)
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=0.001),

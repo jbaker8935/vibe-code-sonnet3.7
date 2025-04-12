@@ -10,43 +10,59 @@ import wandb
 from numba import njit
 from random import choice  # Add this import for selecting random initial positions
 
-from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B
+from game_env import (SwitcharooEnv, PLAYER_A, PLAYER_B, PLAYER_B_ID, PLAYER_A_ID,
+                     _evaluate_board_jit, _calculate_progress_reward, _apply_move_jit)
 from dqn_agent import DQNAgent
 from train_dqn import save_checkpoint, safe_replay
 
 # Add configuration block at the start of the script
 def configure_tensorflow():
     """Configure TensorFlow settings for optimal performance."""
-    # Set parallel thread settings first, before any other TF operations
-    tf.config.threading.set_inter_op_parallelism_threads(4)
-    tf.config.threading.set_intra_op_parallelism_threads(4)
+    # Set memory growth and optimization flags before any other TF operations
+    os.environ['TF_GPU_THREAD_MODE'] = 'gpu_private'
+    os.environ['TF_GPU_THREAD_COUNT'] = '1'
+    os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit'
     
-    # Set float32 as default float type before any other TF operations
+    # Use float32 for better numerical stability
     tf.keras.backend.set_floatx('float32')
     
-    # Avoid duplicate registrations
     physical_devices = tf.config.list_physical_devices('GPU')
     if physical_devices:
         try:
-            # Enable memory growth to avoid allocating all memory at once
+            # Enable memory growth
             for device in physical_devices:
                 tf.config.experimental.set_memory_growth(device, True)
+                
+            # Set memory limit only, removed preallocate option
+            for device in physical_devices:
+                tf.config.set_logical_device_configuration(
+                    device,
+                    [tf.config.LogicalDeviceConfiguration(memory_limit=3 * 1024)]  # 3GB limit
+                )
             
-            # Configure optimizer for mixed precision without changing global policy
-            optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-            optimizer = tf.keras.mixed_precision.LossScaleOptimizer(
-                optimizer,
-                dynamic=True,
-                initial_scale=2**10,
-                dynamic_growth_steps=2000
-            )
+            # Enable XLA and other optimizations
+            tf.config.optimizer.set_jit(True)
+            tf.config.optimizer.set_experimental_options({
+                'layout_optimizer': True,
+                'constant_folding': True,
+                'shape_optimization': True,
+                'remapping': True,
+                'arithmetic_optimization': True,
+                'dependency_optimization': True,
+                'loop_optimization': True,
+                'function_optimization': True,
+                'debug_stripper': True,
+            })
             
         except RuntimeError as e:
             print(f"GPU configuration error: {e}")
-    
-    # Optimize for CPU instructions if GPU isn't available
-    if not physical_devices:
+            print("Falling back to CPU...")
+            
+    # Optimize for CPU if no GPU
+    else:
         tf.config.optimizer.set_jit(True)
+        tf.config.threading.set_inter_op_parallelism_threads(4)
+        tf.config.threading.set_intra_op_parallelism_threads(4)
 
 # Add this call right after the imports
 configure_tensorflow()
@@ -55,7 +71,7 @@ configure_tensorflow()
 PHASE1_EPISODES = 50000      # Episodes for Phase 1 (random opponent) 50000
 PHASE2_EPISODES = 100000     # Episodes for Phase 2 (self-play) 100000
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps per episode
-REPLAY_FREQUENCY = 8          # Frequency of replay buffer sampling
+REPLAY_FREQUENCY = 2          # Frequency of replay buffer sampling
 
 # Tournament Configuration
 TOURNAMENT_FREQ = 1000       # How often to run tournaments
@@ -177,65 +193,57 @@ A..A"""
 
 initial_position = initial_position_base
 
+@njit(cache=True)
+def _action_index_to_move(action_index):
+    """Convert action index to move coordinates (row1, col1, row2, col2)."""
+    if action_index is None:
+        return None
+    start_r = action_index // 512
+    start_c = (action_index % 512) // 64
+    end_r = (action_index % 64) // 8
+    end_c = action_index % 8
+    return start_r, start_c, end_r, end_c
+
+@njit(cache=True)
+def get_opponent_action_fast(board_state, legal_actions, opponent_epsilon):
+    """Ultra-fast opponent action selection."""
+    if random.random() < opponent_epsilon:
+        return legal_actions[random.randint(0, len(legal_actions) - 1)]
+    
+    best_score = float('-inf')
+    best_action = legal_actions[0]
+    
+    # Use our local _action_index_to_move function
+    for action in legal_actions:
+        board_copy = board_state.copy()
+        move = _action_index_to_move(action)
+        if move is None:
+            continue
+        
+        start_r, start_c, end_r, end_c = move
+        if 0 <= start_r < 8 and 0 <= start_c < 8 and 0 <= end_r < 8 and 0 <= end_c < 8:
+            _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
+            score = _evaluate_board_jit(board_copy, PLAYER_A_ID)
+            
+            if score > best_score:
+                best_score = score
+                best_action = action
+    
+    return best_action
 
 def get_opponent_action(env, opponent_epsilon=0.3):
-    """Improved policy for the opponent: uses board evaluation instead of random moves.
-    
-    Args:
-        env: Game environment
-        opponent_epsilon: Probability of choosing a random move (0.0 to 1.0)
-    """
-    from game_env import _evaluate_board_jit, _apply_move_jit, PLAYER_A_ID
-    
+    """Improved policy for the opponent using JIT-compiled evaluation."""
     legal_actions = env.get_legal_action_indices(player=PLAYER_A)
     if not legal_actions:
-        return None # No legal moves
+        return None
     
-    # Random move with probability opponent_epsilon
+    # Fast path for random moves
     if random.random() < opponent_epsilon:
         return random.choice(legal_actions)
     
-    # Get the current board state
-    board_state = env.board.copy()
-    
-    # If there are many legal actions, sample a subset for faster evaluation
-    if len(legal_actions) > 10:
-        # Always evaluate some random actions for exploration
-        evaluation_actions = random.sample(legal_actions, min(10, len(legal_actions)))
-    else:
-        evaluation_actions = legal_actions
-    
-    best_score = float('-inf')
-    best_action = None
-    
-    # Evaluate each action
-    for action in evaluation_actions:
-        # Convert action index to move
-        move = env._action_index_to_move(action)
-        if move is None:
-            continue
-            
-        start_r, start_c, end_r, end_c = move
-        
-        # Create a copy of the board to simulate the move
-        board_copy = board_state.copy()
-        
-        # Apply the move
-        _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
-        
-        # Evaluate the resulting board state for Player A
-        score = _evaluate_board_jit(board_copy, PLAYER_A_ID)
-        
-        # Track the best action
-        if score > best_score:
-            best_score = score
-            best_action = action
-    
-    # If evaluation failed or all moves score the same, fall back to random choice
-    if best_action is None:
-        return random.choice(legal_actions)
-        
-    return best_action
+    # Sample subset of moves for evaluation
+    eval_actions = legal_actions if len(legal_actions) <= 5 else random.sample(legal_actions, 5)
+    return get_opponent_action_fast(env.board, eval_actions, opponent_epsilon)
 
 def create_agent_variant(base_agent, noise_scale=NOISE_SCALE, epsilon=0.05):
     """Create a variant of the base agent by adding Gaussian noise to its weights."""
@@ -335,24 +343,33 @@ def run_tournament(base_agent, num_variants=NUM_VARIANTS, matches_per_pair=TOURN
     
     return variants[best_idx], best_score, total_matches
 
-def init_wandb(enable_wandb, run_name, group_name=None):
+def init_wandb(enable_wandb, run_name, agent, group_name=None): # Add agent parameter
     """Initialize wandb with error handling"""
     if not enable_wandb:
         return False
-        
+
     try:
+        # Ensure agent is not None before accessing attributes
+        if agent is None:
+             print("\nWarning: Agent object is None, cannot initialize wandb config.")
+             return False
+
         wandb.init(
             project=WANDB_PROJECT,
             entity=WANDB_ENTITY,
             name=run_name,
             group=group_name,
             config={
+                # Access attributes from the passed agent object
+                "learning_rate": agent.learning_rate,
+                "gamma": agent.gamma,
                 "epsilon": agent.epsilon,
                 "epsilon_decay": agent.epsilon_decay,
                 "epsilon_min": agent.epsilon_min,
                 "batch_size": agent.batch_size,
                 "replay_buffer_size": agent.memory.maxlen,
-                "target_update_freq": agent.target_update_freq
+                "target_update_freq": agent.target_update_freq,
+                "gradient_clip_norm": agent.optimizer.clipnorm if hasattr(agent.optimizer, 'clipnorm') else None # Check if clipnorm exists
             }
         )
         return True
@@ -368,62 +385,115 @@ def _validate_reward(reward):
         return 0.0
     return reward
 
-
-
 def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wandb=True):
-    """Phase 1: Train against a random opponent."""
-    # Initialize wandb
-    wandb_enabled = init_wandb(enable_wandb, "phase1_training")
-
-    print("\n===== STARTING PHASE 1: TRAINING AGAINST RANDOM OPPONENT =====")
-    
+    """Phase 1: Train against a progressively stronger opponent."""
+    # Preallocate memory for better performance
     env = SwitcharooEnv()
     scores = deque(maxlen=100)
     wins = deque(maxlen=100)
-    losses = deque(maxlen=100)  # Add losses tracking
-    draws = deque(maxlen=100)   # Add draws tracking
+    losses = deque(maxlen=100)
+    draws = deque(maxlen=100)
+    steps = deque(maxlen=100)
+    move_times = deque(maxlen=100)
+    train_times = deque(maxlen=100) 
     best_avg_score = float('-inf')
     
-    # Start with high opponent randomness that decreases over time
+    # Reduce wandb logging frequency
+    log_freq = 10  # Only log every 10 episodes
+    
+    # Initialize wandb with fewer metrics, passing the agent object
+    wandb_enabled = init_wandb(enable_wandb, "phase1_training", agent) # Pass agent here
+    
+    # Batch training flag
+    should_train = False
+    
+    # Adjusted opponent epsilon decay for progressive difficulty
     opponent_epsilon_start = 0.9
-    opponent_epsilon_end = 0.1
+    opponent_epsilon_end = 0.2  # Opponent becomes less random but not fully deterministic
     opponent_epsilon_decay = (opponent_epsilon_end / opponent_epsilon_start) ** (1 / episodes)
     opponent_epsilon = opponent_epsilon_start
     
+    # Adjust agent's epsilon decay for more exploration
+    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.75))  # Slower decay
+
     for e in range(start_episode, episodes + 1):
-        state = env.reset(choice(initial_position))  # Pass random initial position
+        move_time = 0
+        eval_time = 0
+        train_time = 0
+        episode_start = time.time()
+        
+        state = env.reset(choice(initial_position))
         episode_reward = 0
         agent_steps = 0
-        episode_start = time.time()
         
         for step in range(MAX_STEPS_PER_EPISODE):
             current_player = env.current_player
+            step_start = time.time()
             
             if current_player == PLAYER_B:  # Agent's turn
                 legal_actions = env.get_legal_action_indices(player=PLAYER_B)
                 if not legal_actions:
                     break
                 
-                action = agent.act(state, legal_actions)
+                # Filter legal actions to exclude losing moves
+                filtered_actions = []
+                for action in legal_actions:
+                    board_copy = env.board.copy()
+                    move = _action_index_to_move(action)
+                    if move is None:
+                        continue
+
+                    start_r, start_c, end_r, end_c = move
+                    if 0 <= start_r < 8 and 0 <= start_c < 8 and 0 <= end_r < 8 and 0 <= end_c < 8:
+                        _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
+                        score = _evaluate_board_jit(board_copy, PLAYER_B_ID)
+
+                        if score == -100.0:
+                            # Remember this move as a bad move with -100 reward
+                            agent.remember(state, action, -100, state, False)
+                        else:
+                            filtered_actions.append(action)
+
+                # Use filtered actions for the agent's decision
+                action = agent.act(state, filtered_actions if filtered_actions else legal_actions)
                 next_state, reward, done, info = env.step(action)
+                
+                # Reward shaping: Penalize draws, incentivize faster wins, and reward progress
+                if done:
+                    if info.get('winner') == PLAYER_B:
+                        reward += 100  # Win bonus
+                    elif info.get('winner') == PLAYER_A:
+                        reward -= 50  # Loss penalty
+                    else:  # Draw
+                        reward -= 20  # Draw penalty
+                else:
+                    # Use the new progress reward function
+                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 10.0
+                    reward += progress_reward
+
                 reward = _validate_reward(reward)  # Use JIT for reward validation
                 agent.remember(state, action, reward, next_state, done)
                 episode_reward += reward
-                agent_steps += 1
             else:
-                # Use current opponent_epsilon value
+                # Use improved opponent policy
                 action = get_opponent_action(env, opponent_epsilon=opponent_epsilon)
                 if action is None:
                     break
                 
-                next_state, reward, done, info = env.step(action)
+                move_time += time.time() - step_start
+                next_state, _, done, info = env.step(action)
             
             state = next_state
             
             if len(agent.memory) > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:
+                train_start = time.time()
                 safe_replay(agent)
+                train_time += time.time() - train_start
             
             if done:
+                steps.append(step+1)
+                train_times.append(train_time)
+                move_times.append(move_time)             
                 break
         
         # Additional training at episode end
@@ -432,14 +502,13 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         
         # Apply epsilon decay after each episode
         if agent.epsilon > agent.epsilon_min:
-            agent.epsilon *= agent.epsilon_decay
+            agent.epsilon *= agent_epsilon_decay
             
         # Decay opponent epsilon
         opponent_epsilon *= opponent_epsilon_decay
         
         # Track performance
         scores.append(episode_reward)
-        # Track game outcome
         if info.get('winner') == PLAYER_B:
             wins.append(1)
             losses.append(0)
@@ -448,56 +517,76 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
             wins.append(0)
             losses.append(1)
             draws.append(0)
-        else:  # Draw
+        else:
             wins.append(0)
             losses.append(0)
             draws.append(1)
             
-        avg_score = np.mean(scores)
-        win_rate = np.mean(wins)
-        loss_rate = np.mean(losses)
-        draw_rate = np.mean(draws)
+        avg_score = np.mean(scores) if scores else 0.0
+        win_rate = np.mean(wins) if wins else 0.0
+        loss_rate = np.mean(losses) if losses else 0.0
+        draw_rate = np.mean(draws) if draws else 0.0
+        avg_steps = np.mean(steps) if steps else 0.0
+        avg_move_time = np.mean(move_times) if move_times else 0.0
+        avg_train_time = np.mean(train_times) if train_times else 0.0
 
-        # Log metrics to wandb only if initialization succeeded
-        if wandb_enabled:
+        # Log metrics to wandb
+        if wandb_enabled and e % log_freq == 0:
             try:
                 wandb.log({
                     "episode": e,
                     "episode_reward": episode_reward,
-                    "avg_score": avg_score,
-                    "win_rate": win_rate,
-                    "loss_rate": loss_rate,
-                    "draw_rate": draw_rate,
+                    "avg_score": avg_score, # Use safe average
+                    "win_rate": win_rate,   # Use safe average
+                    "loss_rate": loss_rate, # Use safe average
+                    "draw_rate": draw_rate, # Use safe average
+                    "avg_steps": avg_steps, # Use safe average
+                    "avg_move_time": avg_move_time, # Use safe average
+                    "avg_train_time": avg_train_time, # Use safe average
                     "epsilon": agent.epsilon,
                     "opponent_epsilon": opponent_epsilon,
                     "memory_size": len(agent.memory),
-                    "steps": agent_steps,
+                    "steps": agent_steps, # This should be the steps in the current episode
                     "time_per_episode": time.time() - episode_start
                 })
-            except Exception as e:
-                print(f"\nWarning: Failed to log to wandb: {e}")
+            except Exception as ex: # Renamed variable to avoid conflict
+                print(f"\nWarning: Failed to log to wandb: {ex}")
                 wandb_enabled = False
 
         # Save best model
-        if avg_score > best_avg_score and len(scores) >= 50:
+        if avg_score > best_avg_score and len(scores) >= 50: # Check length before comparing
             best_avg_score = avg_score
             agent.save(BASE_MODEL_FILE)
             print(f"New best model saved with avg score: {best_avg_score:.2f}")
-        
+
         # Periodic checkpoint
         if e % SAVE_FREQ == 0:
             save_checkpoint(agent, e)
-        
+
         # Display progress
         if e % 100 == 0:
+            # Recalculate safe averages for display
+            win_rate_disp = np.mean(wins) if wins else 0.0
+            loss_rate_disp = np.mean(losses) if losses else 0.0
+            draw_rate_disp = np.mean(draws) if draws else 0.0
+            avg_score_disp = np.mean(scores) if scores else 0.0
+            avg_steps_disp = np.mean(steps) if steps else 0.0
+            avg_move_time_disp = np.mean(move_times) if move_times else 0.0
+            avg_train_time_disp = np.mean(train_times) if train_times else 0.0
+
+            total_time = time.time() - episode_start
             print(f"Phase 1 - Episode: {e}/{episodes} | "
                   f"Score: {episode_reward:.2f} | "
-                  f"Win Rate: {win_rate:.2f} | "
-                  f"Loss Rate: {loss_rate:.2f} | "
-                  f"Draw Rate: {draw_rate:.2f} | "
+                  f"Avg Steps: {avg_steps_disp:.2f} | "
+                  f"Avg Move Time: {avg_move_time_disp:.4f} | "
+                  f"Avg Train Time: {avg_train_time_disp:.4f} | "
+                  f"Win Rate: {win_rate_disp:.2f} | "
+                  f"Loss Rate: {loss_rate_disp:.2f} | "
+                  f"Draw Rate: {draw_rate_disp:.2f} | "
                   f"Epsilon: {agent.epsilon:.4f} | "
                   f"Opponent Epsilon: {opponent_epsilon:.4f} | "
-                  f"Avg Score: {avg_score:.2f}")
+                  f"Avg Score: {avg_score_disp:.2f}")
+
     
     # Save final Phase 1 model
     agent.save(BASE_MODEL_FILE)
@@ -512,8 +601,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
 
 def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_phase2=False, enable_wandb=True):
     """Phase 2: Tournament self-play training."""
-    # Initialize wandb
-    wandb_enabled = init_wandb(enable_wandb, "phase2_training")
+    # Initialize wandb, passing the agent object
+    wandb_enabled = init_wandb(enable_wandb, "phase2_training", agent) # Pass agent here
 
     print("\n===== STARTING PHASE 2: TOURNAMENT SELF-PLAY =====")
     
@@ -523,13 +612,20 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
     losses = deque(maxlen=100)  # Track losses
     draws = deque(maxlen=100)   # Track draws
     tournament_agent = copy.deepcopy(agent)
-    
+    steps = deque(maxlen=100)
+    move_times = deque(maxlen=100)
+    train_times = deque(maxlen=100)
+
     for e in range(start_episode, episodes + 1):
+        move_time = 0
+        train_time = 0
+        episode_start = time.time()
         state = env.reset(choice(initial_position))  # Pass random initial position
         episode_reward = 0
         agent_steps = 0
         
         for step in range(MAX_STEPS_PER_EPISODE):
+            step_start = time.time()
             current_player = env.current_player
             
             if current_player == PLAYER_B:  # Learning agent's turn
@@ -537,12 +633,37 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 if not legal_actions:
                     break
                 
-                action = agent.act(state, legal_actions)
+                # Filter legal actions to exclude losing moves
+                filtered_actions = []
+                for action in legal_actions:
+                    board_copy = env.board.copy()
+                    move = _action_index_to_move(action)
+                    if move is None:
+                        continue
+
+                    start_r, start_c, end_r, end_c = move
+                    if 0 <= start_r < 8 and 0 <= start_c < 8 and 0 <= end_r < 8 and 0 <= end_c < 8:
+                        _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
+                        score = _evaluate_board_jit(board_copy, PLAYER_B_ID)
+
+                        if score == -100.0:
+                            # Remember this move as a bad move with -100 reward
+                            agent.remember(state, action, -100, state, False)
+                        else:
+                            filtered_actions.append(action)
+
+                # Use filtered actions for the agent's decision
+                action = agent.act(state, filtered_actions if filtered_actions else legal_actions)
                 next_state, reward, done, info = env.step(action)
                 reward = _validate_reward(reward)  # Use JIT for reward validation
                 agent.remember(state, action, reward, next_state, done)
                 episode_reward += reward
                 agent_steps += 1
+
+                train_start = time.time()
+                if len(agent.memory) > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:
+                    safe_replay(agent)
+                train_time += time.time() - train_start
             else:  # Tournament agent's turn (opponent)
                 legal_actions = env.get_legal_action_indices(player=PLAYER_A)
                 if not legal_actions:
@@ -552,12 +673,13 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 action = tournament_agent.act(state, legal_actions)
                 next_state, reward, done, info = env.step(action)
             
+            move_time += time.time() - step_start
             state = next_state
             
-            if len(agent.memory) > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:
-                safe_replay(agent)
-            
             if done:
+                steps.append(step + 1)
+                move_times.append(move_time)
+                train_times.append(train_time)
                 break
             
             # Force end game if taking too long
@@ -568,6 +690,10 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 info['timeout'] = True
                 break
         
+        avg_steps = np.mean(steps) if steps else 0.0
+        avg_move_time = np.mean(move_times) if move_times else 0.0
+        avg_train_time = np.mean(train_times) if train_times else 0.0
+
         # Additional training at episode end
         if len(agent.memory) > agent.batch_size:
             safe_replay(agent)
@@ -592,28 +718,31 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
             losses.append(0)
             draws.append(1)
         
-        # Log metrics to wandb only if initialization succeeded
-        win_rate = np.mean(wins)
-        loss_rate = np.mean(losses)
-        draw_rate = np.mean(draws)
-        avg_score = np.mean(scores)
+        # Calculate averages safely before logging
+        win_rate = np.mean(wins) if wins else 0.0
+        loss_rate = np.mean(losses) if losses else 0.0
+        draw_rate = np.mean(draws) if draws else 0.0
+        avg_score = np.mean(scores) if scores else 0.0
 
         if wandb_enabled:
             try:
                 wandb.log({
                     "episode": e,
                     "episode_reward": episode_reward,
-                    "avg_score": avg_score,
-                    "win_rate": win_rate,
-                    "loss_rate": loss_rate,
-                    "draw_rate": draw_rate,
+                    "avg_score": avg_score, # Use safe average
+                    "win_rate": win_rate,   # Use safe average
+                    "loss_rate": loss_rate, # Use safe average
+                    "draw_rate": draw_rate, # Use safe average
                     "epsilon": agent.epsilon,
                     "memory_size": len(agent.memory),
-                    "steps": agent_steps,
+                    "steps": agent_steps, # This should be the steps in the current episode
+                    "avg_steps": avg_steps, # Use safe average
+                    "avg_move_time": avg_move_time, # Use safe average
+                    "avg_train_time": avg_train_time, # Use safe average
                     "timeout_rate": 1.0 if info.get('timeout', False) else 0.0
                 })
-            except Exception as e:
-                print(f"\nWarning: Failed to log to wandb: {e}")
+            except Exception as ex: # Renamed variable to avoid conflict
+                print(f"\nWarning: Failed to log to wandb: {ex}")
                 wandb_enabled = False
 
         # Run tournament and update best agent
@@ -648,17 +777,24 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
         
         # Display progress
         if e % 100 == 0:
-            win_rate = np.mean(wins)
-            loss_rate = np.mean(losses)
-            draw_rate = np.mean(draws)
-            avg_score = np.mean(scores)
+            # Recalculate safe averages for display
+            win_rate_disp = np.mean(wins) if wins else 0.0
+            loss_rate_disp = np.mean(losses) if losses else 0.0
+            draw_rate_disp = np.mean(draws) if draws else 0.0
+            avg_score_disp = np.mean(scores) if scores else 0.0
+            avg_steps_disp = np.mean(steps) if steps else 0.0
+            avg_move_time_disp = np.mean(move_times) if move_times else 0.0
+            avg_train_time_disp = np.mean(train_times) if train_times else 0.0
+
             print(f"Phase 2 - Episode: {e}/{episodes} | "
                   f"Score: {episode_reward:.2f} | "
-                  f"Win Rate: {win_rate:.2f} | "
-                  f"Loss Rate: {loss_rate:.2f} | "
-                  f"Draw Rate: {draw_rate:.2f} | "
+                  f"Win Rate: {win_rate_disp:.2f} | "
+                  f"Loss Rate: {loss_rate_disp:.2f} | "
+                  f"Draw Rate: {draw_rate_disp:.2f} | "
                   f"Epsilon: {agent.epsilon:.4f} | "
-                  f"Avg Score: {avg_score:.2f}")
+                  f"Avg Steps: {avg_steps_disp:.2f} | "
+                  f"Avg Move Time: {avg_move_time_disp:.4f} | "
+                  f"Avg Train Time: {avg_train_time_disp:.4f}") # Use safe average
     
     # Save final model
     agent.save(TOURNAMENT_MODEL_FILE)
@@ -676,14 +812,16 @@ def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_fil
     """Run Phase 2 training directly with an existing model file as input."""
     print(f"\n===== STARTING DIRECT PHASE 2 TRAINING WITH MODEL: {model_file} =====")
     
-    # Initialize agent with the fixed epsilon value of 0.01
+    # Initialize agent *before* calling phase2_training (which calls init_wandb)
     agent = DQNAgent(
-        epsilon=0.01,  # Fixed epsilon value for direct Phase 2 training
-        epsilon_decay=1.0,  # No decay since we want to keep epsilon fixed
+        learning_rate=0.00025,
+        epsilon=0.01,
+        epsilon_decay=1.0,
         epsilon_min=0.01,
-        replay_buffer_size=1000000,
+        replay_buffer_size=500000,
         batch_size=64,
         target_update_freq=100
+        # gradient_clip_norm=1.0 # Make sure this matches agent definition if used
     )
     
     # Load the provided model file
@@ -694,7 +832,7 @@ def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_fil
         print(f"Error loading model from {model_file}: {e}")
         return None
     
-    # Run Phase 2 training
+    # Run Phase 2 training (this will call init_wandb internally)
     start_episode = 1
     agent = phase2_training(agent, start_episode, episodes, direct_phase2=True, enable_wandb=enable_wandb)
     
@@ -748,6 +886,7 @@ if __name__ == "__main__":
         # Direct Phase 2 Training Mode
         if args.phase2_only and args.model_file:
             print(f"Starting direct Phase 2 training with model: {args.model_file}")
+            # direct_phase2_training now handles agent creation and loading internally
             direct_phase2_training(
                 model_file=args.model_file,
                 episodes=args.episodes,
@@ -756,14 +895,16 @@ if __name__ == "__main__":
             )
         else:
             # Standard Curriculum Training (Phase 1 + Phase 2)
-            # Initialize agent for curriculum learning
+            # Initialize agent *before* calling phase1_training or phase2_training
             agent = DQNAgent(
+                learning_rate=0.001, # Or adjust as needed for Phase 1
                 epsilon=1.0,
-                epsilon_decay=.9995,
+                epsilon_decay=.9995, # Adjust if needed
                 epsilon_min=0.01,
                 replay_buffer_size=500000,
                 batch_size=64,
                 target_update_freq=100
+                # gradient_clip_norm=1.0 # Make sure this matches agent definition if used
             )
             
             # Check for existing checkpoints only if resume flag is set
@@ -804,6 +945,9 @@ if __name__ == "__main__":
                     agent.load(BASE_MODEL_FILE)
                 
                 # Phase 2: Tournament self-play
+                agent.epsilon = 0.01  # Set epsilon to a fixed value for Phase 2
+                agent.epsilon_decay = 1.0  # No decay in Phase 2
+                agent.epsilon_min = 0.01  # Minimum epsilon for Phase 2
                 agent = phase2_training(agent, start_episode, enable_wandb=enable_wandb)
                 
                 print("Curriculum training completed successfully!")
@@ -831,3 +975,4 @@ if __name__ == "__main__":
             print(f"\nTo analyze the profile data in more detail, you can run:")
             print(f"python -m pstats {args.profile_output}")
             print(f"Or visualize it with: snakeviz {args.profile_output}")
+

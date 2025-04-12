@@ -34,7 +34,7 @@ from game_env import ROWS, COLS, NUM_ACTIONS, HISTORY_LENGTH
 
 # State size calculation for binary representation
 BINARY_BOARD_SIZE = 5  # 5 uint32 values per board
-STATE_SIZE = BINARY_BOARD_SIZE + (2 * BINARY_BOARD_SIZE) + 1  # Current + 2 previous moves + player
+STATE_SIZE = 6  # 5 for the binary board + 1 for the player indicator
 
 ACTION_SIZE = NUM_ACTIONS
 
@@ -45,7 +45,8 @@ class DQNAgent:
                  learning_rate=0.001, gamma=0.99, epsilon=1.0,
                  epsilon_decay=0.999, epsilon_min=0.01,
                  replay_buffer_size=100000, batch_size=64,  # Increased buffer size from 10000 to 100000
-                 target_update_freq=100): # Update target network every 100 steps/episodes
+                 target_update_freq=100, # Update target network every 100 steps/episodes
+                 gradient_clip_norm=1.0): # Add gradient clipping parameter
         self.state_size = state_size
         self.action_size = action_size
         self.memory = deque(maxlen=replay_buffer_size)
@@ -59,8 +60,13 @@ class DQNAgent:
         self.update_counter = 0 # Counter for target network updates
         
         # Store optimizer and loss function as instance variables BEFORE building models
-        self.optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate)
-        self.loss_function = tf.keras.losses.MeanSquaredError()
+        # Add clipnorm to the optimizer
+        self.optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate, clipnorm=gradient_clip_norm)
+        # Use Huber loss instead of MSE
+        self.loss_function = tf.keras.losses.Huber()
+
+        # Debugging: Log the state size during initialization
+        print(f"Initializing DQNAgent with state_size: {self.state_size}")
 
         self.model = self._build_model()
         self.target_model = self._build_model()
@@ -73,10 +79,6 @@ class DQNAgent:
         # Current board is 5 uint32 values
         current_board = layers.Lambda(lambda x: x[:, :5])(input_layer)
         
-        # History is 2 boards × 5 uint32 values each
-        history_size = 2 * 5
-        history_boards = layers.Lambda(lambda x: x[:, 5:5+history_size])(input_layer)
-        
         # Player input is the last value
         player_input = layers.Lambda(lambda x: x[:, -1:])(input_layer)
         
@@ -84,20 +86,8 @@ class DQNAgent:
         x1 = layers.Dense(256, activation='relu')(current_board)
         x1 = layers.Dense(128, activation='relu')(x1)
         
-        # Process history binary boards - reshape to (batch_size, 2, 5)
-        history_reshaped = layers.Reshape((2, 5))(history_boards)
-        
-        # Add attention mechanism
-        attention = layers.Dense(32, activation='tanh')(history_reshaped)
-        attention = layers.Dense(1, activation='sigmoid')(attention)
-        x2 = layers.Multiply()([history_reshaped, attention])
-        
-        # Process temporal patterns with smaller LSTM due to reduced history
-        x2 = layers.Bidirectional(layers.LSTM(64, return_sequences=True))(x2)
-        x2 = layers.Bidirectional(layers.LSTM(32))(x2)
-        
         # Combine features
-        combined = layers.Concatenate()([x1, x2, player_input])
+        combined = layers.Concatenate()([x1, player_input])
         x = layers.Dense(256, activation='relu')(combined)
         x = layers.Dense(128, activation='relu')(x)
         
@@ -143,39 +133,9 @@ class DQNAgent:
                 q_values = np.zeros_like(q_values)
 
             legal_q_values = np.take(q_values, legal_actions_indices)
-            max_q = np.max(legal_q_values)
-            
-            # Find actions with Q-values close to the maximum
-            best_indices = np.where(np.isclose(legal_q_values, max_q, rtol=1e-5))[0]
-            
-            # If multiple actions have effectively the same Q-value, use board evaluation
-            if len(best_indices) > 1:
-                # Get the current binary board state and convert to regular board
-                current_binary = state[:5]  # First 5 values are current board state
-                board_state = binary_to_board(current_binary.astype(np.uint32))
-                
-                best_score = float('-inf')
-                best_action_idx = legal_actions_indices[best_indices[0]]
-                
-                for idx in best_indices:
-                    action_idx = legal_actions_indices[idx]
-                    move = self._get_move_from_action(action_idx)
-                    if move is None:
-                        continue
-                        
-                    start_r, start_c, end_r, end_c = move
-                    board_copy = board_state.copy()
-                    
-                    _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
-                    score = _evaluate_board_jit(board_copy, PLAYER_B_ID)
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_action_idx = action_idx
-                        
-                return best_action_idx
-                
-            return legal_actions_indices[best_indices[0]]
+
+            # Return the legal action with the maximum Q-value
+            return legal_actions_indices[np.argmax(legal_q_values)]
     
     def _get_move_from_action(self, action_index):
         """Converts an action index to (start_r, start_c, end_r, end_c) coordinates."""
@@ -228,8 +188,12 @@ class DQNAgent:
             predicted_values = tf.reduce_sum(q_values * one_hot_actions, axis=1)
             loss = self.loss_function(target_q_values, predicted_values)
             
-        # Apply gradients
+        # Apply gradients (clipping is handled by the optimizer)
         grads = tape.gradient(loss, self.model.trainable_variables)
+
+        # Optional: Check for NaNs in gradients before applying
+        # grads = [tf.where(tf.math.is_nan(g), tf.zeros_like(g), g) if g is not None else g for g in grads]
+
         self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
 
         # Update target network periodically 

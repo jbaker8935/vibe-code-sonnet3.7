@@ -141,6 +141,18 @@ def _unmark_all_swapped(board):
     # No return needed, modifies board in place
 
 @njit(cache=True)
+def _unmark_player_swapped_jit(board, player_id):
+    """Resets SWAPPED pieces to NORMAL for the specified player only."""
+    rows, cols = board.shape
+    for r in range(rows):
+        for c in range(cols):
+            piece = board[r, c]
+            if (player_id == PLAYER_A_ID and piece == A_SWAPPED):
+                board[r, c] = A_NORMAL
+            elif (player_id == PLAYER_B_ID and piece == B_SWAPPED):
+                board[r, c] = B_NORMAL
+
+@njit(cache=True)
 def _get_legal_moves_jit(board, player_id):
     """Calculates all legal moves for the given player_id. Returns list of (start_r, start_c, end_r, end_c)."""
     rows, cols = board.shape
@@ -170,17 +182,19 @@ def _apply_move_jit(board, start_r, start_c, end_r, end_c):
     moving_piece = board[start_r, start_c]
     target_piece = board[end_r, end_c]
     move_type_code = 0
+    moving_player_id = _get_piece_player_id(moving_piece)
 
     if target_piece == EMPTY_CELL:
         # Move to empty cell
         board[end_r, end_c] = moving_piece
         board[start_r, start_c] = EMPTY_CELL
-        _unmark_all_swapped(board)
+        # Only unmark the moving player's swapped pieces
+        _unmark_player_swapped_jit(board, moving_player_id)
         move_type_code = 1 # 'empty'
     else:
         # Swap move (legality check happens before calling this)
         # Determine swapped state for moving piece
-        swapped_moving_piece = A_SWAPPED if _get_piece_player_id(moving_piece) == PLAYER_A_ID else B_SWAPPED
+        swapped_moving_piece = A_SWAPPED if moving_player_id == PLAYER_A_ID else B_SWAPPED
         # Determine swapped state for target piece
         swapped_target_piece = A_SWAPPED if _get_piece_player_id(target_piece) == PLAYER_A_ID else B_SWAPPED
 
@@ -197,7 +211,7 @@ def _check_win_condition_jit(board, player_id):
     start_row = rows - 2 if player_id == PLAYER_A_ID else 1
     target_row = 1 if player_id == PLAYER_A_ID else rows - 2
 
-    visited = np.zeros((rows, cols), dtype=numba.boolean)
+    visited = np.zeros((rows, cols), dtype=np.bool_)
     # Use a list as a queue for Numba compatibility in nopython mode
     queue = [] # List of (r, c) tuples
 
@@ -439,7 +453,7 @@ def _find_winning_path_jit(board, player_id):
     start_row = rows - 2 if player_id == PLAYER_A_ID else 1
     target_row = 1 if player_id == PLAYER_A_ID else rows - 2
     
-    visited = np.zeros((rows, cols), dtype=numba.boolean)
+    visited = np.zeros((rows, cols), dtype=np.bool_)
     # Parent array to reconstruct path (stores flattened indices)
     parent = np.full((rows, cols), -1, dtype=np.int32)
     
@@ -546,6 +560,36 @@ def _calculate_action_indices_jit(legal_moves, directions):
     
     return legal_indices
 
+@njit(cache=True)
+def _calculate_progress_reward(board, player_id):
+    """Calculate a progress-based reward for the given player.
+    
+    Args:
+        board: 8x4 numpy array representing the board.
+        player_id: ID of the player (PLAYER_A_ID or PLAYER_B_ID).
+    
+    Returns:
+        A float representing the progress reward.
+    """
+    rows, cols = board.shape
+    progress = 0.0
+
+    # Define progress direction based on player
+    if player_id == PLAYER_A_ID:
+        for r in range(rows):
+            for c in range(cols):
+                if _get_piece_player_id(board[r, c]) == PLAYER_A_ID:
+                    progress += (rows - r - 1)  # Closer to the opponent's side
+    elif player_id == PLAYER_B_ID:
+        for r in range(rows):
+            for c in range(cols):
+                if _get_piece_player_id(board[r, c]) == PLAYER_B_ID:
+                    progress += r  # Closer to the opponent's side
+
+    # Normalize progress by the maximum possible value
+    max_progress = rows * cols
+    return progress / max_progress
+
 # --- Environment Class ---
 
 from binary_board import board_to_binary, binary_to_board
@@ -556,8 +600,8 @@ class SwitcharooEnv:
         self.current_player_id = PLAYER_A_ID
         self.winner_id = 0  # 0: None, 1: A, 2: B, 3: Draw
         self.step_count = 0  # Add step counter
-        self.move_history_a = deque(maxlen=2)  # Store last 2 moves for player A
-        self.move_history_b = deque(maxlen=2)  # Store last 2 moves for player B
+        self.move_history_a = None
+        self.move_history_b = None
         self.reset()
 
     def reset(self, initial_state=None):
@@ -569,12 +613,6 @@ class SwitcharooEnv:
         self.current_player_id = PLAYER_A_ID
         self.winner_id = 0
         self.step_count = 0  # Reset step counter
-        self.move_history_a.clear()
-        self.move_history_b.clear()
-        # Initialize with zero boards
-        for _ in range(2):
-            self.move_history_a.append(np.zeros((ROWS, COLS), dtype=np.int8))
-            self.move_history_b.append(np.zeros((ROWS, COLS), dtype=np.int8))
 
         if initial_state:
             # Use the JIT-compiled function to parse the initial state
@@ -591,25 +629,15 @@ class SwitcharooEnv:
         return self._get_state()
 
     def _get_state(self):
-        """Enhanced state representation using binary board encoding with player-specific history."""
+        """Simplified state representation using binary board encoding."""
         # Convert current board to binary
         current_binary = board_to_binary(self.board)
-        
-        # Get history for current player
-        player_history = self.move_history_a if self.current_player_id == PLAYER_A_ID else self.move_history_b
-        
-        # Convert history boards to binary (2 previous states)
-        history_binary = np.zeros((2 * 5), dtype=np.uint32)
-        for i, board in enumerate(player_history):
-            binary = board_to_binary(board)
-            history_binary[i*5:(i+1)*5] = binary
-            
-        # Combine current state, player's history, and player indicator
-        state = np.zeros(5 + (5 * 2) + 1, dtype=np.float32)  # reduced size: 5 + 10 + 1 = 16
+
+        # Combine current state and player indicator
+        state = np.zeros(5 + 1, dtype=np.float32)  # reduced size: 5 + 1 = 6
         state[:5] = current_binary
-        state[5:-1] = history_binary
         state[-1] = 0.0 if self.current_player_id == PLAYER_A_ID else 1.0
-        
+
         return state
 
     # _is_valid is now a JIT function
@@ -717,30 +745,6 @@ class SwitcharooEnv:
                 # Position improvement reward
                 position_delta = _evaluate_board_jit(self.board, current_player_id) - current_score
                 reward += position_delta * 3.0
-                
-                # Enhanced repetition detection
-                piece_moved = None
-                for hist_board in self.move_history_a if current_player_id == PLAYER_A_ID else self.move_history_b:
-                    if np.array_equal(self.board, hist_board):
-                        # Direct position repeat
-                        reward -= 5.0
-                        break
-                    
-                    # Check if any piece is moving back to a previous position
-                    # Compare current move against positions in history
-                    diff = self.board - hist_board
-                    if np.count_nonzero(diff) <= 4:  # Only a few pieces different
-                        overlap = np.logical_and(diff != 0, hist_board != 0)
-                        if np.any(overlap):
-                            # A piece moved back to a previous position
-                            reward -= 3.0
-                            break
-                
-                # Add current board to appropriate history
-                if current_player_id == PLAYER_A_ID:
-                    self.move_history_a.append(self.board.copy())
-                else:
-                    self.move_history_b.append(self.board.copy())
                 
                 done = False
 
