@@ -9,6 +9,19 @@ document.addEventListener('DOMContentLoaded', () => {
     let AI_DEPTH = 5; // Will be set based on difficulty
     let ANALYSIS_MODE = false;
     let tfModel = null; // TensorFlow.js model
+    let startingPosition = null; // Starting position for the game
+    let startingPositionIndex = 0; // Index for the initial position in the array
+
+    const initialPosition = [
+        "BBBB\nBBBB\n....\n....\n....\n....\nAAAA\nAAAA",
+        "....\n....\nBBBB\nBBBB\nAAAA\nAAAA\n....\n....",
+        "BB..\nBB..\nBB..\nBB..\n..AA\n..AA\n..AA\n..AA",
+        "B...\nBB..\nBB..\nBBB.\n.AAA\n..AA\n..AA\n...A",
+        "B..B\n.BB.\n.BB.\nB..B\nA..A\n.AA.\n.AA.\nA..A",
+        "....\n....\nBABA\nABAB\nBABA\nABAB\n....\n...."        
+    ];    
+
+
 
     // Load TensorFlow.js model
     async function loadTFJSModel() {
@@ -109,7 +122,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const resetBtn = document.getElementById('reset-btn');
     const infoBtn = document.getElementById('info-btn');
     const historyBtn = document.getElementById('history-btn');
-    const difficultyBtn = document.getElementById('difficulty-btn'); // Add this line
+    const difficultyBtn = document.getElementById('difficulty-btn'); 
+    const startBtn = document.getElementById('start-btn');     
     const infoOverlay = document.getElementById('info-overlay');
     const historyOverlay = document.getElementById('history-overlay');
     const winOverlay = document.getElementById('win-overlay');
@@ -143,14 +157,38 @@ document.addEventListener('DOMContentLoaded', () => {
     var old_console_warn = console.warn;
     console.warn = function() {
         if (DEBUG) {
-            old_console_warn.apply(this, arguments);
+            old_console_warn.apply (this, arguments);
         }
     };
     // leave in console.error
     // --- Initialization ---
 
+    function parseStartingPosition(positionStr) {
+        const board = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
+        const rows = positionStr.split('\n');
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const piece = rows[r][c];
+                if (piece === 'A') {
+                    board[r][c] = { player: PLAYER_A, state: NORMAL };
+                } else if (piece === 'B') {
+                    board[r][c] = { player: PLAYER_B, state: NORMAL };
+                } else if (piece === 'a') {
+                    board[r][c] = { player: PLAYER_A, state: SWAPPED };
+                } else if (piece === 'b') {
+                    board[r][c] = { player: PLAYER_B, state: SWAPPED };
+                }
+            }
+        }
+        return board;
+    }
+
     function initGame() {
-        board = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
+        // Use the updated startingPositionIndex to set the starting position
+        console.log(`initGame called with startingPositionIndex: ${startingPositionIndex}`); // Add log
+        startingPosition = parseStartingPosition(initialPosition[startingPositionIndex]);
+        board = startingPosition.map(row => row.map(cell => cell ? {...cell} : null));
+        
         currentPlayer = PLAYER_A;
         selectedPiece = null;
         legalMoves = [];
@@ -158,18 +196,6 @@ document.addEventListener('DOMContentLoaded', () => {
         gameOver = false;
         winner = null;
         winPath = [];
-
-        // Place pieces - EXPERIMENTAL STARTING POSITIONS:
-        // PLAYER_B now starts in rows 2 and 3; PLAYER_A now starts in rows 4 and 5.
-        for (let r = 0; r < ROWS; r++) {
-            for (let c = 0; c < COLS; c++) {
-                if (r >= 2 && r < 4) { 
-                    board[r][c] = { player: PLAYER_B, state: NORMAL };
-                } else if (r >= 4 && r < 6) { 
-                    board[r][c] = { player: PLAYER_A, state: NORMAL };
-                }
-            }
-        }
 
         historyBtn.disabled = true;
         renderBoard();
@@ -334,7 +360,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    resetBtn.addEventListener('click', initGame);
+    resetBtn.addEventListener('click', () => {
+        console.log("Reset button clicked. Resetting to initial position 0."); // Add log
+        startingPositionIndex = 0; // Explicitly reset index to 0
+        initGame();
+    });
     infoBtn.addEventListener('click', () => showOverlay(infoOverlay));
     historyBtn.addEventListener('click', () => {
         if (!historyBtn.disabled) {
@@ -491,7 +521,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Move to empty cell
             board[endRow][endCol] = movingPiece;
             board[startRow][startCol] = null;
-            unmarkAllSwapped();
+            unmarkPlayerSwapped(currentPlayer); // Only unmark current player's pieces
         } else {
             // Swap move
             board[endRow][endCol] = { ...movingPiece, state: SWAPPED };
@@ -586,17 +616,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function unmarkAllSwapped() {
-        let changed = false;
+    // reverting back to swapping all pieces
+    function unmarkPlayerSwapped(player, boardState = board) {
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
-                if (board[r][c] && board[r][c].state === SWAPPED) {
-                    board[r][c].state = NORMAL;
-                    changed = true;
+                if (boardState[r][c] && boardState[r][c].state === SWAPPED) {
+                    boardState[r][c].state = NORMAL;
                 }
             }
         }
-        //if (changed) console.log("Unmarked swapped pieces.");
     }
 
     function switchPlayer() {
@@ -807,7 +835,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // (findBestAIMove simulation logic remains the same, but calls updated evaluateBoardState and allowsOpponentWin)
     function findBestAIMove(boardState = board) {
         let possibleMoves = [];
         for (let r = 0; r < ROWS; r++) {
@@ -830,20 +857,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // First, check for immediate winning moves
         for (const move of possibleMoves) {
             const tempBoard = cloneBoard(boardState);
-            const { start, end } = move;
+            const { start, end } = move; // Ensure `start` and `end` are destructured from `move`
             const movingPiece = tempBoard[start.row][start.col];
             const targetPiece = tempBoard[end.row][end.col];
     
             if (!targetPiece) {
                 tempBoard[end.row][end.col] = { ...movingPiece };
                 tempBoard[start.row][start.col] = null;
-                for (let r = 0; r < ROWS; r++) {
-                    for (let c = 0; c < COLS; c++) {
-                        if (tempBoard[r][c]?.state === SWAPPED) {
-                            tempBoard[r][c].state = NORMAL;
-                        }
-                    }
-                }
+                unmarkPlayerSwapped(PLAYER_B, tempBoard); 
             } else {
                 tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
@@ -860,9 +881,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // If using neural network model
         if (AI_DIFFICULTY === 'hard_ai' && tfModel) {
             console.log("Using neural network for move selection");
-            let bestMove = null;
             let bestScore = -Infinity;
-            
+            let scoredMoves = []; // Store all moves with their scores
+
             for (const move of possibleMoves) {
                 // Create a copy of the board with the move applied
                 const tempBoard = cloneBoard(boardState);
@@ -873,14 +894,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!targetPiece) {
                     tempBoard[end.row][end.col] = { ...movingPiece };
                     tempBoard[start.row][start.col] = null;
-                    // Reset swapped pieces
-                    for (let r = 0; r < ROWS; r++) {
-                        for (let c = 0; c < COLS; c++) {
-                            if (tempBoard[r][c]?.state === SWAPPED) {
-                                tempBoard[r][c].state = NORMAL;
-                            }
-                        }
-                    }
+                    unmarkPlayerSwapped(PLAYER_B, tempBoard); 
                 } else {
                     tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                     tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
@@ -902,9 +916,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     inputTensor.dispose();
                     prediction.dispose();
                     
+                    scoredMoves.push({ move, score });
                     if (score > bestScore) {
                         bestScore = score;
-                        bestMove = move;
                     }
                     
                     if (ANALYSIS_MODE) {
@@ -915,8 +929,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
             
-            if (bestMove) {
-                return bestMove;
+            // Filter moves within 5% of the best score
+            const topMoves = scoredMoves
+                .filter(({ score }) => score >= bestScore * 0.95)
+                .map(({ move }) => move);
+            
+            if (topMoves.length > 0) {
+                // Randomly select from up to 3 top moves
+                const randomIndex = Math.floor(Math.random() * Math.min(3, topMoves.length));
+                return topMoves[randomIndex];
             } else {
                 console.warn("Neural network failed to find a good move, falling back to easy mode");
                 // Fall through to easy mode as a backup
@@ -939,14 +960,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!targetPiece) {
                     tempBoard[end.row][end.col] = {...movingPiece};
                     tempBoard[start.row][start.col] = null;
-                    // Reset swapped pieces
-                    for (let r = 0; r < ROWS; r++) {
-                        for (let c = 0; c < COLS; c++) {
-                            if (tempBoard[r][c]?.state === SWAPPED) {
-                                tempBoard[r][c].state = NORMAL;
-                            }
-                        }
-                    }
+                    unmarkPlayerSwapped(PLAYER_B, tempBoard); 
                 } else {
                     tempBoard[end.row][end.col] = {...movingPiece, state: SWAPPED};
                     tempBoard[start.row][start.col] = {...targetPiece, state: SWAPPED};
@@ -987,15 +1001,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (targetPiece === null) {
                 // Empty cell move
                 tempBoard[move.end.row][move.end.col] = {...movingPiece}; // Use spread to clone
-                tempBoard[move.start.row][move.start.col] = null;
-                // Simulate unmarking swapped pieces
-                for (let r = 0; r < ROWS; r++) {
-                    for (let c = 0; c < COLS; c++) {
-                        if (tempBoard[r][c] && tempBoard[r][c].state === SWAPPED) {
-                            tempBoard[r][c] = {...tempBoard[r][c], state: NORMAL};
-                        }
-                    }
-                }
+                tempBoard[move.start.row][move.start.col] = null; // Fix: use move.start instead of start
+                unmarkPlayerSwapped(PLAYER_B, tempBoard); 
             } else {
                 // Swap move
                 tempBoard[move.end.row][move.end.col] = {...movingPiece, state: SWAPPED};
@@ -1103,13 +1110,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!targetPiece) {
                 afterOpponentMove[end.row][end.col] = {...movingPiece};
                 afterOpponentMove[start.row][start.col] = null;
-                for (let r = 0; r < ROWS; r++) {
-                    for (let c = 0; c < COLS; c++) {
-                        if (afterOpponentMove[r][c]?.state === SWAPPED) {
-                            afterOpponentMove[r][c].state = NORMAL;
-                        }
-                    }
-                }
+                unmarkPlayerSwapped(opponentPlayer, afterOpponentMove); 
             } else {
                 afterOpponentMove[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 afterOpponentMove[start.row][start.col] = { ...targetPiece, state: SWAPPED };
@@ -1189,14 +1190,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!targetPiece) {
                 nextState[end.row][end.col] = {...movingPiece};
                 nextState[start.row][start.col] = null;
-                // Reset swapped pieces
-                for (let r = 0; r < ROWS; r++) {
-                    for (let c = 0; c < COLS; c++) {
-                        if (nextState[r][c]?.state === SWAPPED) {
-                            nextState[r][c].state = NORMAL;
-                        }
-                    }
-                }
+                unmarkPlayerSwapped(currentPlayer, nextState); 
             } else {
                 nextState[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 nextState[start.row][start.col] = { ...targetPiece, state: SWAPPED };
@@ -1482,17 +1476,7 @@ document.addEventListener('DOMContentLoaded', () => {
              initialStateDiv.classList.add('selected-move');
          }
          initialStateDiv.addEventListener('click', () => {
-             const initialBoard = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
-              // Recreate initial state with experimental positions:
-              for (let r = 0; r < ROWS; r++) {
-                 for (let c = 0; c < COLS; c++) {
-                     if (r >= 2 && r < 4) {
-                         initialBoard[r][c] = { player: PLAYER_B, state: NORMAL };
-                     } else if (r >= 4 && r < 6) {
-                         initialBoard[r][c] = { player: PLAYER_A, state: NORMAL };
-                     }
-                 }
-             }
+             const initialBoard = startingPosition.map(row => row.map(cell => cell ? {...cell} : null));
              currentHistoryIndex = 0;
              renderBoard(initialBoard);
              updateMoveCounter();
@@ -1517,13 +1501,7 @@ document.addEventListener('DOMContentLoaded', () => {
              renderBoard(board);
          } else if (currentHistoryIndex === 0) {
              // Show initial board state
-             const initialBoard = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
-             for (let r = 0; r < ROWS; r++) {
-                 for (let c = 0; c < COLS; c++) {
-                     if (r >= 2 && r < 4) initialBoard[r][c] = { player: PLAYER_B, state: NORMAL };
-                     else if (r >= 4 && r < 6) initialBoard[r][c] = { player: PLAYER_A, state: NORMAL };
-                 }
-             }
+             const initialBoard = startingPosition.map(row => row.map(cell => cell ? {...cell} : null));
              renderBoard(initialBoard);
          } else {
              renderBoard(moveHistory[currentHistoryIndex - 1].boardAfter);
@@ -1617,16 +1595,7 @@ document.addEventListener('DOMContentLoaded', () => {
             restoreFinalState();
         } else if (currentHistoryIndex === 0) {
             // Show initial board state with experimental positions:
-            const initialBoard = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
-            for (let r = 0; r < ROWS; r++) {
-                for (let c = 0; c < COLS; c++) {
-                    if (r >= 2 && r < 4) {
-                        initialBoard[r][c] = { player: PLAYER_B, state: NORMAL };
-                    } else if (r >= 4 && r < 6) {
-                        initialBoard[r][c] = { player: PLAYER_A, state: NORMAL };
-                    }
-                }
-            }
+            const initialBoard = startingPosition.map(row => row.map(cell => cell ? {...cell} : null));
             renderBoard(initialBoard);
         } else {
             renderBoard(moveHistory[currentHistoryIndex - 1].boardAfter);
@@ -1793,4 +1762,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // For testing in console
     window.setupTestPosition = setupTestPosition;
+
+    // Add start button event listener
+    startBtn.addEventListener('click', () => {
+        const newIndex = (startingPositionIndex + 1) % initialPosition.length;
+        console.log(`Start button clicked. Changing startingPositionIndex from ${startingPositionIndex} to ${newIndex}.`); // Add log
+        // Increment the startingPositionIndex and wrap around if necessary
+        startingPositionIndex = newIndex;
+        initGame(); // Reinitialize the game with the new starting position
+    });
 });

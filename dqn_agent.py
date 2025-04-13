@@ -106,14 +106,12 @@ class DQNAgent:
         """Stores experience in the replay buffer."""
         self.memory.append((state, action, reward, next_state, done))
 
-    def act(self, state, legal_actions_indices):
+    def act(self, state, legal_actions_indices, top_k=3, log_q_values=False):
         """
         Chooses an action using epsilon-greedy policy, considering only legal moves.
-        Uses board evaluation as a tiebreaker when multiple actions have the same Q-value.
+        Introduces randomness by sampling from top-k moves based on Q-values.
+        Logs Q-value distribution for analysis if enabled.
         """
-        from binary_board import binary_to_board
-        from game_env import _evaluate_board_jit, _apply_move_jit, PLAYER_B_ID
-        
         if not legal_actions_indices:
             print("Warning: No legal actions available in act method.")
             return np.random.randint(self.action_size)
@@ -123,19 +121,45 @@ class DQNAgent:
         else:
             state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
             state_tensor = tf.expand_dims(state_tensor, 0)
-            # Use the optimized prediction function
             act_values = self.predict_batch(state_tensor)
 
-            # Handle NaN values
             q_values = act_values.numpy()[0]
             if np.isnan(q_values).any():
                 print("Warning: NaN detected in Q-values. Using fallback values.")
                 q_values = np.zeros_like(q_values)
 
+            # Example randomness threshold calculation
+            randomness_threshold = 0.05 * max(q_values)  # 5% of the highest Q-value
+
+            # Filter Q-values for legal actions
             legal_q_values = np.take(q_values, legal_actions_indices)
 
-            # Return the legal action with the maximum Q-value
-            return legal_actions_indices[np.argmax(legal_q_values)]
+            # Log Q-value distribution if enabled
+            if log_q_values:
+                print(f"Legal Q-values: {legal_q_values}")
+                print(f"Legal actions: {legal_actions_indices}")
+
+            # Sort legal actions by Q-value in descending order
+            sorted_indices = np.argsort(legal_q_values)[::-1]
+            sorted_legal_actions = [legal_actions_indices[i] for i in sorted_indices]
+            sorted_q_values = legal_q_values[sorted_indices]
+
+            # Select top-k moves
+            top_k = min(top_k, len(sorted_legal_actions))
+            top_actions = sorted_legal_actions[:top_k]
+            top_q_values = sorted_q_values[:top_k]
+
+            # Log top-k Q-values if enabled
+            if log_q_values:
+                print(f"Top-{top_k} Q-values: {top_q_values}")
+                print(f"Top-{top_k} actions: {top_actions}")
+
+            # If the difference between the best and second-best Q-value is small, introduce randomness
+            if len(top_q_values) > 1 and (top_q_values[0] - top_q_values[1]) < randomness_threshold:
+                return random.choice(top_actions)
+
+            # Otherwise, choose the best action
+            return top_actions[0]
     
     def _get_move_from_action(self, action_index):
         """Converts an action index to (start_r, start_c, end_r, end_c) coordinates."""

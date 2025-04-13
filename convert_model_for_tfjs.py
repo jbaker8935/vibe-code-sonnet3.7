@@ -53,7 +53,7 @@ def convert_model_for_tfjs():
     )
     
     # Use the agent's model directly instead of creating a new one
-    weights_file = "switcharoo_dqn_tournament_best.weights.h5"
+    weights_file = "switcharoo_dqn_resumed_phase2.weights.h5"
     agent.load(weights_file)
     model = agent.model  # Use the agent's model directly
     

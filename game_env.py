@@ -141,15 +141,15 @@ def _unmark_all_swapped(board):
     # No return needed, modifies board in place
 
 @njit(cache=True)
-def _unmark_player_swapped_jit(board, player_id):
-    """Resets SWAPPED pieces to NORMAL for the specified player only."""
+def _unmark_swapped_jit(board):
+    """Resets SWAPPED pieces to NORMAL"""
     rows, cols = board.shape
     for r in range(rows):
         for c in range(cols):
             piece = board[r, c]
-            if (player_id == PLAYER_A_ID and piece == A_SWAPPED):
+            if (piece == A_SWAPPED):
                 board[r, c] = A_NORMAL
-            elif (player_id == PLAYER_B_ID and piece == B_SWAPPED):
+            elif (piece == B_SWAPPED):
                 board[r, c] = B_NORMAL
 
 @njit(cache=True)
@@ -188,8 +188,8 @@ def _apply_move_jit(board, start_r, start_c, end_r, end_c):
         # Move to empty cell
         board[end_r, end_c] = moving_piece
         board[start_r, start_c] = EMPTY_CELL
-        # Only unmark the moving player's swapped pieces
-        _unmark_player_swapped_jit(board, moving_player_id)
+        # unmark swapped pieces
+        _unmark_swapped_jit(board)
         move_type_code = 1 # 'empty'
     else:
         # Swap move (legality check happens before calling this)

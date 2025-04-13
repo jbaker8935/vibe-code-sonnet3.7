@@ -68,13 +68,13 @@ def configure_tensorflow():
 configure_tensorflow()
 
 # Curriculum Training Configuration
-PHASE1_EPISODES = 50000      # Episodes for Phase 1 (random opponent) 50000
-PHASE2_EPISODES = 100000     # Episodes for Phase 2 (self-play) 100000
+PHASE1_EPISODES = 25000      # Episodes for Phase 1 (random opponent) 50000
+PHASE2_EPISODES = 40000     # Episodes for Phase 2 (self-play) 100000
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps per episode
-REPLAY_FREQUENCY = 2          # Frequency of replay buffer sampling
+REPLAY_FREQUENCY = 1          # Frequency of replay buffer sampling
 
 # Tournament Configuration
-TOURNAMENT_FREQ = 1000       # How often to run tournaments
+TOURNAMENT_FREQ = 2500       # How often to run tournaments
 NUM_VARIANTS = 4             # Number of agent variants for tournament
 NOISE_SCALE = 0.05          # Scale of Gaussian noise to apply to weights
 TOURNAMENT_MATCHES = 20      # Matches per pair in tournament
@@ -101,15 +101,6 @@ AAAA
 AAAA""",
     """\
 ....
-BBBB
-BBBB
-....
-....
-AAAA
-AAAA
-....""",
-    """\
-....
 ....
 BBBB
 BBBB
@@ -122,46 +113,10 @@ BB..
 BB..
 BB..
 BB..
-AA..
-AA..
-AA..
-AA..""",
-    """\
-..BB
-..BB
-..BB
-..BB
 ..AA
 ..AA
 ..AA
 ..AA""",
-    """\
-.BB.
-.BB.
-.BB.
-.BB.
-.AA.
-.AA.
-.AA.
-.AA.""",
-    """\
-BB..
-BB..
-BB..
-BB..
-..AA
-..AA
-..AA
-..AA""",
-    """\
-BBBB
-BB..
-BB..
-....
-....
-..AA
-..AA
-AAAA""",
     """\
 ..BB
 ..BB
@@ -174,12 +129,21 @@ AA..""",
     """\
 B...
 BB..
-BBB.
 BB..
-..AA
+BBB.
 .AAA
 ..AA
+..AA
 ...A""",
+    """\
+....
+....
+BABA
+ABAB
+BABA
+ABAB
+....
+....""",
     """\
 B..B
 .BB.
@@ -188,6 +152,15 @@ B..B
 A..A
 .AA.
 .AA.
+A..A""",
+    """\
+B..B
+.AA.
+.AA.
+B..B
+A..A
+.BB.
+.BB.
 A..A"""
 ]
 
@@ -247,7 +220,20 @@ def get_opponent_action(env, opponent_epsilon=0.3):
 
 def create_agent_variant(base_agent, noise_scale=NOISE_SCALE, epsilon=0.05):
     """Create a variant of the base agent by adding Gaussian noise to its weights."""
-    variant = DQNAgent(epsilon=epsilon)  # Variable epsilon based on parameter
+    # Create a new DQNAgent with parameters inherited from the base agent
+    variant = DQNAgent(
+        state_size=base_agent.state_size,
+        action_size=base_agent.action_size,
+        learning_rate=base_agent.learning_rate,
+        gamma=base_agent.gamma,
+        epsilon=epsilon,  # Use the passed epsilon value
+        epsilon_decay=base_agent.epsilon_decay,
+        epsilon_min=base_agent.epsilon_min,
+        replay_buffer_size=base_agent.memory.maxlen,  # Inherit replay buffer size
+        batch_size=base_agent.batch_size,
+        target_update_freq=base_agent.target_update_freq,
+        gradient_clip_norm=base_agent.optimizer.clipnorm if hasattr(base_agent.optimizer, 'clipnorm') else None
+    )
     
     # Get the base agent's weights and apply noise
     weights = base_agent.model.get_weights()
@@ -897,7 +883,7 @@ if __name__ == "__main__":
             # Standard Curriculum Training (Phase 1 + Phase 2)
             # Initialize agent *before* calling phase1_training or phase2_training
             agent = DQNAgent(
-                learning_rate=0.001, # Or adjust as needed for Phase 1
+                learning_rate=0.00025, # Or adjust as needed for Phase 1
                 epsilon=1.0,
                 epsilon_decay=.9995, # Adjust if needed
                 epsilon_min=0.01,

@@ -15,16 +15,19 @@
         </div>
 
         <div id="controls">
-            <button id="reset-btn" title="Reset Game">
+            <button id="reset-btn" title="Reset Game" type="button">
                 <img src="images/refresh-circle-outline.svg" alt="Reset">
             </button>
-            <button id="info-btn" title="Game Rules">
+            <button id="info-btn" title="Game Rules" type="button">
                 <img src="images/information-circle-outline.svg" alt="Info">
             </button>
-            <button id="difficulty-btn" title="AI Difficulty">
+            <button id="difficulty-btn" title="AI Difficulty" type="button">
                 <img src="images/happy-outline.svg" alt="AI Difficulty">
             </button>
-            <button id="history-btn" title="Move History" disabled>
+            <button id="start-btn" title="Starting Board" type="button">
+                <img src="images/location-outline.svg" alt="Starting Board">
+            </button>            
+            <button id="history-btn" title="Move History" disabled type="button">
                 <img src="images/list-circle-outline.svg" alt="History">
             </button>
             <div id="score-display">
@@ -46,7 +49,7 @@
     <!-- Info Overlay -->
     <div id="info-overlay" class="overlay">
         <div class="overlay-content">
-            <button class="close-overlay-btn" data-overlay="info-overlay">
+            <button class="close-overlay-btn" data-overlay="info-overlay" type="button">
                 <img src="images/close-circle-outline.svg" alt="Close">
             </button>
             <h2>Game Rules</h2>
@@ -55,7 +58,7 @@
                 <!-- Changed Player positions -->
                 <li>Players: Player A (White, bottom) vs Player B (Black, top). Player A moves first.</li>
                 <li>Movement: Move one piece to any adjacent cell (8 directions).</li>
-                <li>Empty Cell Move: Move to an adjacent empty cell. This unmarks ALL swapped pieces.</li>
+                <li>Empty Cell Move: Move to an adjacent empty cell. This unmarks the player's swapped pieces.</li>
                 <li>Swap Move: Move to an adjacent cell occupied by an opponent's NORMAL piece. Both pieces swap
                     positions and become SWAPPED (indicated by a crown).</li>
                 <li>Swapped Pieces: Cannot be the target of a swap, but can initiate a swap with a normal opponent
@@ -82,7 +85,7 @@
     <!-- History Overlay -->
     <div id="history-overlay" class="overlay">
         <div class="overlay-content">
-            <button class="close-overlay-btn" data-overlay="history-overlay">
+            <button class="close-overlay-btn" data-overlay="history-overlay" type="button">
                 <img src="images/close-circle-outline.svg" alt="Close">
             </button>
             <h2>Move History</h2>
