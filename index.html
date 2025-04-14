@@ -111,9 +111,10 @@
         </div>
     </div>
 
-    <!-- Import TensorFlow.js library (updated CDN) -->
-    <script src="https://unpkg.com/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
-    <script src="script.js"></script>
+    <!-- Import TensorFlow.js library first -->
+    <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+    <!-- Then load our module code -->
+    <script defer src="script.js"></script>
 </body>
 
 </html>

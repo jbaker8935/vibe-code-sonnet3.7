@@ -84,7 +84,7 @@ SAVE_FREQ = 5000             # Save model weights every N episodes
 BASE_MODEL_FILE = "switcharoo_dqn_curriculum_phase1.weights.h5"
 TOURNAMENT_MODEL_FILE = "switcharoo_dqn_tournament_best.weights.h5"
 CHECKPOINT_FILE = "switcharoo_dqn_checkpoint_e{}.weights.h5"
-TFJS_MODEL_FILE = "./switcharoo_tfjs_model/tf_model.weights.h5"
+TFJS_MODEL_DIR = "./switcharoo_tfjs_model" 
 
 WANDB_PROJECT = "switcharoo-dqn"
 WANDB_ENTITY = "farmerjohn1958-self"  # Replace with your wandb username
@@ -784,7 +784,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
     
     # Save final model
     agent.save(TOURNAMENT_MODEL_FILE)
-    agent.save_for_tfjs(TFJS_MODEL_FILE)
+    agent.save_for_tfjs(TFJS_MODEL_DIR) 
     print(f"Phase 2 training completed. Final model saved.")
     
     if wandb_enabled:

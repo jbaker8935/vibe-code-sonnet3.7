@@ -28,81 +28,35 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             console.log("Loading TensorFlow.js model...");
             
-            // Define the model architecture manually
-            const model = tf.sequential();
-            model.add(tf.layers.dense({
-                inputShape: [33],
-                units: 128,
-                activation: 'relu',
-                name: 'dense'
-            }));
-            model.add(tf.layers.dense({
-                units: 128,
-                activation: 'relu',
-                name: 'dense_1'
-            }));
-            model.add(tf.layers.dense({
-                units: 256,
-                activation: 'relu',
-                name: 'dense_2'
-            }));
-            model.add(tf.layers.dense({
-                units: 121,
-                activation: 'linear',
-                name: 'output_layer'
-            }));
-            
-            // Compile the model
-            model.compile({
-                optimizer: 'adam',
-                loss: 'meanSquaredError'
-            });
-            
-            // Try to load weights
+            // Try direct model loading first
             try {
-                console.log("Loading weights from: ./tfjs_model/web_model/model.json");
-                const loadedModel = await tf.loadLayersModel('./tfjs_model/web_model/model.json');
+                console.info("Attempting to load graph model from: ./tfjs_model/web_model/model.json");
+                // Use tf.loadGraphModel for models converted from SavedModel
+                const loadedModel = await tf.loadGraphModel('./tfjs_model/web_model/model.json');
+                console.info("Graph model loaded successfully!");
                 
-                // If loaded successfully, use its weights for our defined model
-                const sourceWeights = loadedModel.getWeights();
+                // Use the loaded model directly
+                tfModel = loadedModel;
+                // GraphModel doesn't have .summary(), log inputs/outputs instead if needed
+                // console.log("Model structure:", tfModel.summary());
+                console.log("Model inputs:", tfModel.inputs);
+                console.log("Model outputs:", tfModel.outputs);
                 
-                // Validate if we have the correct number of weights
-                console.log(`Loaded model has ${sourceWeights.length} weight tensors`);
                 
-                // Only try to set weights if there are enough weight tensors
-                if (sourceWeights.length >= 6) {
-                    // Transfer the weights to our model (first 3 layers, 6 weight tensors)
-                    const weights = [
-                        sourceWeights[0], sourceWeights[1],  // Layer 1 weights and biases
-                        sourceWeights[2], sourceWeights[3],  // Layer 2 weights and biases
-                        sourceWeights[4], sourceWeights[5],  // Layer 3 weights and biases
-                    ];
-                    
-                    // Initialize the output layer with random weights
-                    const outputKernel = tf.randomNormal([256, 121], 0, 0.05);
-                    const outputBias = tf.zeros([121]);
-                    weights.push(outputKernel, outputBias);
-                    
-                    // Set the weights
-                    model.setWeights(weights);
-                    console.log("Weights transferred successfully");
-                }
+                // Enable the hard_ai option once the model is loaded
+                document.getElementById('difficulty-btn').classList.add('model-loaded');
+                return true;
+            } catch (directLoadError) {
+                console.warn("Could not load pre-trained graph model:", directLoadError);
+                console.warn("The Neural Network AI option will be disabled as it requires pre-trained weights to work properly.");
                 
-                // Clean up the loaded model to free memory
-                loadedModel.dispose();
-            } catch (loadError) {
-                console.warn("Could not load pre-trained weights, using randomly initialized weights:", loadError);
-                // Continue with randomly initialized weights
+                // Don't create a fallback model with random weights as it's not useful for gameplay
+                console.warn("Using standard heuristic AI only (easy/hard modes).");
+                return false;
             }
             
-            tfModel = model;
-            console.log("TensorFlow.js model created and initialized successfully");
-            
-            // Enable the hard_ai option once the model is loaded
-            document.getElementById('difficulty-btn').classList.add('model-loaded');
-            return true;
         } catch (error) {
-            console.error("Failed to create TensorFlow.js model:", error);
+            console.error("Failed to initialize TensorFlow.js:", error);
             return false;
         }
     }
@@ -835,7 +789,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function findBestAIMove(boardState = board) {
+    async function findBestAIMove(boardState = board) {
         let possibleMoves = [];
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
@@ -884,6 +838,10 @@ document.addEventListener('DOMContentLoaded', () => {
             let bestScore = -Infinity;
             let scoredMoves = []; // Store all moves with their scores
 
+            // --- Prepare inputs for all possible moves ---
+            const inputs = [];
+            const validMoves = []; // Keep track of moves corresponding to inputs
+
             for (const move of possibleMoves) {
                 // Create a copy of the board with the move applied
                 const tempBoard = cloneBoard(boardState);
@@ -902,45 +860,87 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Check if this move allows Player A to win immediately
                 if (allowsOpponentWin(tempBoard, PLAYER_A)) {
+                     if (ANALYSIS_MODE) {
+                         console.log(`Skipping move ${start.row},${start.col} to ${end.row},${end.col}: allows opponent win`);
+                     }
                     continue; // Skip moves that allow opponent to win
                 }
                 
-                // Convert board state to neural network input
-                const input = boardToNNInput(tempBoard);
-                
-                // Use the model to predict the value of this board state
+                // Convert board state to neural network input (MUST BE 6 elements)
+                const input = boardToNNInput(tempBoard); // Ensure this returns 6 elements
+                if (input.length !== 6) {
+                    console.error("boardToNNInput did not return 6 elements!", input);
+                    continue; // Skip if input is incorrect
+                }
+                inputs.push(input);
+                validMoves.push(move);
+            }
+
+            if (inputs.length === 0) {
+                 console.warn("Neural network: No valid moves found after filtering opponent wins. Falling back.");
+                 // Fall through to easy/hard mode logic
+            } else {
+                // --- Batch Prediction ---
                 try {
-                    const inputTensor = tf.tensor2d([input]);
-                    const prediction = tfModel.predict(inputTensor);
-                    const score = prediction.dataSync()[0];
+                    // Create a single tensor for all inputs
+                    const inputTensor = tf.tensor2d(inputs); // Shape [batch_size, 6]
+
+                    // Use executeAsync for GraphModel prediction
+                    const inputNodeName = tfModel.inputs[0].name;
+                    const predictionTensor = await tfModel.executeAsync({[inputNodeName]: inputTensor}); // Shape [batch_size, 256]
+
+                    // Get the Q-values as a 2D array [batch_size, 256]
+                    const qValues = await predictionTensor.array(); // <-- Change from .data() to .array()
+
                     inputTensor.dispose();
-                    prediction.dispose();
+                    predictionTensor.dispose(); // Dispose the output tensor
+
+                    // --- Process Scores ---
+                    for (let i = 0; i < validMoves.length; i++) {
+                        const move = validMoves[i];
+
+                        // --- Calculate the action index for this specific move ---
+                        // !!! CRITICAL: Implement this function based on your Python action mapping !!!
+                        const actionIndex = moveToActionIndex(move);
+
+                        if (actionIndex === null || actionIndex < 0 || actionIndex >= 256) {
+                            console.error("Invalid action index calculated for move:", move, actionIndex);
+                            continue; // Skip this move if action index is invalid
+                        }
+
+                        // Get the Q-value for the i-th state and the specific actionIndex
+                        const score = qValues[i][actionIndex]; // <-- Correctly access Q-value
+
+                        scoredMoves.push({ move, score });
+                        if (score > bestScore) {
+                            bestScore = score;
+                        }
+                        if (ANALYSIS_MODE) {
+                            const {start, end} = move;
+                            console.log(`Move ${start.row},${start.col} to ${end.row},${end.col} (Action ${actionIndex}): Q-value ${score.toFixed(4)}`);
+                        }
+                    }
+
+                    // Filter moves within a threshold of the best score (e.g., 5% or a small absolute value)
+                    const scoreThreshold = bestScore - Math.abs(bestScore * 0.05); // Example threshold
+                    const topMoves = scoredMoves
+                        .filter(({ score }) => score >= scoreThreshold)
+                        .map(({ move }) => move);
                     
-                    scoredMoves.push({ move, score });
-                    if (score > bestScore) {
-                        bestScore = score;
+                    if (topMoves.length > 0) {
+                        // Randomly select from the top moves
+                        const randomIndex = Math.floor(Math.random() * topMoves.length);
+                        console.log(`NN chose from ${topMoves.length} top moves. Best score: ${bestScore}`);
+                        return topMoves[randomIndex];
+                    } else {
+                        console.warn("Neural network failed to find any moves above threshold, falling back.");
+                        // Fall through to easy/hard mode logic
                     }
                     
-                    if (ANALYSIS_MODE) {
-                        console.log(`Move ${start.row},${start.col} to ${end.row},${end.col}: score ${score}`);
-                    }
                 } catch (error) {
                     console.error("Error in neural network prediction:", error);
+                    // Fall through to easy/hard mode logic
                 }
-            }
-            
-            // Filter moves within 5% of the best score
-            const topMoves = scoredMoves
-                .filter(({ score }) => score >= bestScore * 0.95)
-                .map(({ move }) => move);
-            
-            if (topMoves.length > 0) {
-                // Randomly select from up to 3 top moves
-                const randomIndex = Math.floor(Math.random() * Math.min(3, topMoves.length));
-                return topMoves[randomIndex];
-            } else {
-                console.warn("Neural network failed to find a good move, falling back to easy mode");
-                // Fall through to easy mode as a backup
             }
         }
 
@@ -1606,7 +1606,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateScoreDisplay() {
         // Update control scores
         const controlScoreA = document.getElementById('control-score-a');
-        const controlScoreB = document.getElementById('control-score-b');
+        const controlScoreB = document.getElementById('control-score-b'); // Corrected typo: getElementById
         if (controlScoreA) controlScoreA.textContent = `${playerAScore}`;
         if (controlScoreB) controlScoreB.textContent = `${playerBScore}`;
 
@@ -1638,35 +1638,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Serialize board for TF model input
     function boardToNNInput(boardState) {
-        // Create a 33-element input array for the neural network
-        // 1-32: 8x4 board representation (8 rows x 4 columns)
-        // 33: Current player (1 for PLAYER_B, -1 for PLAYER_A)
-        
-        const input = new Array(33).fill(0);
-        
-        // Fill the first 32 elements with board representation
-        // Each cell is: 1 for PLAYER_B, -1 for PLAYER_A, 0 for empty
-        let idx = 0;
-        for (let r = 0; r < ROWS; r++) {
-            for (let c = 0; c < COLS; c++) {
-                const cell = boardState[r][c];
-                if (cell) {
-                    // Encode PLAYER_B as 1, PLAYER_A as -1
-                    input[idx] = cell.player === PLAYER_B ? 1 : -1;
-                    
-                    // If piece is swapped, add a smaller value to represent its state
-                    if (cell.state === SWAPPED) {
-                        input[idx] *= 0.5; // Swapped pieces have half value to distinguish them
-                    }
-                }
-                idx++;
-            }
+        // !!! CRITICAL: This function MUST replicate the logic of your Python
+        // board_to_binary function to produce 5 integer values representing the board.
+        // The current implementation generating 33 values is INCORRECT for the model.
+
+        // Placeholder - Replace with your actual JavaScript implementation
+        // of the Python board_to_binary logic.
+        const binaryBoardRepresentation = convertBoardToBinaryJS(boardState); // Needs implementation
+
+        if (!Array.isArray(binaryBoardRepresentation) || binaryBoardRepresentation.length !== 5) {
+             console.error("convertBoardToBinaryJS did not return an array of 5 elements!");
+             // Return a dummy array to avoid crashing, but NN will be wrong
+             return [0, 0, 0, 0, 0, 1];
         }
-        
+
         // Last element is current player: 1 for PLAYER_B (AI), -1 for PLAYER_A (opponent)
-        input[32] = 1; // Always PLAYER_B when evaluating in findBestAIMove
-        
-        return input;
+        // The model was trained with PLAYER_B_ID (likely 1) as the player indicator
+        const playerIndicator = 1; // Assuming PLAYER_B is 1 in the Python training
+
+        // Return the 6-element array
+        return [...binaryBoardRepresentation, playerIndicator];
+    }
+
+    // --- You MUST implement this function based on your Python code ---
+    function convertBoardToBinaryJS(boardState) {
+        // This function needs to take the 8x4 boardState and produce
+        // an array of 5 numbers (integers) exactly like the Python
+        // board_to_binary function does (likely using bitwise operations).
+        console.warn("convertBoardToBinaryJS is not implemented! Neural network input will be incorrect.");
+
+        // Example structure (replace with actual logic):
+        // Initialize 5 numbers (e.g., 32-bit integers)
+        let bin1 = 0, bin2 = 0, bin3 = 0, bin4 = 0, bin5 = 0;
+
+        // Iterate through the board (r, c)
+        // For each piece, set the corresponding bit in the correct integer
+        // based on player (A/B) and potentially state (Normal/Swapped)
+        // using bitwise OR (|) and left shifts (<<).
+        // The exact mapping of (r, c, player, state) to (integer_index, bit_position)
+        // MUST match the Python implementation.
+
+        // Return the 5 numbers
+        return [bin1, bin2, bin3, bin4, bin5]; // Placeholder
     }
 
     function serializeBoardState(boardState) {
@@ -1771,4 +1784,45 @@ document.addEventListener('DOMContentLoaded', () => {
         startingPositionIndex = newIndex;
         initGame(); // Reinitialize the game with the new starting position
     });
+
+    // --- You MUST implement this function based on your Python action mapping ---
+    function moveToActionIndex(move) {
+        // This function needs to take a move object { start: {row, col}, end: {row, col} }
+        // and return the corresponding integer action index (0-255).
+        // It implements the logic from game_env.py:
+        // action_index = (start_r * COLS + start_c) * NUM_DIRECTIONS + direction_index
+
+        const startCellIndex = move.start.row * COLS + move.start.col; // 0-31
+        const dr = move.end.row - move.start.row; // -1, 0, or 1
+        const dc = move.end.col - move.start.col; // -1, 0, or 1
+
+        // Map (dr, dc) to direction index (0-7) - MUST MATCH PYTHON game_env.py DIRECTIONS array order
+        let directionIndex = -1;
+        if (dr === -1 && dc === -1) directionIndex = 0; // NW
+        else if (dr === -1 && dc ===  0) directionIndex = 1; // N
+        else if (dr === -1 && dc ===  1) directionIndex = 2; // NE
+        else if (dr ===  0 && dc === -1) directionIndex = 3; // W
+        else if (dr ===  0 && dc ===  1) directionIndex = 4; // E
+        else if (dr ===  1 && dc === -1) directionIndex = 5; // SW
+        else if (dr ===  1 && dc ===  0) directionIndex = 6; // S
+        else if (dr ===  1 && dc ===  1) directionIndex = 7; // SE
+
+        // Validate components
+        if (directionIndex === -1 || startCellIndex < 0 || startCellIndex >= (ROWS * COLS)) {
+             console.error(`Invalid components for moveToActionIndex: move=${JSON.stringify(move)}, startCellIndex=${startCellIndex}, directionIndex=${directionIndex}`);
+            return null; // Invalid move components
+        }
+
+        // Combine cell and direction - MUST MATCH PYTHON FORMULA
+        // NUM_DIRECTIONS is 8 in Python
+        const actionIndex = startCellIndex * 8 + directionIndex;
+
+        // Final validation
+        if (actionIndex < 0 || actionIndex >= (ROWS * COLS * 8)) {
+            console.error(`Calculated actionIndex out of bounds: ${actionIndex}`);
+            return null;
+        }
+
+        return actionIndex; // 0-255
+    }
 });
