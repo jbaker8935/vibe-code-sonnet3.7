@@ -325,9 +325,9 @@ class DQNAgent:
             self.model.export(file_path) # Save in SavedModel format first
             # Conversion to TFJS format usually happens via a command-line tool
             # But saving as SavedModel is the prerequisite.
-            # The user will need to run: tensorflowjs_converter --input_format=tf_saved_model --output_format=tfjs_layers_model ./saved_model_dir ./tfjs_model_dir
+
             print(f"Model saved in SavedModel format at {file_path}. ")
-            print(f"Convert to TF.js using: tensorflowjs_converter --input_format=tf_saved_model --output_format=tfjs_layers_model {file_path} ./tfjs_model")
+            print(f"Convert to TF.js using: tensorflowjs_converter --input_format=tf_saved_model --output_format=tfjs_graph_model {file_path} ./tfjs_model/web_model")
 
         except Exception as e:
             print(f"Error saving model for TF.js at {file_path}: {e}")

@@ -69,7 +69,7 @@ configure_tensorflow()
 
 # Curriculum Training Configuration
 PHASE1_EPISODES = 25000      # Episodes for Phase 1 (random opponent) 50000
-PHASE2_EPISODES = 40000     # Episodes for Phase 2 (self-play) 100000
+PHASE2_EPISODES = 50000     # Episodes for Phase 2 (self-play) 100000
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps per episode
 REPLAY_FREQUENCY = 1          # Frequency of replay buffer sampling
 
@@ -218,7 +218,7 @@ def get_opponent_action(env, opponent_epsilon=0.3):
     eval_actions = legal_actions if len(legal_actions) <= 5 else random.sample(legal_actions, 5)
     return get_opponent_action_fast(env.board, eval_actions, opponent_epsilon)
 
-def create_agent_variant(base_agent, noise_scale=NOISE_SCALE, epsilon=0.05):
+def create_agent_variant(base_agent, noise_scale=NOISE_SCALE, epsilon=0.0):
     """Create a variant of the base agent by adding Gaussian noise to its weights."""
     # Create a new DQNAgent with parameters inherited from the base agent
     variant = DQNAgent(
@@ -247,6 +247,12 @@ def create_agent_variant(base_agent, noise_scale=NOISE_SCALE, epsilon=0.05):
     # Set the variant's weights
     variant.model.set_weights(noisy_weights)
     variant.update_target_model()
+    # Prefill replay buffer with 25% of base agent memory
+    base_memory_list = list(base_agent.memory)
+    sample_size = int(len(base_memory_list) * 0.25)
+    if sample_size > 0:
+        sampled_experiences = random.sample(base_memory_list, sample_size)
+        variant.memory.extend(sampled_experiences)
     return variant
 
 def run_match(env, agent_a, agent_b, max_steps=MAX_STEPS_PER_EPISODE):
@@ -394,8 +400,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
     should_train = False
     
     # Adjusted opponent epsilon decay for progressive difficulty
-    opponent_epsilon_start = 0.9
-    opponent_epsilon_end = 0.2  # Opponent becomes less random but not fully deterministic
+    opponent_epsilon_start = 0.3
+    opponent_epsilon_end = 0.01  # Opponent becomes less random but not fully deterministic
     opponent_epsilon_decay = (opponent_epsilon_end / opponent_epsilon_start) ** (1 / episodes)
     opponent_epsilon = opponent_epsilon_start
     
@@ -734,16 +740,19 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
         # Run tournament and update best agent
         if e % TOURNAMENT_FREQ == 0:
             print(f"\nRunning tournament at episode {e}")
+            # Save pre-tournament weights for gradual update
+            pre_weights = agent.model.get_weights()
+            # Run tournament
             best_agent, tournament_best_score, tournament_matches = run_tournament(agent, direct_phase2=direct_phase2)
-            
-            # Update tournament agent with best weights
-            tournament_agent = copy.deepcopy(best_agent)
+            # Blend weights: incorporate a fraction of the best agent's weights
+            best_weights = best_agent.model.get_weights()
+            blend_rate = 0.2  # fraction of tournament winner to mix in
+            new_weights = [pw * (1 - blend_rate) + bw * blend_rate for pw, bw in zip(pre_weights, best_weights)]
+            # Apply blended weights to both main and tournament agents
+            agent.model.set_weights(new_weights)
+            tournament_agent = copy.deepcopy(agent)
             tournament_agent.save(TOURNAMENT_MODEL_FILE)
-            
-            # Also update our main agent to the best one
-            agent = copy.deepcopy(best_agent)
-            
-            print(f"Tournament completed - new best agent selected")
+            print(f"Tournament completed - updated agents with blended weights")
             
             # Additional tournament metrics
             if wandb_enabled:
@@ -801,9 +810,9 @@ def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_fil
     # Initialize agent *before* calling phase2_training (which calls init_wandb)
     agent = DQNAgent(
         learning_rate=0.00025,
-        epsilon=0.01,
+        epsilon=0.005,
         epsilon_decay=1.0,
-        epsilon_min=0.01,
+        epsilon_min=0.005,
         replay_buffer_size=500000,
         batch_size=64,
         target_update_freq=100
@@ -884,7 +893,7 @@ if __name__ == "__main__":
             # Initialize agent *before* calling phase1_training or phase2_training
             agent = DQNAgent(
                 learning_rate=0.00025, # Or adjust as needed for Phase 1
-                epsilon=1.0,
+                epsilon=0.01, # some random exploration initially - where we left off
                 epsilon_decay=.9995, # Adjust if needed
                 epsilon_min=0.01,
                 replay_buffer_size=500000,
