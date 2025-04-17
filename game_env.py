@@ -613,19 +613,21 @@ class SwitcharooEnv:
         self.current_player_id = PLAYER_A_ID
         self.winner_id = 0
         self.step_count = 0  # Reset step counter
-
+        self._early_game_move_counts = {PLAYER_A_ID: 0, PLAYER_B_ID: 0}
+        # Only store initial starting row piece counts, not the whole board
         if initial_state:
-            # Use the JIT-compiled function to parse the initial state
             self.board = parse_initial_position_jit(initial_state, A_NORMAL, B_NORMAL, EMPTY_CELL)
         else:
-            # Default initial state
             for r in range(ROWS):
                 for c in range(COLS):
-                    if (r < 2):  # Player B (Black) at top
+                    if (r < 2):
                         self.board[r, c] = B_NORMAL
-                    elif (r > 5):  # Player A (White) at bottom
+                    elif (r > 5):
                         self.board[r, c] = A_NORMAL
-
+        self._initial_starting_rows = {
+            PLAYER_A_ID: np.sum((self.board[6:8, :] == A_NORMAL) | (self.board[6:8, :] == A_SWAPPED)),
+            PLAYER_B_ID: np.sum((self.board[0:2, :] == B_NORMAL) | (self.board[0:2, :] == B_SWAPPED)),
+        }
         return self._get_state()
 
     def _get_state(self):
@@ -716,6 +718,32 @@ class SwitcharooEnv:
         # Apply the move using JIT function (modifies self.board)
         move_type_code = _apply_move_jit(self.board, start_r, start_c, end_r, end_c)
         move_type = 'empty' if move_type_code == 1 else 'swap'
+
+        # --- EARLY GAME HEURISTIC REWARD ---
+        # Track early game move counts
+        self._early_game_move_counts[current_player_id] = self._early_game_move_counts.get(current_player_id, 0) + 1
+        # Only apply in first 12 moves by this player, and only if initial row had >=4 pieces
+        early_game_moves = self._early_game_move_counts[current_player_id]
+        if early_game_moves <= 12 and self._initial_starting_rows and self._initial_starting_rows[current_player_id] >= 4:
+            # For Player A: rows 6,7; for Player B: rows 0,1
+            if current_player_id == PLAYER_A_ID:
+                rows = self.board[6:8, :]
+                piece_types = (A_NORMAL, A_SWAPPED)
+            else:
+                rows = self.board[0:2, :]
+                piece_types = (B_NORMAL, B_SWAPPED)
+            # Count pieces in starting rows after move
+            pieces_in_rows = np.sum((rows == piece_types[0]) | (rows == piece_types[1]))
+            # Only apply if more than one piece remains in those rows
+            if pieces_in_rows > 1:
+                # Compare to previous count (before move)
+                if not hasattr(self, '_last_starting_row_counts'):
+                    self._last_starting_row_counts = {PLAYER_A_ID: self._initial_starting_rows[PLAYER_A_ID], PLAYER_B_ID: self._initial_starting_rows[PLAYER_B_ID]}
+                prev_count = self._last_starting_row_counts[current_player_id]
+                if pieces_in_rows < prev_count:
+                    # Give a bonus for moving a piece out
+                    reward += 10.0  # Heuristic bonus (tune as needed)
+                self._last_starting_row_counts[current_player_id] = pieces_in_rows
 
         # Check for win condition for the current player (using JIT with path finding)
         has_won, win_path = self.check_win_condition(ID_PLAYER_MAP[current_player_id])

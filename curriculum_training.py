@@ -68,8 +68,8 @@ def configure_tensorflow():
 configure_tensorflow()
 
 # Curriculum Training Configuration
-PHASE1_EPISODES = 25000      # Episodes for Phase 1 (random opponent) 50000
-PHASE2_EPISODES = 50000     # Episodes for Phase 2 (self-play) 100000
+PHASE1_EPISODES = 50000      # Episodes for Phase 1 (random opponent) 50000
+PHASE2_EPISODES = 100000     # Episodes for Phase 2 (self-play) 100000
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps per episode
 REPLAY_FREQUENCY = 1          # Frequency of replay buffer sampling
 
@@ -810,9 +810,9 @@ def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_fil
     # Initialize agent *before* calling phase2_training (which calls init_wandb)
     agent = DQNAgent(
         learning_rate=0.00025,
-        epsilon=0.005,
+        epsilon=0.01,
         epsilon_decay=1.0,
-        epsilon_min=0.005,
+        epsilon_min=0.01,
         replay_buffer_size=500000,
         batch_size=64,
         target_update_freq=100
