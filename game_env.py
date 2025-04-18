@@ -695,6 +695,9 @@ class SwitcharooEnv:
         Performs a move based on the action index.
         Returns: (next_state, reward, done, info)
         """
+
+        reward = 0.0
+        
         self.step_count += 1  # Increment step counter
         move = self._action_index_to_move(action_index)
         current_player_id = self.current_player_id # Store before potential switch
