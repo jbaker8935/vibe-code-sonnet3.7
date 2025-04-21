@@ -2,16 +2,17 @@ import numpy as np
 import random
 from collections import deque
 import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
+from keras import layers
+import keras
 from numba import njit
 import numba
 
 # Import constants and functions from game_env
 from game_env import (
-    ROWS, COLS, NUM_ACTIONS, PLAYER_B_ID,
-    _evaluate_board_batch, _apply_move_jit, _evaluate_board_jit
+    ROWS, COLS, NUM_ACTIONS, PLAYER_B_ID
+    
 )
+from env_util import (_evaluate_board_batch,_apply_move_jit, _evaluate_board_jit)
 
 # Configure GPU
 physical_devices = tf.config.list_physical_devices('GPU')

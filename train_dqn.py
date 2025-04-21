@@ -6,7 +6,9 @@ import os
 import tensorflow as tf
 from numba import njit
 
-from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B, _scale_reward_jit, _board_in_history_jit
+from game_env import SwitcharooEnv
+from env_const import PLAYER_A, PLAYER_B
+from env_util import _scale_reward_jit, _board_in_history_jit
 from dqn_agent import DQNAgent
 
 # Training Configuration

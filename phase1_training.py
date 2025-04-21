@@ -5,8 +5,10 @@ from collections import deque
 import wandb
 from random import choice
 
-from game_env import (SwitcharooEnv, PLAYER_A, PLAYER_B, PLAYER_B_ID,
-                     _evaluate_board_jit, _calculate_progress_reward, _apply_move_jit)
+from env_const import (PLAYER_A, PLAYER_B, PLAYER_B_ID)
+from env_util import (_evaluate_board_jit, _calculate_progress_reward, _apply_move_jit)
+
+from game_env import (SwitcharooEnv)
 from train_dqn import save_checkpoint, safe_replay
 from utils import _action_index_to_move, _validate_reward, init_wandb
 from config import (PHASE1_EPISODES, MAX_STEPS_PER_EPISODE, REPLAY_FREQUENCY,
