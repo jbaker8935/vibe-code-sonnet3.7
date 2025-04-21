@@ -111,13 +111,16 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 
                 if done:
                     if info.get('winner') == PLAYER_B:
-                        reward += 100
+                        reward += 150  # Increased reward for winning to encourage aggressive play
+                        # Bonus for winning in fewer moves
+                        steps_bonus = (MAX_STEPS_PER_EPISODE - step) * 0.5
+                        reward += steps_bonus
                     elif info.get('winner') == PLAYER_A:
                         reward -= 50
                     else:
-                        reward -= 20
+                        reward -= 40  # Increased penalty for draws to discourage defensive play
                 else:
-                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 10.0
+                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 7.0  # Reduced progress reward
                     reward += progress_reward
 
                 reward = _validate_reward(reward)

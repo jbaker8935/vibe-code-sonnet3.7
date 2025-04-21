@@ -4,8 +4,7 @@ from collections import deque
 import tensorflow as tf
 from keras import layers
 import keras
-from numba import njit
-import numba
+
 
 # Import constants and functions from game_env
 from game_env import (
@@ -50,7 +49,11 @@ class DQNAgent:
                  gradient_clip_norm=1.0): # Add gradient clipping parameter
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=replay_buffer_size)
+        # Use Prioritized Experience Replay (PER)
+        self.memory = []
+        self.memory_capacity = replay_buffer_size
+        self.priorities = np.zeros(replay_buffer_size, dtype=np.float32)
+        self.memory_index = 0
         self.gamma = gamma    # discount rate
         self.epsilon = epsilon  # exploration rate
         self.epsilon_min = epsilon_min
@@ -104,8 +107,20 @@ class DQNAgent:
         # print("Target model updated.")
 
     def remember(self, state, action, reward, next_state, done):
-        """Stores experience in the replay buffer."""
-        self.memory.append((state, action, reward, next_state, done))
+        """Stores experience in the replay buffer with initial priority."""
+        # Calculate initial priority as max priority or a default high value
+        if len(self.memory) == 0:
+            priority = 1.0
+        else:
+            priority = np.max(self.priorities[:len(self.memory)])
+        
+        if len(self.memory) < self.memory_capacity:
+            self.memory.append((state, action, reward, next_state, done))
+        else:
+            self.memory[self.memory_index] = (state, action, reward, next_state, done)
+        
+        self.priorities[self.memory_index] = priority
+        self.memory_index = (self.memory_index + 1) % self.memory_capacity
 
     def act(self, state, legal_actions_indices, top_k=3, log_q_values=False):
         """
@@ -187,11 +202,16 @@ class DQNAgent:
 
     @tf.function
     def replay(self):
-        """Experience replay for training the model."""
+        """Experience replay for training the model with PER."""
         if len(self.memory) < self.batch_size:
             return None
 
-        minibatch = random.sample(self.memory, self.batch_size)
+        # Sample based on priorities
+        priorities = self.priorities[:len(self.memory)]
+        prob = priorities / np.sum(priorities)
+        indices = np.random.choice(len(self.memory), size=self.batch_size, p=prob)
+        minibatch = [self.memory[idx] for idx in indices]
+
         states, actions, rewards, next_states, dones = zip(*minibatch)
 
         # Convert to tensors with explicit shapes and dtypes
@@ -216,12 +236,17 @@ class DQNAgent:
         # Apply gradients (clipping is handled by the optimizer)
         grads = tape.gradient(loss, self.model.trainable_variables)
 
+        # Update priorities based on TD error
+        td_errors = tf.abs(target_q_values - predicted_values)
+        for i, idx in enumerate(indices):
+            self.priorities[idx] = td_errors[i].numpy() + 1e-6  # Small constant to avoid zero priority
+
         # Optional: Check for NaNs in gradients before applying
         # grads = [tf.where(tf.math.is_nan(g), tf.zeros_like(g), g) if g is not None else g for g in grads]
 
         self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
 
-        # Update target network periodically 
+        # Update target network periodically
         self.update_counter += 1
         if self.update_counter % self.target_update_freq == 0:
             self.update_target_model()
