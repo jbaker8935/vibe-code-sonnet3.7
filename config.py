@@ -2,10 +2,10 @@
 import os
 
 # Training Phases Configuration
-PHASE1_EPISODES = 350000      # Episodes for Phase 1 (random opponent)
+PHASE1_EPISODES = 300000      # Episodes for Phase 1 (random opponent)
 PHASE2_EPISODES = 100000     # Episodes for Phase 2 (self-play)
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps per episode
-REPLAY_FREQUENCY = 1         # Frequency of replay buffer sampling
+REPLAY_FREQUENCY = 4         # Frequency of replay buffer sampling (Increased from 2)
 
 # Tournament Configuration
 TOURNAMENT_FREQ = 2500       # How often to run tournaments

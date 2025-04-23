@@ -201,12 +201,30 @@ class DQNAgent:
         return start_r, start_c, end_r, end_c
 
     @tf.function
+    def _replay_step(self, states, actions, rewards, next_states, dones):
+        """Performs a single gradient update step. Decorated with tf.function."""
+        with tf.GradientTape() as tape:
+            q_values = self.model(states, training=True)
+            one_hot_actions = tf.one_hot(actions, self.action_size, dtype=tf.float32)
+            predicted_values = tf.reduce_sum(q_values * one_hot_actions, axis=1)
+
+            next_q_values = self.target_model(next_states, training=False)
+            max_next_q_values = tf.reduce_max(next_q_values, axis=1)
+            target_q_values = rewards + (1.0 - dones) * self.gamma * max_next_q_values
+
+            loss = self.loss_function(target_q_values, predicted_values)
+
+        grads = tape.gradient(loss, self.model.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+
+        td_errors = tf.abs(target_q_values - predicted_values)
+        return loss, td_errors
+
     def replay(self):
         """Experience replay for training the model with PER."""
         if len(self.memory) < self.batch_size:
             return None
 
-        # Sample based on priorities
         priorities = self.priorities[:len(self.memory)]
         prob = priorities / np.sum(priorities)
         indices = np.random.choice(len(self.memory), size=self.batch_size, p=prob)
@@ -214,46 +232,24 @@ class DQNAgent:
 
         states, actions, rewards, next_states, dones = zip(*minibatch)
 
-        # Convert to tensors with explicit shapes and dtypes
         states = tf.convert_to_tensor(np.vstack(states), dtype=tf.float32)
         next_states = tf.convert_to_tensor(np.vstack(next_states), dtype=tf.float32)
         rewards = tf.convert_to_tensor(rewards, dtype=tf.float32)
         actions = tf.convert_to_tensor(actions, dtype=tf.int32)
         dones = tf.convert_to_tensor(dones, dtype=tf.float32)
-        
-        # Use target network for stable Q-learning
-        next_q_values = self.target_model(next_states, training=False)
-        max_next_q_values = tf.reduce_max(next_q_values, axis=1)
-        target_q_values = rewards + (1 - dones) * self.gamma * max_next_q_values
 
-        # Standard practice: update only the Q-values for actions taken
-        with tf.GradientTape() as tape:
-            q_values = self.model(states, training=True)
-            one_hot_actions = tf.one_hot(actions, self.action_size)
-            predicted_values = tf.reduce_sum(q_values * one_hot_actions, axis=1)
-            loss = self.loss_function(target_q_values, predicted_values)
-            
-        # Apply gradients (clipping is handled by the optimizer)
-        grads = tape.gradient(loss, self.model.trainable_variables)
+        loss, td_errors = self._replay_step(states, actions, rewards, next_states, dones)
 
-        # Update priorities based on TD error
-        td_errors = tf.abs(target_q_values - predicted_values)
+        td_errors = td_errors.numpy()
         for i, idx in enumerate(indices):
-            self.priorities[idx] = td_errors[i].numpy() + 1e-6  # Small constant to avoid zero priority
+            self.priorities[idx] = td_errors[i] + 1e-6
 
-        # Optional: Check for NaNs in gradients before applying
-        # grads = [tf.where(tf.math.is_nan(g), tf.zeros_like(g), g) if g is not None else g for g in grads]
-
-        self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
-
-        # Update target network periodically
         self.update_counter += 1
         if self.update_counter % self.target_update_freq == 0:
             self.update_target_model()
             
-        return loss  # Return loss tensor directly, not numpy()
+        return loss.numpy()
         
-    # Add a new optimized batch prediction method
     @tf.function
     def predict_batch(self, states_tensor):
         """TF function optimized prediction for multiple states at once."""
@@ -264,27 +260,22 @@ class DQNAgent:
         if np.random.rand() <= self.epsilon:
             return [random.choice(actions) for actions in legal_actions_list]
         
-        # Get Q-values for all states at once
         states_tensor = tf.convert_to_tensor(states)
         q_values_batch = self.model(states_tensor, training=False).numpy()
         
         selected_actions = []
         for i, (q_values, legal_actions) in enumerate(zip(q_values_batch, legal_actions_list)):
-            # Filter for legal actions
             legal_q_values = np.take(q_values, legal_actions)
             max_q = np.max(legal_q_values)
             best_indices = np.where(np.isclose(legal_q_values, max_q, rtol=1e-5))[0]
             
             if len(best_indices) > 1:
-                # Use vectorized board evaluation for tiebreaking
                 board_states = np.tile(states[i][:-1].reshape(8, 4), (len(best_indices), 1, 1))
                 board_states = (board_states * 4).astype(np.int8)
                 
-                # Generate all potential next states in parallel
                 move_indices = [legal_actions[idx] for idx in best_indices]
                 next_boards = self._get_next_boards_batch(board_states, move_indices)
                 
-                # Evaluate all boards in parallel using imported function
                 scores = _evaluate_board_batch(next_boards, PLAYER_B_ID)
                 best_action_idx = move_indices[np.argmax(scores)]
             else:
@@ -294,9 +285,6 @@ class DQNAgent:
         
         return selected_actions
 
-    # Note: Remove the njit decorator from this method since it's a class method
-    # and can't be easily JIT compiled. The core operations are still JIT compiled
-    # through the imported functions.
     def _get_next_boards_batch(self, board_states, move_indices):
         """Generate next board states for multiple moves in parallel."""
         from game_env import _simulate_moves_batch_jit, DIRECTIONS, COLS, ROWS
@@ -304,7 +292,6 @@ class DQNAgent:
         num_boards = len(move_indices)
         moves = []
         
-        # Convert action indices to moves
         for i in range(num_boards):
             action_index = move_indices[i]
             direction_index = action_index % 8
@@ -316,14 +303,12 @@ class DQNAgent:
             dr, dc = DIRECTIONS[direction_index]
             end_r, end_c = start_r + dr, start_c + dc
             
-            # Skip invalid moves (shouldn't happen with legal actions)
             if not (0 <= start_r < ROWS and 0 <= start_c < COLS and 
                     0 <= end_r < ROWS and 0 <= end_c < COLS):
                 continue
                 
             moves.append((start_r, start_c, end_r, end_c))
         
-        # Use the JIT-optimized function for parallel simulation
         return _simulate_moves_batch_jit(board_states[0], moves, PLAYER_B_ID)
 
     def load(self, name):
@@ -347,11 +332,7 @@ class DQNAgent:
     def save_for_tfjs(self, file_path):
         """Saves the model in TensorFlow.js format."""
         try:
-            # TFJS requires saving the model architecture + weights
             self.model.export(file_path) # Save in SavedModel format first
-            # Conversion to TFJS format usually happens via a command-line tool
-            # But saving as SavedModel is the prerequisite.
-
             print(f"Model saved in SavedModel format at {file_path}. ")
             print(f"Convert to TF.js using: tensorflowjs_converter --input_format=tf_saved_model --output_format=tfjs_graph_model {file_path} ./tfjs_model/web_model")
 
@@ -359,27 +340,23 @@ class DQNAgent:
             print(f"Error saving model for TF.js at {file_path}: {e}")
 
 
-# Example Usage (Optional - typically used in the training script)
 if __name__ == "__main__":
     agent = DQNAgent()
     print("DQN Agent Initialized.")
     print("Model Summary:")
     agent.model.summary()
 
-    # Example state (replace with actual state from env)
     dummy_state = np.random.rand(STATE_SIZE)
-    dummy_legal_actions = [10, 25, 100, 200] # Example legal action indices
+    dummy_legal_actions = [10, 25, 100, 200]
 
     action = agent.act(dummy_state, dummy_legal_actions)
     print(f"Chosen action for dummy state: {action}")
 
-    # Example remember and replay (usually done in training loop)
     dummy_next_state = np.random.rand(STATE_SIZE)
     agent.remember(dummy_state, action, 1.0, dummy_next_state, False)
     agent.replay()
     print("Example replay step completed.")
 
-    # Example save/load
     agent.save("dqn_test.weights.h5")
     agent.load("dqn_test.weights.h5")
     agent.save_for_tfjs("./dqn_tfjs_test_model")
