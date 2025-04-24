@@ -49,11 +49,18 @@ class DQNAgent:
                  gradient_clip_norm=1.0): # Add gradient clipping parameter
         self.state_size = state_size
         self.action_size = action_size
-        # Use Prioritized Experience Replay (PER)
-        self.memory = []
+        # Prioritized Experience Replay (PER) buffers
         self.memory_capacity = replay_buffer_size
-        self.priorities = np.zeros(replay_buffer_size, dtype=np.float32)
+        self.memory_size = 0
         self.memory_index = 0
+        # allocate separate buffers
+        self.states_buffer = np.zeros((self.memory_capacity, self.state_size), dtype=np.float32)
+        self.next_states_buffer = np.zeros((self.memory_capacity, self.state_size), dtype=np.float32)
+        self.actions_buffer = np.zeros((self.memory_capacity,), dtype=np.int32)
+        self.rewards_buffer = np.zeros((self.memory_capacity,), dtype=np.float32)
+        self.dones_buffer = np.zeros((self.memory_capacity,), dtype=np.float32)
+        # priorities for PER
+        self.priorities = np.zeros(self.memory_capacity, dtype=np.float32)
         self.gamma = gamma    # discount rate
         self.epsilon = epsilon  # exploration rate
         self.epsilon_min = epsilon_min
@@ -107,20 +114,24 @@ class DQNAgent:
         # print("Target model updated.")
 
     def remember(self, state, action, reward, next_state, done):
-        """Stores experience in the replay buffer with initial priority."""
-        # Calculate initial priority as max priority or a default high value
-        if len(self.memory) == 0:
+        """Stores experience in numpy buffers with initial priority."""
+        # determine priority
+        if self.memory_size == 0:
             priority = 1.0
         else:
-            priority = np.max(self.priorities[:len(self.memory)])
-        
-        if len(self.memory) < self.memory_capacity:
-            self.memory.append((state, action, reward, next_state, done))
-        else:
-            self.memory[self.memory_index] = (state, action, reward, next_state, done)
-        
-        self.priorities[self.memory_index] = priority
-        self.memory_index = (self.memory_index + 1) % self.memory_capacity
+            priority = np.max(self.priorities[:self.memory_size])
+        idx = self.memory_index
+        # store components
+        self.states_buffer[idx] = state
+        self.actions_buffer[idx] = action
+        self.rewards_buffer[idx] = reward
+        self.next_states_buffer[idx] = next_state
+        self.dones_buffer[idx] = float(done)
+        # update size and priority
+        self.memory_size = min(self.memory_size + 1, self.memory_capacity)
+        self.priorities[idx] = priority
+        # advance index
+        self.memory_index = (idx + 1) % self.memory_capacity
 
     def act(self, state, legal_actions_indices, top_k=3, log_q_values=False):
         """
@@ -221,33 +232,30 @@ class DQNAgent:
         return loss, td_errors
 
     def replay(self):
-        """Experience replay for training the model with PER."""
-        if len(self.memory) < self.batch_size:
+        """Experience replay using numpy buffers for faster sampling and batching."""
+        if self.memory_size < self.batch_size:
             return None
-
-        priorities = self.priorities[:len(self.memory)]
-        prob = priorities / np.sum(priorities)
-        indices = np.random.choice(len(self.memory), size=self.batch_size, p=prob)
-        minibatch = [self.memory[idx] for idx in indices]
-
-        states, actions, rewards, next_states, dones = zip(*minibatch)
-
-        states = tf.convert_to_tensor(np.vstack(states), dtype=tf.float32)
-        next_states = tf.convert_to_tensor(np.vstack(next_states), dtype=tf.float32)
-        rewards = tf.convert_to_tensor(rewards, dtype=tf.float32)
-        actions = tf.convert_to_tensor(actions, dtype=tf.int32)
-        dones = tf.convert_to_tensor(dones, dtype=tf.float32)
-
+        # sample indices with PER probabilities
+        prios = self.priorities[:self.memory_size]
+        prob = prios / np.sum(prios)
+        indices = np.random.choice(self.memory_size, size=self.batch_size, p=prob)
+        # batch tensors
+        states = tf.convert_to_tensor(self.states_buffer[indices], dtype=tf.float32)
+        next_states = tf.convert_to_tensor(self.next_states_buffer[indices], dtype=tf.float32)
+        rewards = tf.convert_to_tensor(self.rewards_buffer[indices], dtype=tf.float32)
+        actions = tf.convert_to_tensor(self.actions_buffer[indices], dtype=tf.int32)
+        dones = tf.convert_to_tensor(self.dones_buffer[indices], dtype=tf.float32)
+        # perform a training step
         loss, td_errors = self._replay_step(states, actions, rewards, next_states, dones)
+         
+        # update priorities in batch
+        td = td_errors.numpy()
+        self.priorities[indices] = td + 1e-6
 
-        td_errors = td_errors.numpy()
-        for i, idx in enumerate(indices):
-            self.priorities[idx] = td_errors[i] + 1e-6
-
+        # update target network periodically
         self.update_counter += 1
         if self.update_counter % self.target_update_freq == 0:
             self.update_target_model()
-            
         return loss.numpy()
         
     @tf.function

@@ -136,7 +136,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
             
             state = next_state
             
-            if len(agent.memory) > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:
+            if agent.memory_size > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:
                 train_start = time.time()
                 safe_replay(agent)
                 train_time += time.time() - train_start
@@ -147,7 +147,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 move_times.append(move_time)
                 break
         
-        if len(agent.memory) > agent.batch_size:
+        if agent.memory_size > agent.batch_size:
             safe_replay(agent)
         
         if agent.epsilon > agent.epsilon_min:
@@ -192,7 +192,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                     "avg_train_time": avg_train_time,
                     "epsilon": agent.epsilon,
                     "opponent_epsilon": opponent_epsilon,
-                    "memory_size": len(agent.memory),
+                    "memory_size": agent.memory_size,
                     "steps": agent_steps,
                     "time_per_episode": time.time() - episode_start
                 })
