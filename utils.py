@@ -44,7 +44,9 @@ def init_wandb(enable_wandb, run_name, agent, group_name=None):
                 "epsilon_decay": agent.epsilon_decay,
                 "epsilon_min": agent.epsilon_min,
                 "batch_size": agent.batch_size,
-                "replay_buffer_size": agent.memory.maxlen,
+                # Log both buffer capacity and current fill
+                "replay_buffer_capacity": agent.memory_capacity,
+                "replay_buffer_filled": int(agent.memory_size.numpy()),
                 "target_update_freq": agent.target_update_freq,
                 "gradient_clip_norm": agent.optimizer.clipnorm if hasattr(agent.optimizer, 'clipnorm') else None
             }

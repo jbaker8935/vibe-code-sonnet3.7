@@ -1,3 +1,8 @@
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # only warnings & errors
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' # disable oneDNN notices
+
+
 import numpy as np
 import random
 from collections import deque
@@ -15,7 +20,7 @@ from dqn_agent import DQNAgent
 EPISODES = 150000
 MAX_STEPS_PER_EPISODE = 300 # Prevent infinitely long games
 SAVE_FREQ = 10000 # Save model weights every N episodes
-TRAIN_FREQ = 1  # Changed: replay every 4 agent steps instead of every step
+TRAIN_FREQ = 8  # Changed: replay every 4 agent steps instead of every step
 MODEL_WEIGHTS_FILE = "switcharoo_dqn.weights.h5"
 CHECKPOINT_FILE = "switcharoo_dqn_checkpoint_e{}.weights.h5"  # Add episode number to filename
 TFJS_MODEL_DIR = "./switcharoo_tfjs_model" # Directory for SavedModel format
