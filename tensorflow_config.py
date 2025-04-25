@@ -24,13 +24,12 @@ def configure_tensorflow():
             except RuntimeError as e:
                 print(f"GPU memory growth configuration error for {device}: {e}")
 
-        # Enable Mixed Precision for compatible GPUs (like RTX 3060)
-        print("Enabling Mixed Precision (mixed_float16)...")
-        try:
-            tf.keras.mixed_precision.set_global_policy('mixed_float16')
-            print("Mixed Precision policy set to 'mixed_float16'.")
-        except Exception as e:
-            print(f"Could not enable mixed precision: {e}")
+        # Disable mixed precision for now to test performance impact
+        # try:
+        #     tf.keras.mixed_precision.set_global_policy('mixed_float16')
+        #     print("Mixed Precision policy set to 'mixed_float16'.")
+        # except Exception as e:
+        #     print(f"Could not enable mixed precision: {e}")
 
         try:
             # Set memory limit only, removed preallocate option
