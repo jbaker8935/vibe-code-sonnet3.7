@@ -158,12 +158,18 @@ class DQNAgent:
         else:
             state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
             state_tensor = tf.expand_dims(state_tensor, 0)
-            act_values = self.predict_batch(state_tensor)
+            # Get model output (potentially float16)
+            act_values_raw = self.predict_batch(state_tensor)
+            # Cast to float32 for consistent processing and NaN check
+            act_values = tf.cast(act_values_raw, tf.float32)
 
             q_values = act_values.numpy()[0]
+            # Check for NaN *after* casting to float32
             if np.isnan(q_values).any():
-                print("Warning: NaN detected in Q-values. Using fallback values.")
-                q_values = np.zeros_like(q_values)
+                # print("Warning: NaN detected in Q-values after casting to float32. Using fallback values.")
+                # Fallback: Use zero Q-values for legal actions, -inf for illegal
+                q_values = np.full(self.action_size, -np.inf, dtype=np.float32)
+                q_values[legal_actions_indices] = 0.0
 
             # Example randomness threshold calculation
             randomness_threshold = 0.05 * max(q_values)  # 5% of the highest Q-value
@@ -223,22 +229,62 @@ class DQNAgent:
 
     @tf.function
     def _replay_step(self, states, actions, rewards, next_states, dones):
-        """Performs a single gradient update step. Decorated with tf.function."""
+        """Performs a single gradient descent step on a batch of experiences."""
         with tf.GradientTape() as tape:
+            # Get Q values for current states from the main model
             q_values = self.model(states, training=True)
+            # --- Mixed Precision Fix: Cast model output to float32 ---
+            q_values = tf.cast(q_values, tf.float32)
+
+            # Get Q values for next states from the target model
+            next_q_values = self.target_model(next_states, training=False)
+            # --- Mixed Precision Fix: Cast target model output to float32 ---
+            next_q_values = tf.cast(next_q_values, tf.float32)
+
+            # Select the Q value corresponding to the action taken
+            # Ensure one_hot_actions is float32 to match the casted q_values
             one_hot_actions = tf.one_hot(actions, self.action_size, dtype=tf.float32)
             predicted_values = tf.reduce_sum(q_values * one_hot_actions, axis=1)
 
-            next_q_values = self.target_model(next_states, training=False)
-            max_next_q_values = tf.reduce_max(next_q_values, axis=1)
-            target_q_values = rewards + (1.0 - dones) * self.gamma * max_next_q_values
+            # Calculate the target Q value using the Bellman equation
+            # Q(s,a) = r + gamma * max_a'(Q_target(s', a'))
+            # Ensure rewards and dones are compatible (float32)
+            target_q_values = tf.cast(rewards, tf.float32) + self.gamma * tf.reduce_max(next_q_values, axis=1) * (1.0 - tf.cast(dones, tf.float32))
 
-            loss = self.loss_function(target_q_values, predicted_values)
+            # Calculate TD error (loss)
+            td_errors = tf.abs(target_q_values - predicted_values)
+
+            # Use Huber loss for stability
+            loss = tf.reduce_mean(tf.keras.losses.huber(target_q_values, predicted_values))
+
+        # --- NaN/Inf Check for Loss ---
+        if tf.math.is_nan(loss) or tf.math.is_inf(loss):
+            tf.print("Warning: NaN or Inf detected in loss. Skipping gradient update.")
+            # Return zero TD errors to avoid corrupting priorities
+            return loss, tf.zeros_like(td_errors)
 
         grads = tape.gradient(loss, self.model.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
 
-        td_errors = tf.abs(target_q_values - predicted_values)
+        # --- NaN/Inf Check for Gradients (AutoGraph compatible) ---
+        # Initialize a boolean tensor to track if any NaN/Inf is found
+        grads_have_nan_inf = tf.constant(False, dtype=tf.bool)
+        # Use tf.TensorArray for accumulating boolean results if needed, or direct reduce
+        for grad in grads:
+            if grad is not None:
+                # Check for NaN or Inf in the current gradient
+                is_invalid = tf.reduce_any(tf.math.is_nan(grad)) or tf.reduce_any(tf.math.is_inf(grad))
+                # Update the overall flag if an invalid value is found
+                grads_have_nan_inf = grads_have_nan_inf or is_invalid
+
+        # Check the final boolean flag outside the loop
+        if grads_have_nan_inf:
+            tf.print("Warning: NaN or Inf detected in gradients. Skipping gradient update.")
+            # Return zero TD errors to avoid corrupting priorities
+            return loss, tf.zeros_like(td_errors)
+        else:
+            # Apply gradients only if they are valid
+            self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+
         return loss, td_errors
 
     def replay(self):

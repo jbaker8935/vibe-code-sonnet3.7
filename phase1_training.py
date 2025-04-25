@@ -170,13 +170,13 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
             draws.append(1)
 
         # Calculate metrics
-        avg_score = np.mean(scores)
-        win_rate = np.mean(wins)
-        loss_rate = np.mean(losses)
-        draw_rate = np.mean(draws)
-        avg_steps = np.mean(steps)
-        avg_move_time = np.mean(move_times)
-        avg_train_time = np.mean(train_times)
+        avg_score = np.mean(scores) if scores else 0.0
+        win_rate = np.mean(wins) if wins else 0.0
+        loss_rate = np.mean(losses) if losses else 0.0
+        draw_rate = np.mean(draws) if draws else 0.0
+        avg_steps = np.mean(steps) if steps else 0.0
+        avg_move_time = np.mean(move_times) if move_times else 0.0
+        avg_train_time = np.mean(train_times) if train_times else 0.0
 
         if wandb_enabled and e % log_freq == 0:
             try:
