@@ -73,7 +73,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 agent_steps += 1
 
                 train_start = time.time()
-                if len(agent.memory) > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:
+                if len(agent) > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:  # Use len(agent)
                     safe_replay(agent)
                 train_time += time.time() - train_start
             else:
@@ -100,7 +100,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 info['timeout'] = True
                 break
         
-        if len(agent.memory) > agent.batch_size:
+        if len(agent) > agent.batch_size:  # Use len(agent)
             safe_replay(agent)
             
         if agent.epsilon > agent.epsilon_min:
@@ -139,7 +139,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                     "loss_rate": loss_rate,
                     "draw_rate": draw_rate,
                     "epsilon": agent.epsilon,
-                    "memory_size": len(agent.memory),
+                    "memory_size": len(agent),  # Use len(agent)
                     "steps": agent_steps,
                     "avg_steps": avg_steps,
                     "avg_move_time": avg_move_time,

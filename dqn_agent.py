@@ -45,12 +45,14 @@ from binary_board import board_to_binary, binary_to_board
 
 class DQNAgent:
     def __init__(self, state_size=STATE_SIZE, action_size=ACTION_SIZE,
-                 learning_rate=0.001, gamma=0.99, epsilon=1.0,
+                 learning_rate=1e-6,  # Reduced learning rate further
+                 gamma=0.99, epsilon=1.0,
                  epsilon_decay=0.999, epsilon_min=0.01,
                  replay_buffer_size=100000, batch_size=64,
                  target_update_freq=100,
                  gradient_clip_norm=1.0,
-                 per_alpha=0.6,  # Priority exponent
+                 use_per=True,  # Flag to enable/disable PER
+                 per_alpha=0.5,  # Reduced priority exponent
                  per_beta=0.4,   # Importance sampling exponent
                  per_beta_increment=0.001, # Annealing beta
                  per_epsilon=1e-6): # Small constant added to priorities
@@ -78,7 +80,9 @@ class DQNAgent:
         self.target_update_freq = target_update_freq
         self.update_counter = 0
 
-        # PER parameters
+        self.use_per = use_per  # Store the flag
+
+        # PER parameters (only relevant if use_per is True)
         self.per_alpha = per_alpha
         self.per_beta = per_beta
         self.per_beta_increment = per_beta_increment
@@ -97,15 +101,23 @@ class DQNAgent:
         """Neural network that processes binary board representation."""
         input_layer = layers.Input(shape=(self.state_size,))
 
-        current_board = layers.Lambda(lambda x: x[:, :5])(input_layer)
+        # Separate board and player inputs
+        board_input_raw = layers.Lambda(lambda x: x[:, :5])(input_layer)
         player_input = layers.Lambda(lambda x: x[:, -1:])(input_layer)
 
-        x1 = layers.Dense(256, activation='relu')(current_board)
-        x1 = layers.Dense(128, activation='relu')(x1)
+        # Normalize the board input (scale uint32 values to ~[0, 1])
+        # Using 2**32 - 1 which is the max uint32 value
+        max_uint32 = tf.constant(4294967295.0, dtype=tf.float32)
+        normalized_board_input = layers.Lambda(lambda x: x / max_uint32)(board_input_raw)
 
+        # Process normalized board input
+        x1 = layers.Dense(64, activation='relu')(normalized_board_input)
+        x1 = layers.Dense(32, activation='relu')(x1)
+
+        # Combine processed board input with player input
         combined = layers.Concatenate()([x1, player_input])
-        x = layers.Dense(256, activation='relu')(combined)
-        x = layers.Dense(128, activation='relu')(x)
+        x = layers.Dense(64, activation='relu')(combined)
+        x = layers.Dense(32, activation='relu')(x)
 
         output = layers.Dense(self.action_size, activation='linear')(x)
 
@@ -118,11 +130,18 @@ class DQNAgent:
 
     def remember(self, state, action, reward, next_state, done):
         """Stores experience in the NumPy arrays and updates priority."""
-        current_max_priority = np.max(self.priorities) if self.memory_index > 0 or self.memory_full else 1.0
+        # Clip reward to prevent instability
+        clipped_reward = np.clip(reward, -10.0, 10.0)
+
+        # Set priority to 1.0 if PER is disabled or buffer is empty
+        current_max_priority = 1.0
+        if self.use_per and (self.memory_index > 0 or self.memory_full):
+            current_max_priority = np.max(self.priorities)
 
         self.states[self.memory_index] = state
         self.actions[self.memory_index] = action
-        self.rewards[self.memory_index] = reward
+        # Store the clipped reward
+        self.rewards[self.memory_index] = clipped_reward
         self.next_states[self.memory_index] = next_state
         self.dones[self.memory_index] = float(done)
         self.priorities[self.memory_index] = current_max_priority
@@ -196,7 +215,7 @@ class DQNAgent:
 
         return start_r, start_c, end_r, end_c
 
-    @tf.function
+    @tf.function # Re-enabled after debugging
     def _train_step(self, states, actions, rewards, next_states, dones, importance_weights):
         with tf.GradientTape() as tape:
             q_values = self.model(states, training=True)
@@ -214,7 +233,13 @@ class DQNAgent:
 
             td_errors = tf.abs(target_q_values - predicted_values)
             element_wise_loss = self.loss_function(target_q_values, predicted_values)
-            weighted_loss = element_wise_loss * importance_weights
+
+            # Use importance weights only if PER is enabled
+            if self.use_per:
+                weighted_loss = element_wise_loss * importance_weights
+            else:
+                weighted_loss = element_wise_loss # No weighting if PER is off
+
             loss = tf.reduce_mean(weighted_loss)
 
         if tf.math.is_nan(loss) or tf.math.is_inf(loss):
@@ -242,34 +267,45 @@ class DQNAgent:
             if current_size < self.batch_size:
                 continue
 
-            valid_priorities = self.priorities[:current_size].astype(np.float64)
-            scaled_priorities = np.power(valid_priorities + self.per_epsilon, self.per_alpha)
-            prob_sum = np.sum(scaled_priorities)
+            if self.use_per:
+                # --- PER Sampling Logic ---
+                valid_priorities = self.priorities[:current_size].astype(np.float64)
+                scaled_priorities = np.power(valid_priorities + self.per_epsilon, self.per_alpha)
+                prob_sum = np.sum(scaled_priorities)
 
-            if prob_sum <= 0:
-                probabilities = np.ones(current_size, dtype=np.float64) / current_size
+                if prob_sum <= 0:
+                    probabilities = np.ones(current_size, dtype=np.float64) / current_size
+                else:
+                    probabilities = scaled_priorities / prob_sum
+
+                if np.isnan(probabilities).any():
+                    print("Warning: NaN detected in sampling probabilities. Using uniform distribution.")
+                    probabilities = np.ones(current_size, dtype=np.float64) / current_size
+
+                # Ensure probabilities sum to 1
+                prob_sum_check = probabilities.sum()
+                if not np.isclose(prob_sum_check, 1.0):
+                    probabilities /= prob_sum_check # Renormalize if needed
+
+                sampled_indices = np.random.choice(current_size, self.batch_size, p=probabilities, replace=True)
+
+                total_samples = current_size
+                weights = np.power(total_samples * probabilities[sampled_indices], -self.per_beta).astype(np.float64)
+                max_weight = np.max(weights)
+                weights /= max_weight if max_weight > 0 else 1.0
+                batch_weights = weights.astype(np.float32)
+                # --- End PER Sampling --- 
             else:
-                probabilities = scaled_priorities / prob_sum
-
-            if np.isnan(probabilities).any():
-                print("Warning: NaN detected in sampling probabilities. Using uniform distribution.")
-                probabilities = np.ones(current_size, dtype=np.float64) / current_size
-
-            probabilities /= probabilities.sum()
-
-            sampled_indices = np.random.choice(current_size, self.batch_size, p=probabilities, replace=True)
-
-            total_samples = current_size
-            weights = np.power(total_samples * probabilities[sampled_indices], -self.per_beta).astype(np.float64)
-            max_weight = np.max(weights)
-            weights /= max_weight if max_weight > 0 else 1.0
+                # --- Uniform Sampling Logic ---
+                sampled_indices = np.random.choice(current_size, self.batch_size, replace=True)
+                batch_weights = tf.ones(self.batch_size, dtype=tf.float32) # Uniform weights are 1
+                # --- End Uniform Sampling ---
 
             batch_states = self.states[sampled_indices].astype(np.float32)
             batch_actions = self.actions[sampled_indices].astype(np.int32)
             batch_rewards = self.rewards[sampled_indices].astype(np.float32)
             batch_next_states = self.next_states[sampled_indices].astype(np.float32)
             batch_dones = self.dones[sampled_indices].astype(np.float32)
-            batch_weights = weights.astype(np.float32)
             batch_indices = sampled_indices.astype(np.int64)
 
             yield (batch_states, batch_actions, batch_rewards, batch_next_states, batch_dones, batch_weights, batch_indices)
@@ -295,6 +331,10 @@ class DQNAgent:
         return dataset
 
     def update_priorities(self, indices, td_errors):
+        # Only update priorities if PER is enabled
+        if not self.use_per:
+            return
+
         current_size = self.replay_buffer_size if self.memory_full else self.memory_index
         valid_mask = indices < current_size
         indices_in_bounds = indices[valid_mask]

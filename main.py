@@ -61,13 +61,14 @@ def main():
         else:
             # Standard Curriculum Training (Phase 1 + Phase 2)
             agent = DQNAgent(
-                learning_rate=0.00025,
-                epsilon=0.01,
-                epsilon_decay=.9995,
-                epsilon_min=0.01,
-                replay_buffer_size=500000,
+                # learning_rate=1e-6, # Use default from class
+                # epsilon=1.0, # Use default from class
+                # epsilon_decay=.999, # Use default from class
+                # epsilon_min=0.01, # Use default from class
+                replay_buffer_size=250000,
                 batch_size=64,
-                target_update_freq=100
+                target_update_freq=100,
+                use_per=True # Re-enable PER with adjusted alpha
             )
 
             # Check for existing checkpoints

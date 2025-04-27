@@ -77,7 +77,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
     log_freq = 10
     wandb_enabled = init_wandb(enable_wandb, "phase1_training_tfdata", agent)  # Updated project name
 
-    opponent_epsilon_start = 0.3
+    opponent_epsilon_start = 1.0
     opponent_epsilon_end = 0.01
     opponent_epsilon_decay = (opponent_epsilon_end / opponent_epsilon_start) ** (1 / episodes)
     opponent_epsilon = opponent_epsilon_start
@@ -132,10 +132,11 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                     elif info.get('winner') == PLAYER_A:
                         reward -= 50
                     else:  # Draw
-                        reward -= 40
+                        reward -= 10 # Changed from -40 to -10
                 else:
                     # Progress reward (consider if still needed/effective)
-                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 7.0
+                    # Reduced multiplier from 7.0 to 2.0
+                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 2.0
                     reward += progress_reward
 
                 reward = _validate_reward(reward)
