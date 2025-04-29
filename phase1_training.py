@@ -15,6 +15,7 @@ from train_dqn import save_checkpoint  # , safe_replay
 from utils import _action_index_to_move, _validate_reward, init_wandb
 from config import (PHASE1_EPISODES, MAX_STEPS_PER_EPISODE, REPLAY_FREQUENCY,
                    BASE_MODEL_FILE, SAVE_FREQ, initial_position)
+from dqn_agent import DQNAgent
 
 def get_opponent_action_fast(board_state, legal_actions, opponent_epsilon):
     """Ultra-fast opponent action selection."""
@@ -61,7 +62,7 @@ def get_opponent_action(env, opponent_epsilon=0.3):
     # Pass current board state directly
     return get_opponent_action_fast(env.board, eval_actions, opponent_epsilon)
 
-def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wandb=True):
+def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wandb=True, opponent_epsilon_start=None):
     """Phase 1: Train against a progressively stronger opponent using tf.data."""
     env = SwitcharooEnv()
     scores = deque(maxlen=100)
@@ -77,12 +78,17 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
     log_freq = 10
     wandb_enabled = init_wandb(enable_wandb, "phase1_training_tfdata", agent)  # Updated project name
 
-    opponent_epsilon_start = 1.0
+    # Determine starting opponent epsilon (allow override)
+    if opponent_epsilon_start is not None:
+        start_eps = opponent_epsilon_start
+    else:
+        start_eps = 1.0
     opponent_epsilon_end = 0.01
-    opponent_epsilon_decay = (opponent_epsilon_end / opponent_epsilon_start) ** (1 / episodes)
-    opponent_epsilon = opponent_epsilon_start
+    opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / episodes)
+    opponent_epsilon = start_eps
 
-    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.75))
+    # Adjust epsilon decay to reach min around 60% of episodes
+    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.60)) # Changed 0.75 to 0.60
 
     # Create dataset iterator outside the episode loop (or recreate periodically)
     # Only create if buffer has enough samples initially
@@ -123,20 +129,14 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 next_state, reward, done, info = env.step(action)
                 next_state = next_state.astype(np.float32)  # Ensure float32
 
-                # --- Reward Shaping ---
+                # --- Reward Shaping --- 
                 if done:
-                    if info.get('winner') == PLAYER_B:
-                        reward += 150
-                        steps_bonus = (MAX_STEPS_PER_EPISODE - step) * 0.5
-                        reward += steps_bonus
-                    elif info.get('winner') == PLAYER_A:
-                        reward -= 50
-                    else:  # Draw
-                        reward -= 10 # Changed from -40 to -10
+                    # Base win/loss/draw rewards are now handled in the environment
+                    pass # No explicit reward setting here needed
                 else:
                     # Progress reward (consider if still needed/effective)
-                    # Reduced multiplier from 7.0 to 2.0
-                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 2.0
+                    # Reduced multiplier from 0.5 to 0.1
+                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 0.1 # Reduced multiplier
                     reward += progress_reward
 
                 reward = _validate_reward(reward)
@@ -300,3 +300,52 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
             print(f"Error finishing wandb run: {finish_e}")
             pass
     return agent
+
+def run_sweep():
+    sweep_config = {
+        'method': 'bayes',  # Bayesian optimization
+        'metric': {
+            'name': 'avg_score_100',
+            'goal': 'maximize'
+        },
+        'parameters': {
+            'learning_rate': {
+                'values': [5e-8, 1e-8, 1e-7, 2e-7]  # Updated learning rate range
+            },
+            'batch_size': {
+                'values': [64, 128, 256]
+            },
+            'gamma': {
+                'values': [0.95, 0.99, 0.999]
+            },
+            'epsilon_decay': {
+                'values': [0.995, 0.999, 0.9995]
+            },
+            'per_alpha': {
+                'values': [0.3, 0.5, 0.7]
+            }
+        }
+    }
+
+    sweep_id = wandb.sweep(sweep_config, project="switcharoo-dqn")
+
+    def train_with_sweep():
+        with wandb.init() as run:
+            config = run.config
+
+            # Dynamically set parameters from the sweep
+            agent = DQNAgent(
+                learning_rate=config.learning_rate,
+                batch_size=config.batch_size,
+                gamma=config.gamma,
+                epsilon_decay=config.epsilon_decay,
+                per_alpha=config.per_alpha
+            )
+
+            # Limit episodes to 500 for the sweep
+            phase1_training(agent, episodes=500, enable_wandb=True)
+
+    wandb.agent(sweep_id, function=train_with_sweep)
+
+if __name__ == "__main__":
+    run_sweep()

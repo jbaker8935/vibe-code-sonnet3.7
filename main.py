@@ -36,6 +36,10 @@ def main():
                        help="Output file for profiling data (default: program.prof)")
     parser.add_argument("--resume", action="store_true",
                        help="Resume training from latest checkpoint if available")
+    parser.add_argument("--start-epsilon", type=float, default=None,
+                       help="Starting epsilon for agent (only effective if resuming training)")
+    parser.add_argument("--start-opponent-epsilon", type=float, default=None,
+                       help="Starting epsilon for opponent (only effective in Phase 1 training)")
     args = parser.parse_args()
 
     # Configure TensorFlow
@@ -66,10 +70,14 @@ def main():
                 # epsilon_decay=.999, # Use default from class
                 # epsilon_min=0.01, # Use default from class
                 replay_buffer_size=250000,
-                batch_size=64,
-                target_update_freq=100,
+                batch_size=128,
+                target_update_freq=200,
                 use_per=True # Re-enable PER with adjusted alpha
             )
+
+            # Override agent starting epsilon if specified
+            if args.start_epsilon is not None:
+                agent.epsilon = args.start_epsilon
 
             # Check for existing checkpoints
             start_episode = 1
@@ -102,7 +110,8 @@ def main():
                 # Phase 1: Train against random opponent
                 if not phase1_completed:
                     agent = phase1_training(agent, start_episode,
-                                         enable_wandb=not args.disable_wandb)
+                                         enable_wandb=not args.disable_wandb,
+                                         opponent_epsilon_start=args.start_opponent_epsilon)
                     start_episode = 1  # Reset episode counter for Phase 2
                 else:
                     print(f"Phase 1 model found: {BASE_MODEL_FILE}. Loading...")

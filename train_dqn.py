@@ -24,7 +24,6 @@ TRAIN_FREQ = 8  # Changed: replay every 4 agent steps instead of every step
 MODEL_WEIGHTS_FILE = "switcharoo_dqn.weights.h5"
 CHECKPOINT_FILE = "switcharoo_dqn_checkpoint_e{}.weights.h5"  # Add episode number to filename
 TFJS_MODEL_DIR = "./switcharoo_tfjs_model" # Directory for SavedModel format
-TFJS_MODEL_FILE = "./switcharoo_tfjs_model/tf_model.weights.h5" # Directory for SavedModel format
 
 def save_checkpoint(agent, episode, emergency=False):
     """Save a checkpoint with the current episode number."""
@@ -101,33 +100,11 @@ def _validate_reward(reward):
         return 0.0
     return reward
 
-# Safely replay the experience to handle tensor conversion errors
-def safe_replay(agent, num_batches=5):
-    """Safe replay function with error handling and batched updates."""
-    try:
-        # Run multiple minibatch updates in sequence
-        for _ in range(num_batches):
-            loss = agent.replay()
-    except Exception as e:
-        print(f"Error during replay: {e}")
-        # Try rebuilding the model if there was an error
-        # (rare but can happen with certain memory/graph issues)
-        try:
-            print("Attempting to rebuild model...")
-            old_weights = agent.model.get_weights()
-            agent.model = agent._build_model()
-            agent.model.set_weights(old_weights)
-            agent.update_target_model()
-            print("Model rebuilt successfully.")
-        except Exception as rebuild_error:
-            print(f"Failed to rebuild model: {rebuild_error}")
-            # No point in re-raising, just continue training
-
 # --- Training Loop ---
 if __name__ == "__main__":
     env = SwitcharooEnv()
     agent = DQNAgent(epsilon=1.0,epsilon_decay=0.9995, 
-                 replay_buffer_size=1000000, batch_size=64) 
+                 replay_buffer_size=1000000, batch_size=64, use_per=True) 
 
     # Try to find the latest checkpoint
     latest_checkpoint = None
@@ -147,6 +124,12 @@ if __name__ == "__main__":
     episode_lengths = deque(maxlen=100)
     start_time = time.time()
 
+    print("Creating training dataset...")
+    # Create the dataset and iterator outside the loop
+    train_dataset = agent.create_tf_dataset()
+    train_iterator = iter(train_dataset)
+    print("Dataset created.")
+
     print(f"Starting training for {EPISODES} episodes...")
 
     try:
@@ -155,6 +138,8 @@ if __name__ == "__main__":
             episode_reward = 0
             agent_steps = 0 # Count steps taken by the agent (Player B)
             episode_start = time.time()  # Timer for episode
+            total_loss = 0.0
+            train_steps = 0
 
             for step in range(MAX_STEPS_PER_EPISODE):
                 current_player = env.current_player
@@ -188,25 +173,60 @@ if __name__ == "__main__":
 
                 state = next_state
 
-                # Train the agent (replay) after each step (or less frequently if needed)
-                if len(agent.memory) > agent.batch_size and agent_steps % TRAIN_FREQ == 0:
-                    safe_replay(agent)
+                # Train the agent using the dataset iterator
+                # Check if enough memory and time to train based on TRAIN_FREQ
+                current_buffer_size = len(agent)
+                if current_buffer_size >= agent.batch_size and agent_steps > 0 and agent_steps % TRAIN_FREQ == 0:
+                    try:
+                        # Get the next batch from the dataset iterator
+                        batch_states, batch_actions, batch_rewards, batch_next_states, batch_dones, batch_weights, batch_indices = next(train_iterator)
+
+                        # Perform a training step
+                        loss, td_errors = agent._train_step(batch_states, batch_actions, batch_rewards, batch_next_states, batch_dones, batch_weights)
+                        total_loss += loss.numpy()
+                        train_steps += 1
+
+                        # Update priorities if using PER
+                        if agent.use_per:
+                            agent.update_priorities(batch_indices.numpy(), td_errors.numpy())
+
+                        # Update target network periodically
+                        agent.update_counter += 1
+                        if agent.update_counter >= agent.target_update_freq:
+                            agent.update_target_model()
+                            agent.update_counter = 0
+
+                    except StopIteration:
+                        # Should not happen with an infinite generator, but handle defensively
+                        print("Warning: Training dataset iterator exhausted unexpectedly. Recreating.")
+                        train_iterator = iter(train_dataset)
+                    except Exception as train_ex:
+                        print(f"Error during training step: {train_ex}")
+                        # Optionally add more robust error handling here
 
                 if done:
                     break # Exit step loop if game ended
 
             # --- End of Episode ---
-            # Use safe replay at the end of episode
-            if len(agent.memory) > agent.batch_size:
-                safe_replay(agent)
-                
+            # Optional: Perform a few extra training steps at the end of the episode
+
+            # Decay epsilon
+            if agent.epsilon > agent.epsilon_min:
+                agent.epsilon *= agent.epsilon_decay
+                agent.epsilon = max(agent.epsilon_min, agent.epsilon) # Ensure it doesn't go below min
+
+            # Anneal PER beta if using PER
+            if agent.use_per:
+                agent.per_beta = min(1.0, agent.per_beta + agent.per_beta_increment)
+
             scores.append(episode_reward)
             episode_lengths.append(step + 1)
             avg_score = np.mean(scores)
             avg_length = np.mean(episode_lengths)
+            avg_loss = total_loss / train_steps if train_steps > 0 else 0
             episode_time = time.time() - episode_start
 
-            print(f"Episode: {e}/{EPISODES} | Steps: {step+1} (Agent: {agent_steps}) | Score: {episode_reward:.2f} | Time: {episode_time:.2f}s | Winner: {env.winner} | Epsilon: {agent.epsilon:.4f} | Avg Score (100): {avg_score:.2f} | Avg Len (100): {avg_length:.1f}")
+            print(f"Episode: {e}/{EPISODES} | Steps: {step+1} (Agent: {agent_steps}) | Score: {episode_reward:.2f} | Time: {episode_time:.2f}s | Winner: {env.winner} | Epsilon: {agent.epsilon:.4f} | Avg Score (100): {avg_score:.2f} | Avg Len (100): {avg_length:.1f} | Avg Loss: {avg_loss:.4f}")
 
             # Save model weights periodically
             if e % SAVE_FREQ == 0:
@@ -217,12 +237,17 @@ if __name__ == "__main__":
         save_checkpoint(agent, e, emergency=True)
     except Exception as ex:
         print(f"\nTraining crashed with error: {ex}")
+        import traceback
+        traceback.print_exc() # Print full traceback for debugging
         save_checkpoint(agent, e, emergency=True)
         raise
     finally:
         # Save final weights and TF.js compatible model
         agent.save(MODEL_WEIGHTS_FILE)
-        agent.save_for_tfjs(TFJS_MODEL_FILE)
+        # Ensure the TFJS directory exists before saving
+        if not os.path.exists(TFJS_MODEL_DIR):
+             os.makedirs(TFJS_MODEL_DIR)
+        agent.save_for_tfjs(TFJS_MODEL_DIR) # Pass directory to save_for_tfjs
         print("\nFinal model weights saved.")
         print(f"To convert the model for TensorFlow.js, navigate to the directory containing '{TFJS_MODEL_DIR}' and run:")
-        print(f"tensorflowjs_converter --input_format=tf_saved_model --output_format=tfjs_layers_model {TFJS_MODEL_DIR} ./tfjs_final_model")
+        print(f"tensorflowjs_converter --input_format=tf_saved_model --output_format=tfjs_graph_model {TFJS_MODEL_DIR} ./tfjs_final_model")

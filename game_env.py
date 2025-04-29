@@ -211,14 +211,14 @@ class SwitcharooEnv:
                 prev_count = self._last_starting_row_counts[current_player_id]
                 if pieces_in_rows < prev_count:
                     # Give a bonus for moving a piece out
-                    reward += 10.0  # Heuristic bonus (tune as needed)
+                    reward += 2.0  # Reduced heuristic bonus
                 self._last_starting_row_counts[current_player_id] = pieces_in_rows
 
         # Check for win condition for the current player (using JIT with path finding)
         has_won, win_path = self.check_win_condition(ID_PLAYER_MAP[current_player_id])
         if has_won:
             self.winner_id = current_player_id
-            reward = 100.0 # Win reward
+            reward = 20.0 # Reduced win reward
             done = True
         else:
             # Switch player
@@ -237,11 +237,11 @@ class SwitcharooEnv:
                 reward = 0.0  # Base reward
                 
                 if move_type == 'swap':
-                    reward += 3.0  # Keep swap bonus
+                    reward += 1.0  # Reduced swap bonus
                 
                 # Position improvement reward
                 position_delta = _evaluate_board_jit(self.board, current_player_id) - current_score
-                reward += position_delta * 3.0
+                reward += position_delta * 1.0 # Reduced position delta multiplier
                 
                 done = False
 
@@ -252,7 +252,7 @@ class SwitcharooEnv:
         # If the game ended because the *other* player won (we lost)
         # This condition needs careful checking after player switch
         if done and self.winner_id != 0 and self.winner_id != 3 and self.winner_id != current_player_id:
-             reward = -100.0 # Make sure loss reward is applied correctly
+             reward = -20.0 # Reduced loss reward
 
         return next_state, reward, done, info
 

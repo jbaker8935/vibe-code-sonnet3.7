@@ -2,13 +2,13 @@
 import os
 
 # Training Phases Configuration
-PHASE1_EPISODES = 350000      # Episodes for Phase 1 (random opponent)
+PHASE1_EPISODES = 200000      # Episodes for Phase 1 (random opponent)
 PHASE2_EPISODES = 100000     # Episodes for Phase 2 (self-play)
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps per episode
-REPLAY_FREQUENCY = 4         # Frequency of replay buffer sampling
+REPLAY_FREQUENCY = 2         # Frequency of replay buffer sampling
 
 # Tournament Configuration
-TOURNAMENT_FREQ = 2500       # How often to run tournaments
+TOURNAMENT_FREQ = 2000       # How often to run tournaments
 NUM_VARIANTS = 4             # Number of agent variants for tournament
 NOISE_SCALE = 0.05          # Scale of Gaussian noise to apply to weights
 TOURNAMENT_MATCHES = 20      # Matches per pair in tournament

@@ -45,14 +45,14 @@ from binary_board import board_to_binary, binary_to_board
 
 class DQNAgent:
     def __init__(self, state_size=STATE_SIZE, action_size=ACTION_SIZE,
-                 learning_rate=1e-6,  # Reduced learning rate further
+                 learning_rate=2e-07,  # Reduced learning rate further
                  gamma=0.99, epsilon=1.0,
                  epsilon_decay=0.999, epsilon_min=0.01,
                  replay_buffer_size=100000, batch_size=64,
-                 target_update_freq=100,
+                 target_update_freq=250, # Increased target update frequency
                  gradient_clip_norm=1.0,
                  use_per=True,  # Flag to enable/disable PER
-                 per_alpha=0.5,  # Reduced priority exponent
+                 per_alpha=0.3,  # Reduced priority exponent
                  per_beta=0.4,   # Importance sampling exponent
                  per_beta_increment=0.001, # Annealing beta
                  per_epsilon=1e-6): # Small constant added to priorities
@@ -102,13 +102,15 @@ class DQNAgent:
         input_layer = layers.Input(shape=(self.state_size,))
 
         # Separate board and player inputs
-        board_input_raw = layers.Lambda(lambda x: x[:, :5])(input_layer)
-        player_input = layers.Lambda(lambda x: x[:, -1:])(input_layer)
+        board_input_raw = layers.Lambda(lambda x: x[:, :5], output_shape=(5,))(input_layer) # Added output_shape
+        player_input = layers.Lambda(lambda x: x[:, -1:], output_shape=(1,))(input_layer) # Added output_shape
 
         # Normalize the board input (scale uint32 values to ~[0, 1])
         # Using 2**32 - 1 which is the max uint32 value
-        max_uint32 = tf.constant(4294967295.0, dtype=tf.float32)
-        normalized_board_input = layers.Lambda(lambda x: x / max_uint32)(board_input_raw)
+        # Use a plain float literal instead of tf.constant to avoid serialization issues
+        max_uint32 = 4294967295.0
+        # The output shape of this lambda is the same as its input shape (5,)
+        normalized_board_input = layers.Lambda(lambda x: x / max_uint32, output_shape=(5,))(board_input_raw) # Added output_shape
 
         # Process normalized board input
         x1 = layers.Dense(64, activation='relu')(normalized_board_input)
@@ -130,8 +132,8 @@ class DQNAgent:
 
     def remember(self, state, action, reward, next_state, done):
         """Stores experience in the NumPy arrays and updates priority."""
-        # Clip reward to prevent instability
-        clipped_reward = np.clip(reward, -10.0, 10.0)
+        # Clip reward more aggressively to prevent instability
+        clipped_reward = np.clip(reward, -1.0, 1.0) # Changed clipping range
 
         # Set priority to 1.0 if PER is disabled or buffer is empty
         current_max_priority = 1.0

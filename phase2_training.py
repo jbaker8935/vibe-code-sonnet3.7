@@ -10,7 +10,7 @@ from dqn_agent import DQNAgent
 from env_const import (PLAYER_A, PLAYER_B, PLAYER_B_ID)
 from env_util import (_evaluate_board_jit, _calculate_progress_reward, _apply_move_jit) 
 from game_env import (SwitcharooEnv)
-from train_dqn import save_checkpoint, safe_replay
+from train_dqn import save_checkpoint
 from tournament import run_tournament
 from utils import _action_index_to_move, _validate_reward, init_wandb
 from config import (PHASE2_EPISODES, MAX_STEPS_PER_EPISODE, REPLAY_FREQUENCY,
@@ -73,8 +73,6 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 agent_steps += 1
 
                 train_start = time.time()
-                if len(agent) > agent.batch_size and agent_steps % REPLAY_FREQUENCY == 0:  # Use len(agent)
-                    safe_replay(agent)
                 train_time += time.time() - train_start
             else:
                 legal_actions = env.get_legal_action_indices(player=PLAYER_A)
@@ -100,9 +98,6 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 info['timeout'] = True
                 break
         
-        if len(agent) > agent.batch_size:  # Use len(agent)
-            safe_replay(agent)
-            
         if agent.epsilon > agent.epsilon_min:
             agent.epsilon *= agent.epsilon_decay
         
