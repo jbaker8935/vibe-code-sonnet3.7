@@ -219,6 +219,9 @@ class SwitcharooEnv:
         if has_won:
             self.winner_id = current_player_id
             reward = 20.0 # Reduced win reward
+            # Add quick win bonus
+            quick_win_bonus = max(0, 10 - self.step_count / 10)
+            reward += quick_win_bonus
             done = True
         else:
             # Switch player
@@ -230,7 +233,7 @@ class SwitcharooEnv:
             if not opponent_legal_moves:
                 # It's a draw/stalemate if the opponent has no moves
                 self.winner_id = 3 # Draw
-                reward = 0.0 # Draw reward
+                reward = -5.0 # Penalize draws
                 done = True
             else:
                 # Game continues - Modified reward structure

@@ -135,8 +135,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                     pass # No explicit reward setting here needed
                 else:
                     # Progress reward (consider if still needed/effective)
-                    # Reduced multiplier from 0.5 to 0.1
-                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 0.1 # Reduced multiplier
+                    # Reduced multiplier from 0.5 to 0.2
+                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 0.2 # Increased multiplier
                     reward += progress_reward
 
                 reward = _validate_reward(reward)
@@ -216,8 +216,9 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         if agent.epsilon > agent.epsilon_min:
             agent.epsilon *= agent_epsilon_decay
 
-        # Anneal opponent epsilon
+        # Anneal opponent epsilon (Standard annealing)
         opponent_epsilon = max(opponent_epsilon_end, opponent_epsilon * opponent_epsilon_decay)
+        # Removed the periodic random reset, standard annealing is preferred here.
 
         # Anneal PER beta
         agent.per_beta = min(1.0, agent.per_beta + agent.per_beta_increment)

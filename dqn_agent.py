@@ -133,7 +133,7 @@ class DQNAgent:
     def remember(self, state, action, reward, next_state, done):
         """Stores experience in the NumPy arrays and updates priority."""
         # Clip reward more aggressively to prevent instability
-        clipped_reward = np.clip(reward, -1.0, 1.0) # Changed clipping range
+        clipped_reward = np.clip(reward, -20.0, 20.0) # Adjust reward clipping range to match environment's reward scale
 
         # Set priority to 1.0 if PER is disabled or buffer is empty
         current_max_priority = 1.0

@@ -3,6 +3,7 @@ import os
 import argparse
 import cProfile
 import pstats
+import numpy as np
 
 from dqn_agent import DQNAgent
 from phase1_training import phase1_training
@@ -118,11 +119,13 @@ def main():
                     agent.load(BASE_MODEL_FILE)
 
                 # Phase 2: Tournament self-play
-                agent.epsilon = 0.01
-                agent.epsilon_decay = 1.0
+                agent.epsilon = 0.01 # Keep agent epsilon low for exploitation in Phase 2
+                agent.epsilon_decay = 1.0 # No further decay needed
                 agent.epsilon_min = 0.01
-                agent = phase2_training(agent, start_episode,
-                                     enable_wandb=not args.disable_wandb)
+
+                # Call phase2_training directly, without the extra loop
+                agent = phase2_training(agent, start_episode=start_episode, episodes=args.episodes,
+                                        enable_wandb=not args.disable_wandb)
 
                 print("Curriculum training completed successfully!")
 
