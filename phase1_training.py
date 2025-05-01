@@ -84,11 +84,11 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
     else:
         start_eps = 1.0
     opponent_epsilon_end = 0.01
-    opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / episodes)
+    opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / (episodes * 1.5)) # Slower decay
     opponent_epsilon = start_eps
 
-    # Adjust epsilon decay to reach min around 60% of episodes
-    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.60)) # Changed 0.75 to 0.60
+    # Adjust epsilon decay to reach min around 80% of episodes
+    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.80)) # Slower decay
 
     # Create dataset iterator outside the episode loop (or recreate periodically)
     # Only create if buffer has enough samples initially
