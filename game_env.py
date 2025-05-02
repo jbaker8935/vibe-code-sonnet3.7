@@ -233,7 +233,7 @@ class SwitcharooEnv:
             if not opponent_legal_moves:
                 # It's a draw/stalemate if the opponent has no moves
                 self.winner_id = 3 # Draw
-                reward = -5.0 # Penalize draws
+                reward = -10.0 # Penalize draws more heavily
                 done = True
             else:
                 # Game continues - Modified reward structure

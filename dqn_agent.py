@@ -49,7 +49,7 @@ class DQNAgent:
                  gamma=0.99, epsilon=1.0,
                  epsilon_decay=0.999, epsilon_min=0.01,
                  replay_buffer_size=100000, batch_size=64,
-                 target_update_freq=250, # Increased target update frequency
+                 target_update_freq=1000, # Increased target update frequency
                  gradient_clip_norm=1.0,
                  use_per=True,  # Flag to enable/disable PER
                  per_alpha=0.3,  # Reduced priority exponent
