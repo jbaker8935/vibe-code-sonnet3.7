@@ -74,6 +74,13 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
     train_times = deque(maxlen=100)
     losses_log = deque(maxlen=100)  # Log training loss
     best_avg_score = float('-inf')
+    
+    # Training stability monitoring
+    loss_trend = deque(maxlen=10)  # Track short-term loss trend
+    consecutive_loss_increases = 0
+    best_win_rate = 0.0
+    no_improvement_count = 0
+    initial_lr = agent.learning_rate
 
     log_freq = 10
     wandb_enabled = init_wandb(enable_wandb, "phase1_training_tfdata", agent)  # Updated project name
@@ -83,12 +90,15 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         start_eps = opponent_epsilon_start
     else:
         start_eps = 1.0
-    opponent_epsilon_end = 0.01
-    opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / (episodes * 1.5)) # Slower decay
+    opponent_epsilon_end = 0.1  # Increased minimum epsilon for opponent
+    # Slower opponent epsilon decay with square root curve
+    opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / (episodes * 2.5))
     opponent_epsilon = start_eps
 
-    # Adjust epsilon decay to reach min around 80% of episodes
-    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.80)) # Slower decay
+    # Adjust epsilon decay to reach min later in training
+    # Agent should explore more consistently
+    agent.epsilon_min = 0.15  # Increased minimum epsilon for better exploration
+    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.85))
 
     # Create dataset iterator outside the episode loop (or recreate periodically)
     # Only create if buffer has enough samples initially
@@ -102,6 +112,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         print(f"Waiting for buffer to reach batch size ({agent.batch_size}). Current size: {len(agent)}")
 
     total_agent_steps = 0  # Track total steps for training frequency
+    buffer_refresh_scheduled = False
 
     for e in range(start_episode, episodes + 1):
         move_time = train_time = 0
@@ -113,6 +124,15 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         episode_steps = 0  # Steps within the current episode
         episode_loss_sum = 0.0
         episode_train_count = 0
+
+        # Refresh part of the buffer if scheduled
+        if buffer_refresh_scheduled and e % 500 == 0:
+            if len(agent) >= agent.replay_buffer_size * 0.9:  # Buffer almost full
+                reset_size = int(agent.replay_buffer_size * 0.2)  # Reset 20% of buffer
+                start_idx = np.random.randint(0, agent.replay_buffer_size - reset_size)
+                agent.priorities[start_idx:start_idx+reset_size] = 1.0  # Reset priorities
+                print(f"Refreshed {reset_size} experiences in buffer at episode {e}")
+                buffer_refresh_scheduled = False
 
         for step in range(MAX_STEPS_PER_EPISODE):
             current_player = env.current_player
@@ -129,17 +149,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 next_state, reward, done, info = env.step(action)
                 next_state = next_state.astype(np.float32)  # Ensure float32
 
-                # --- Reward Shaping --- 
-                if done:
-                    # Base win/loss/draw rewards are now handled in the environment
-                    pass # No explicit reward setting here needed
-                else:
-                    # Progress reward (consider if still needed/effective)
-                    # Reduced multiplier from 0.5 to 0.2
-                    progress_reward = _calculate_progress_reward(env.board, PLAYER_B_ID) * 0.2 # Increased multiplier
-                    reward += progress_reward
-
-                reward = _validate_reward(reward)
+                reward = _validate_reward(reward) # Validate final reward from env
                 agent.remember(state, action, reward, next_state, done)
                 episode_reward += reward
                 total_agent_steps += 1
@@ -150,14 +160,13 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 if action is None:
                     break  # No moves for opponent, end episode
 
-                move_time += time.time() - step_start  # Log opponent move time? Or just agent?
+                move_time += time.time() - step_start
                 next_state, _, done, info = env.step(action)
-                next_state = next_state.astype(np.float32)  # Ensure float32
+                next_state = next_state.astype(np.float32)
 
             state = next_state
 
             # --- Training Step using tf.data ---
-            # Check if buffer is large enough and if it's time to train
             if len(agent) >= agent.batch_size and total_agent_steps % REPLAY_FREQUENCY == 0:
                 # Create iterator if it doesn't exist yet
                 if dataset_iterator is None:
@@ -169,7 +178,6 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 # Perform one training step
                 train_start = time.time()
                 try:
-                    # Get next batch from the dataset
                     batch_states, batch_actions, batch_rewards, batch_next_states, batch_dones, batch_weights, batch_indices = next(dataset_iterator)
 
                     # Perform the training step
@@ -186,39 +194,36 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                         episode_loss_sum += current_loss
                         episode_train_count += 1
 
-                    # Periodically update target network (moved inside training check)
+                    # Periodically update target network
                     agent.update_counter += 1
                     if agent.update_counter % agent.target_update_freq == 0:
                         agent.update_target_model()
 
                 except StopIteration:
-                    # Should not happen with infinite generator, but handle defensively
                     print("Warning: Dataset iterator exhausted unexpectedly. Recreating...")
                     dataset = agent.create_tf_dataset()
                     dataset_iterator = iter(dataset)
                 except Exception as train_e:
                     print(f"\nError during training step: {train_e}")
-                    # Optionally break or continue
                     import traceback
                     traceback.print_exc()
 
                 train_time += time.time() - train_start
 
             if done:
-                steps.append(episode_steps)  # Log agent steps per episode
+                steps.append(episode_steps)
                 train_times.append(train_time)
-                move_times.append(move_time)  # Check if move_time logging is correct
+                move_times.append(move_time)
                 break
 
         # --- End of Episode ---
 
-        # Anneal agent epsilon
+        # Anneal agent epsilon with minimum safeguard
         if agent.epsilon > agent.epsilon_min:
             agent.epsilon *= agent_epsilon_decay
 
-        # Anneal opponent epsilon (Standard annealing)
+        # Anneal opponent epsilon with min safeguard
         opponent_epsilon = max(opponent_epsilon_end, opponent_epsilon * opponent_epsilon_decay)
-        # Removed the periodic random reset, standard annealing is preferred here.
 
         # Anneal PER beta
         agent.per_beta = min(1.0, agent.per_beta + agent.per_beta_increment)
@@ -226,7 +231,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         # Log metrics
         scores.append(episode_reward)
         avg_loss = (episode_loss_sum / episode_train_count) if episode_train_count > 0 else 0.0
-        losses_log.append(avg_loss)  # Log average loss for the episode
+        losses_log.append(avg_loss)
+        loss_trend.append(avg_loss)
 
         if info.get('winner') == PLAYER_B:
             wins.append(1); losses.append(0); draws.append(0)
@@ -245,20 +251,61 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         avg_train_time = np.mean(train_times) if train_times else 0.0
         avg_rolling_loss = np.mean(losses_log) if losses_log else 0.0
 
+        # Loss trend analysis and learning rate adjustment
+        if len(loss_trend) >= 5:  # Need at least 5 data points
+            recent_loss_avg = np.mean(list(loss_trend)[-3:])
+            older_loss_avg = np.mean(list(loss_trend)[:-3])
+            
+            # Check for consistent loss increase (sign of instability)
+            if recent_loss_avg > older_loss_avg * 1.5:  # Loss increased by 50%+
+                consecutive_loss_increases += 1
+                
+                # If loss keeps increasing, reduce learning rate
+                if consecutive_loss_increases >= 3:
+                    old_lr = agent.learning_rate
+                    agent.learning_rate *= 0.8  # Reduce by 20%
+                    print(f"Episode {e}: Loss increasing, reducing learning rate: {old_lr:.2e} → {agent.learning_rate:.2e}")
+                    consecutive_loss_increases = 0
+                    
+                    # Also schedule buffer refresh
+                    buffer_refresh_scheduled = True
+                    
+                    # Recreate dataset with new learning rate
+                    dataset = agent.create_tf_dataset()
+                    dataset_iterator = iter(dataset)
+            else:
+                consecutive_loss_increases = 0
+
+        # Implement early stopping if win rate is not improving
+        if win_rate > best_win_rate:
+            best_win_rate = win_rate
+            no_improvement_count = 0
+        else:
+            no_improvement_count += 1
+            
+        # If win rate stalls for a long time, reset learning rate
+        if no_improvement_count >= 1000:
+            agent.learning_rate = initial_lr  # Reset to initial learning rate
+            print(f"Episode {e}: No improvement for 1000 episodes, resetting learning rate to {initial_lr:.2e}")
+            no_improvement_count = 0
+            dataset = agent.create_tf_dataset() 
+            dataset_iterator = iter(dataset)
+
         if wandb_enabled and e % log_freq == 0:
             try:
                 wandb.log({
                     "episode": e,
                     "episode_reward": episode_reward,
-                    "avg_score_100": avg_score,  # Rolling avg over 100 episodes
+                    "avg_score_100": avg_score,
                     "win_rate_100": win_rate,
                     "loss_rate_100": loss_rate,
                     "draw_rate_100": draw_rate,
                     "avg_steps_100": avg_steps,
-                    "avg_move_time_100": avg_move_time,  # Check if this metric is meaningful
-                    "avg_train_time_100": avg_train_time,  # Avg train time per episode
-                    "avg_loss_100": avg_rolling_loss,  # Rolling avg loss
+                    "avg_move_time_100": avg_move_time,
+                    "avg_train_time_100": avg_train_time,
+                    "avg_loss_100": avg_rolling_loss,
                     "epsilon": agent.epsilon,
+                    "learning_rate": agent.learning_rate,
                     "opponent_epsilon": opponent_epsilon,
                     "per_beta": agent.per_beta,
                     "memory_size": len(agent),
@@ -269,7 +316,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 print(f"\nWarning: Failed to log to wandb: {log_e}")
 
         # Save best model based on rolling average score
-        if avg_score > best_avg_score and len(scores) >= 50:  # Use rolling average
+        if avg_score > best_avg_score and len(scores) >= 50:
             best_avg_score = avg_score
             agent.save(BASE_MODEL_FILE)
             print(f"New best model saved with avg score (100 ep): {best_avg_score:.2f}")

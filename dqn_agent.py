@@ -45,17 +45,17 @@ from binary_board import board_to_binary, binary_to_board
 
 class DQNAgent:
     def __init__(self, state_size=STATE_SIZE, action_size=ACTION_SIZE,
-                 learning_rate=2e-07,  # Reduced learning rate further
+                 learning_rate=1e-7,  # Reduced default learning rate for stability
                  gamma=0.99, epsilon=1.0,
-                 epsilon_decay=0.999, epsilon_min=0.01,
+                 epsilon_decay=0.9995, epsilon_min=0.05,
                  replay_buffer_size=100000, batch_size=64,
-                 target_update_freq=1000, # Increased target update frequency
-                 gradient_clip_norm=1.0,
-                 use_per=True,  # Flag to enable/disable PER
-                 per_alpha=0.3,  # Reduced priority exponent
-                 per_beta=0.4,   # Importance sampling exponent
-                 per_beta_increment=0.001, # Annealing beta
-                 per_epsilon=1e-6): # Small constant added to priorities
+                 target_update_freq=500,
+                 gradient_clip_norm=0.5,  # Reduced clip norm for better stability
+                 use_per=True,
+                 per_alpha=0.6,  # Balanced priority exponent
+                 per_beta=0.4,
+                 per_beta_increment=0.001,
+                 per_epsilon=1e-6):
         self.state_size = state_size
         self.action_size = action_size
         self.replay_buffer_size = replay_buffer_size
@@ -68,6 +68,7 @@ class DQNAgent:
         self.next_states = np.zeros((replay_buffer_size, state_size), dtype=np.float32)
         self.dones = np.zeros(replay_buffer_size, dtype=np.float32)
         self.priorities = np.zeros(replay_buffer_size, dtype=np.float32)
+        self.experience_age = np.zeros(replay_buffer_size, dtype=np.int32)  # Track age of experiences
 
         self.memory_index = 0
         self.memory_full = False
@@ -79,17 +80,18 @@ class DQNAgent:
         self.learning_rate = learning_rate
         self.target_update_freq = target_update_freq
         self.update_counter = 0
+        self.gradient_clip_norm = gradient_clip_norm
 
-        self.use_per = use_per  # Store the flag
+        self.use_per = use_per
 
-        # PER parameters (only relevant if use_per is True)
+        # PER parameters
         self.per_alpha = per_alpha
         self.per_beta = per_beta
         self.per_beta_increment = per_beta_increment
         self.per_epsilon = per_epsilon
 
-        self.optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate, clipnorm=gradient_clip_norm)
-        self.loss_function = tf.keras.losses.Huber(reduction=tf.keras.losses.Reduction.NONE)
+        self.optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate, clipnorm=self.gradient_clip_norm)
+        self.loss_function = tf.keras.losses.Huber(delta=1.0, reduction=tf.keras.losses.Reduction.NONE)  # Lower delta for more stability
 
         print(f"Initializing DQNAgent with state_size: {self.state_size}")
 
@@ -132,8 +134,8 @@ class DQNAgent:
 
     def remember(self, state, action, reward, next_state, done):
         """Stores experience in the NumPy arrays and updates priority."""
-        # Clip reward more aggressively to prevent instability
-        clipped_reward = np.clip(reward, -20.0, 20.0) # Adjust reward clipping range to match environment's reward scale
+        # Clip reward to prevent instability from large updates
+        clipped_reward = np.clip(reward, -5.0, 5.0)  # Tighter clipping range
 
         # Set priority to 1.0 if PER is disabled or buffer is empty
         current_max_priority = 1.0
@@ -142,59 +144,67 @@ class DQNAgent:
 
         self.states[self.memory_index] = state
         self.actions[self.memory_index] = action
-        # Store the clipped reward
         self.rewards[self.memory_index] = clipped_reward
         self.next_states[self.memory_index] = next_state
         self.dones[self.memory_index] = float(done)
         self.priorities[self.memory_index] = current_max_priority
+        self.experience_age[self.memory_index] = 0  # New experience
+
+        # Age all other experiences
+        if self.memory_full:
+            self.experience_age = np.minimum(self.experience_age + 1, 1000)  # Cap age at 1000
 
         self.memory_index += 1
         if self.memory_index >= self.replay_buffer_size:
             self.memory_index = 0
             self.memory_full = True
 
-    def act(self, state, legal_actions_indices, top_k=3, log_q_values=False):
+    def act(self, state, legal_actions_indices, top_k=3, log_q_values=False): # Keep top_k for compatibility if needed elsewhere, but logic changes
         if not legal_actions_indices:
             print("Warning: No legal actions available in act method.")
-            return np.random.randint(self.action_size)
+            # Return a default valid action index if possible, or handle error
+            # For now, returning random from full action space if no legal moves provided
+            # This case should ideally be prevented by the caller
+            return np.random.randint(self.action_size) if self.action_size > 0 else 0
 
         if np.random.rand() <= self.epsilon:
+            # Exploration: Choose a random legal action
             return random.choice(legal_actions_indices)
         else:
+            # Exploitation: Choose the best legal action based on Q-values
             state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
             state_tensor = tf.expand_dims(state_tensor, 0)
-            act_values_raw = self.predict_batch(state_tensor)
+            act_values_raw = self.predict_batch(state_tensor) # Use predict_batch for consistency
             act_values = tf.cast(act_values_raw, tf.float32)
 
             q_values = act_values.numpy()[0]
+
+            # Handle potential NaN values in Q-values gracefully
             if np.isnan(q_values).any():
-                q_values = np.full(self.action_size, -np.inf, dtype=np.float32)
-                q_values[legal_actions_indices] = 0.0
+                # If Q-values are NaN, fall back to random choice among legal actions
+                # print("Warning: NaN detected in Q-values during act. Choosing randomly.")
+                return random.choice(legal_actions_indices)
 
-            randomness_threshold = 0.05 * max(q_values)
+            # Filter Q-values for legal actions only
+            # Create a mask for illegal actions, setting their Q-values to -infinity
+            q_values_masked = np.full(self.action_size, -np.inf, dtype=np.float32)
+            q_values_masked[legal_actions_indices] = q_values[legal_actions_indices]
 
-            legal_q_values = np.take(q_values, legal_actions_indices)
+            # Find the action index with the maximum Q-value among legal actions
+            best_action_index = np.argmax(q_values_masked)
 
-            if log_q_values:
-                print(f"Legal Q-values: {legal_q_values}")
-                print(f"Legal actions: {legal_actions_indices}")
-
-            sorted_indices = np.argsort(legal_q_values)[::-1]
-            sorted_legal_actions = [legal_actions_indices[i] for i in sorted_indices]
-            sorted_q_values = legal_q_values[sorted_indices]
-
-            top_k = min(top_k, len(sorted_legal_actions))
-            top_actions = sorted_legal_actions[:top_k]
-            top_q_values = sorted_q_values[:top_k]
+            # Ensure the chosen action is actually legal (should be guaranteed by masking)
+            if best_action_index not in legal_actions_indices:
+                 print(f"Warning: Best action {best_action_index} not in legal actions {legal_actions_indices}. Choosing randomly.")
+                 return random.choice(legal_actions_indices)
 
             if log_q_values:
-                print(f"Top-{top_k} Q-values: {top_q_values}")
-                print(f"Top-{top_k} actions: {top_actions}")
+                 legal_q_values = np.take(q_values, legal_actions_indices)
+                 print(f"Legal Q-values: {legal_q_values}")
+                 print(f"Legal actions: {legal_actions_indices}")
+                 print(f"Chosen action: {best_action_index} (Q-value: {q_values[best_action_index]})")
 
-            if len(top_q_values) > 1 and (top_q_values[0] - top_q_values[1]) < randomness_threshold:
-                return random.choice(top_actions)
-
-            return top_actions[0]
+            return best_action_index
 
     def _get_move_from_action(self, action_index):
         from game_env import DIRECTIONS, COLS, ROWS
@@ -217,30 +227,39 @@ class DQNAgent:
 
         return start_r, start_c, end_r, end_c
 
-    @tf.function # Re-enabled after debugging
+    @tf.function
     def _train_step(self, states, actions, rewards, next_states, dones, importance_weights):
         with tf.GradientTape() as tape:
             q_values = self.model(states, training=True)
             next_q_values_target = self.target_model(next_states, training=False)
             next_q_values_main = self.model(next_states, training=False)
 
+            # Double Q-learning
             next_actions = tf.argmax(next_q_values_main, axis=1, output_type=tf.int32)
             next_actions_one_hot = tf.one_hot(next_actions, self.action_size, dtype=tf.float32)
             target_next_q = tf.reduce_sum(next_q_values_target * next_actions_one_hot, axis=1)
 
+            # Cap target Q values to reduce overestimation
+            target_next_q = tf.clip_by_value(target_next_q, -10.0, 10.0)
+            
             target_q_values = rewards + self.gamma * target_next_q * (1.0 - dones)
+            target_q_values = tf.stop_gradient(target_q_values)
 
             actions_one_hot = tf.one_hot(actions, self.action_size, dtype=tf.float32)
             predicted_values = tf.reduce_sum(q_values * actions_one_hot, axis=1)
 
             td_errors = tf.abs(target_q_values - predicted_values)
+            
+            # Cap TD errors to prevent exploding gradients
+            td_errors = tf.clip_by_value(td_errors, 0.0, 10.0)
+            
             element_wise_loss = self.loss_function(target_q_values, predicted_values)
 
             # Use importance weights only if PER is enabled
             if self.use_per:
                 weighted_loss = element_wise_loss * importance_weights
             else:
-                weighted_loss = element_wise_loss # No weighting if PER is off
+                weighted_loss = element_wise_loss
 
             loss = tf.reduce_mean(weighted_loss)
 
@@ -249,6 +268,10 @@ class DQNAgent:
             return loss, tf.zeros_like(td_errors, dtype=tf.float32)
 
         grads = tape.gradient(loss, self.model.trainable_variables)
+        
+        # Explicitly clip gradients as an additional safety measure
+        grads = [tf.clip_by_norm(g, self.gradient_clip_norm) if g is not None else g for g in grads]
+        
         grads_have_nan_inf = tf.constant(False, dtype=tf.bool)
         for grad in grads:
             if grad is not None and grad.dtype.is_floating:
@@ -271,8 +294,15 @@ class DQNAgent:
 
             if self.use_per:
                 # --- PER Sampling Logic ---
+                # Add age-based prioritization: older experiences get lower priority
                 valid_priorities = self.priorities[:current_size].astype(np.float64)
-                scaled_priorities = np.power(valid_priorities + self.per_epsilon, self.per_alpha)
+                valid_ages = self.experience_age[:current_size].astype(np.float64)
+                
+                # Adjust priorities based on age - older experiences get reduced priority
+                age_factor = np.exp(-0.001 * valid_ages)  # Exponential decay with age
+                adjusted_priorities = valid_priorities * age_factor
+                
+                scaled_priorities = np.power(adjusted_priorities + self.per_epsilon, self.per_alpha)
                 prob_sum = np.sum(scaled_priorities)
 
                 if prob_sum <= 0:
