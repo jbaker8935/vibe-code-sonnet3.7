@@ -188,12 +188,40 @@ class SwitcharooEnv:
         move_type_code = _apply_move_jit(self.board, start_r, start_c, end_r, end_c)
         move_type = 'empty' if move_type_code == 1 else 'swap'
 
+        # --- EARLY GAME HEURISTIC REWARD ---
+        # Track early game move counts
+        self._early_game_move_counts[current_player_id] = self._early_game_move_counts.get(current_player_id, 0) + 1
+        # Only apply in first 12 moves by this player, and only if initial row had >=4 pieces
+        early_game_moves = self._early_game_move_counts[current_player_id]
+        if early_game_moves <= 12 and self._initial_starting_rows and self._initial_starting_rows[current_player_id] >= 4:
+            # For Player A: rows 6,7; for Player B: rows 0,1
+            if current_player_id == PLAYER_A_ID:
+                rows = self.board[6:8, :]
+                piece_types = (A_NORMAL, A_SWAPPED)
+            else:
+                rows = self.board[0:2, :]
+                piece_types = (B_NORMAL, B_SWAPPED)
+            # Count pieces in starting rows after move
+            pieces_in_rows = np.sum((rows == piece_types[0]) | (rows == piece_types[1]))
+            # Only apply if more than one piece remains in those rows
+            if pieces_in_rows > 1:
+                # Compare to previous count (before move)
+                if not hasattr(self, '_last_starting_row_counts'):
+                    self._last_starting_row_counts = {PLAYER_A_ID: self._initial_starting_rows[PLAYER_A_ID], PLAYER_B_ID: self._initial_starting_rows[PLAYER_B_ID]}
+                prev_count = self._last_starting_row_counts[current_player_id]
+                if pieces_in_rows < prev_count:
+                    # Give a bonus for moving a piece out
+                    reward += 2.0  # Reduced heuristic bonus
+                self._last_starting_row_counts[current_player_id] = pieces_in_rows
+
         # Check for win condition for the current player (using JIT with path finding)
         has_won, win_path = self.check_win_condition(ID_PLAYER_MAP[current_player_id])
         if has_won:
             self.winner_id = current_player_id
-            # Increased win reward significantly
-            reward = 200.0
+            reward = 20.0 # Reduced win reward
+            # Add quick win bonus
+            quick_win_bonus = max(0, 10 - self.step_count / 10)
+            reward += quick_win_bonus
             done = True
         else:
             # Switch player
@@ -205,12 +233,19 @@ class SwitcharooEnv:
             if not opponent_legal_moves:
                 # It's a draw/stalemate if the opponent has no moves
                 self.winner_id = 3 # Draw
-                # Increased draw penalty
-                reward = -25.0
+                reward = -10.0 # Penalize draws more heavily
                 done = True
             else:
-                # Game continues - Simplified reward structure
-                reward = 0.0
+                # Game continues - Modified reward structure
+                reward = 0.0  # Base reward
+                
+                if move_type == 'swap':
+                    reward += 1.0  # Reduced swap bonus
+                
+                # Position improvement reward
+                position_delta = _evaluate_board_jit(self.board, current_player_id) - current_score
+                reward += position_delta * 1.0 # Reduced position delta multiplier
+                
                 done = False
 
         next_state = self._get_state()
@@ -220,8 +255,7 @@ class SwitcharooEnv:
         # If the game ended because the *other* player won (we lost)
         # This condition needs careful checking after player switch
         if done and self.winner_id != 0 and self.winner_id != 3 and self.winner_id != current_player_id:
-             # Increased loss penalty significantly
-             reward = -50.0
+             reward = -20.0 # Reduced loss reward
 
         return next_state, reward, done, info
 

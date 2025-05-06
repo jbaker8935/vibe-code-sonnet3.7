@@ -26,31 +26,12 @@ CHECKPOINT_FILE = "switcharoo_dqn_checkpoint_e{}.weights.h5"  # Add episode numb
 TFJS_MODEL_DIR = "./switcharoo_tfjs_model" # Directory for SavedModel format
 
 def save_checkpoint(agent, episode, emergency=False):
-    """Save a checkpoint of the model."""
-    file_path = CHECKPOINT_FILE.format(episode)
-    try:
-        agent.save(file_path)
-        if emergency:
-            print(f"Emergency checkpoint saved at {file_path}")
-        else:
-            print(f"Checkpoint saved at {file_path}")
-    except Exception as e:
-        print(f"Error saving checkpoint: {e}")
-
-def reset_partial_buffer(agent, percentage=20):
-    """Reset a percentage of the replay buffer to prevent stale experiences."""
-    if not agent.memory_full and agent.memory_index < 100:
-        return  # Buffer too small to reset
-    
-    buffer_size = agent.replay_buffer_size if agent.memory_full else agent.memory_index
-    reset_size = int(buffer_size * percentage / 100)
-    start_idx = np.random.randint(0, buffer_size - reset_size)
-    
-    # Reset priorities for these experiences
-    agent.priorities[start_idx:start_idx+reset_size] = 1.0
-    
-    print(f"Reset priorities for {reset_size} experiences in replay buffer")
-    return start_idx, reset_size
+    """Save a checkpoint with the current episode number."""
+    filename = CHECKPOINT_FILE.format(episode)
+    agent.save(filename)
+    if emergency:
+        print(f"\nEmergency checkpoint saved to {filename}")
+    return filename
 
 # --- Opponent Policy (Player A) ---
 def get_opponent_action(env, opponent_epsilon=0.3):
