@@ -277,7 +277,6 @@ class DQNAgent:
         for grad in grads:
             if grad is not None and tf.reduce_any(tf.math.is_nan(grad) | tf.math.is_inf(grad)): # Check grad is not None
                 grads_have_nan_inf = tf.constant(True, dtype=tf.bool)
-                break
 
         if grads_have_nan_inf:
             tf.print("Warning: NaN or Inf detected in gradients. Skipping gradient update.") # Log message

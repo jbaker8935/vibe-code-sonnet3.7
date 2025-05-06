@@ -112,13 +112,13 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
     else:
         start_eps = 1.0
     # More aggressive epsilon decay - make opponent tougher faster
-    opponent_epsilon_end = 0.08  # Lower minimum epsilon for tougher opponent
-    opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / (episodes * 2.0))
+    opponent_epsilon_end = 0.05  # Lower minimum epsilon for tougher opponent (was 0.08)
+    opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / (episodes * 1.5)) # Faster decay (was 2.0)
     opponent_epsilon = start_eps
 
     # Adjust epsilon decay to reach min later in training
-    agent.epsilon_min = 0.1  # Reduced minimum epsilon for more exploitation
-    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.8))
+    agent.epsilon_min = 0.05  # Reduced minimum epsilon for more exploitation (was 0.1)
+    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.9)) # Slower decay (was 0.8)
 
     # Create dataset iterator outside the episode loop
     dataset_iterator = None
@@ -394,13 +394,13 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
             older_loss_avg = np.mean(list(loss_trend)[:-3])
             
             # Check for consistent loss increase (sign of instability)
-            if recent_loss_avg > older_loss_avg * 1.5:  # Loss increased by 50%+
+            if recent_loss_avg > older_loss_avg * 1.75:  # Loss increased by 75%+ (was 1.5)
                 consecutive_loss_increases += 1
                 
                 # If loss keeps increasing, reduce learning rate
-                if consecutive_loss_increases >= 3:
+                if consecutive_loss_increases >= 5: # Increased threshold (was 3)
                     old_lr = agent.learning_rate
-                    agent.learning_rate *= 0.8  # Reduce by 20%
+                    agent.learning_rate = max(old_lr * 0.9, 1e-8)  # Reduce by 10%, ensure it doesn't go to zero (was 0.8)
                     print(f"Episode {e}: Loss increasing, reducing learning rate: {old_lr:.2e} → {agent.learning_rate:.2e}")
                     consecutive_loss_increases = 0
                     

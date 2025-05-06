@@ -22,11 +22,11 @@ BEST_MODEL_FILE = "switcharoo_dqn_best_winrate.weights.h5"  # For best win rate 
 TFJS_MODEL_DIR = "./switcharoo_tfjs_model"
 
 # Rewards configuration - NEW!
-WIN_REWARD = 250.0           # Increased win reward
-DRAW_PENALTY = -150.0        # Stronger penalty for draws
-PROGRESS_REWARD = 0.5        # Small reward for making progress
-MOVE_TIMEOUT = 4             # Maximum repeats of similar board positions
-STEP_PENALTY = -0.25         # Penalty for each step taken
+WIN_REWARD = 350.0           # Increased win reward
+DRAW_PENALTY = -250.0        # Stronger penalty for draws
+PROGRESS_REWARD = 0.75       # Small reward for making progress
+MOVE_TIMEOUT = 3             # Maximum repeats of similar board positions (reduced)
+STEP_PENALTY = -0.4          # Penalty for each step taken (increased)
 
 # Weights & Biases configuration
 WANDB_PROJECT = "switcharoo-dqn"
