@@ -2,30 +2,37 @@
 import os
 
 # Training Phases Configuration
-PHASE1_EPISODES = 30000      # Reduced total episodes for Phase 1
-PHASE2_EPISODES = 20000     # Episodes for Phase 2 (self-play)
-MAX_STEPS_PER_EPISODE = 200  # Reduced maximum steps per episode 
-REPLAY_FREQUENCY = 4         # Less frequent updates for stability
+PHASE1_EPISODES = 30000      # Keep same episode count for Phase 1
+PHASE2_EPISODES = 25000      # Increase Phase 2 episodes for better learning
+MAX_STEPS_PER_EPISODE = 200  # Increased to allow more decisive play
+REPLAY_FREQUENCY = 4         # Keep same replay frequency
 
 # Tournament Configuration
-TOURNAMENT_FREQ = 2000       # How often to run tournaments
-NUM_VARIANTS = 4             # Number of agent variants for tournament
-NOISE_SCALE = 0.05          # Scale of Gaussian noise to apply to weights
-TOURNAMENT_MATCHES = 20      # Matches per pair in tournament
-SAVE_FREQ = 2000            # More frequent model saving
+TOURNAMENT_FREQ = 1000       # More frequent tournaments
+NUM_VARIANTS = 6             # Increase number of agent variants for diversity
+NOISE_SCALE = 0.08           # Increased noise for more exploration
+TOURNAMENT_MATCHES = 30      # More matches for better evaluation
+SAVE_FREQ = 2000             # Keep same save frequency
 
 # File paths for saving models
 BASE_MODEL_FILE = "switcharoo_dqn_curriculum_phase1.weights.h5"
 TOURNAMENT_MODEL_FILE = "switcharoo_dqn_tournament_best.weights.h5"
 CHECKPOINT_FILE = "switcharoo_dqn_checkpoint_e{}.weights.h5"
-BEST_MODEL_FILE = "switcharoo_dqn_best_winrate.weights.h5"  # New file for best win rate model
+BEST_MODEL_FILE = "switcharoo_dqn_best_winrate.weights.h5"  # For best win rate model
 TFJS_MODEL_DIR = "./switcharoo_tfjs_model"
+
+# Rewards configuration - NEW!
+WIN_REWARD = 250.0           # Increased win reward
+DRAW_PENALTY = -150.0        # Stronger penalty for draws
+PROGRESS_REWARD = 0.5        # Small reward for making progress
+MOVE_TIMEOUT = 4             # Maximum repeats of similar board positions
+STEP_PENALTY = -0.25         # Penalty for each step taken
 
 # Weights & Biases configuration
 WANDB_PROJECT = "switcharoo-dqn"
 WANDB_ENTITY = "farmerjohn1958-self"
 
-# Initial board positions
+# Keep existing initial positions but add more aggressive starting positions
 initial_position_base = [
     """\
 BBBB
@@ -101,4 +108,45 @@ A..A
 A..A"""
 ]
 
-initial_position = initial_position_base
+# Add new positions that encourage more aggressive, direct play
+initial_position_aggressive = [
+    """\
+B.B.
+B.B.
+....
+....
+....
+A.A.
+A.A.
+....""",
+    """\
+BB..
+....
+....
+....
+....
+....
+....
+AA..""",  
+    """\
+....
+.BB.
+.BB.
+....
+....
+.AA.
+.AA.
+....""",
+    """\
+B...
+.B..
+..B.
+...B
+A...
+.A..
+..A.
+...A"""
+]
+
+# Use a mix of standard and aggressive positions with more weight on aggressive ones
+initial_position = initial_position_base + initial_position_aggressive * 2

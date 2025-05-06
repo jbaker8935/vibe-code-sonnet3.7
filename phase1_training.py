@@ -5,20 +5,22 @@ from collections import deque  # Keep deque for metrics, not replay
 import wandb
 from random import choice
 import tensorflow as tf  # Import tensorflow
+import os  # For file path operations
 
-from env_const import (PLAYER_A, PLAYER_B, PLAYER_B_ID)
+from env_const import (PLAYER_A, PLAYER_B, PLAYER_A_ID, PLAYER_B_ID)
 from env_util import (_evaluate_board_jit, _calculate_progress_reward, _apply_move_jit)
 
 from game_env import (SwitcharooEnv)
-# Removed safe_replay import, using dataset now
-from train_dqn import save_checkpoint  # , safe_replay
+from train_dqn import save_checkpoint
 from utils import _action_index_to_move, _validate_reward, init_wandb
 from config import (PHASE1_EPISODES, MAX_STEPS_PER_EPISODE, REPLAY_FREQUENCY,
-                   BASE_MODEL_FILE, SAVE_FREQ, initial_position)
+                   BASE_MODEL_FILE, SAVE_FREQ, initial_position,
+                   WIN_REWARD, DRAW_PENALTY, PROGRESS_REWARD, MOVE_TIMEOUT,
+                   STEP_PENALTY)  # Added STEP_PENALTY
 from dqn_agent import DQNAgent
 
 def get_opponent_action_fast(board_state, legal_actions, opponent_epsilon):
-    """Ultra-fast opponent action selection."""
+    """Ultra-fast opponent action selection with a bias toward aggressive play."""
     if not legal_actions:  # Handle empty list
         return None
     if np.random.random() < opponent_epsilon:
@@ -27,7 +29,9 @@ def get_opponent_action_fast(board_state, legal_actions, opponent_epsilon):
 
     best_score = float('-inf')
     best_action = legal_actions[0]
-
+    
+    # Evaluate each action
+    action_scores = {}
     for action in legal_actions:
         board_copy = board_state.copy()
         move = _action_index_to_move(action)
@@ -35,32 +39,46 @@ def get_opponent_action_fast(board_state, legal_actions, opponent_epsilon):
             continue
 
         start_r, start_c, end_r, end_c = move
-        # Bounds check (redundant if legal_actions are truly legal, but safe)
-        if 0 <= start_r < 8 and 0 <= start_c < 8 and 0 <= end_r < 8 and 0 <= end_c < 8:
+        # Bounds check
+        if 0 <= start_r < 8 and 0 <= start_c < 4 and 0 <= end_r < 8 and 0 <= end_c < 4:
             _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
-            # Ensure PLAYER_B_ID is correct contextually
-            score = _evaluate_board_jit(board_copy, PLAYER_B_ID)
-
+            
+            # Basic board evaluation
+            score = _evaluate_board_jit(board_copy, PLAYER_A_ID)
+            
+            # Favor forward movement (more aggressive play)
+            if end_r > start_r:  # Moving toward opponent's side
+                progress_boost = (end_r - start_r) * 1.5  # Bigger boost for forward movement
+                score += progress_boost
+            
+            action_scores[action] = score
+            
             if score > best_score:
                 best_score = score
                 best_action = action
+    
+    # If we have very similar top actions, sometimes pick the more aggressive one
+    top_actions = [a for a, s in action_scores.items() 
+                  if s >= best_score - 1.0]  # Actions within 1.0 of best
+                  
+    if len(top_actions) > 1 and np.random.random() < 0.4:  # 40% chance to pick aggressive
+        # Find the action that moves furthest forward
+        most_aggressive = best_action
+        max_forward = -1
+        
+        for action in top_actions:
+            move = _action_index_to_move(action)
+            if move is None:
+                continue
+            start_r, start_c, end_r, end_c = move
+            forward_move = end_r - start_r  # Positive means moving down (forward for Player A)
+            if forward_move > max_forward:
+                max_forward = forward_move
+                most_aggressive = action
+        
+        return most_aggressive
 
     return best_action
-
-def get_opponent_action(env, opponent_epsilon=0.3):
-    """Improved policy for the opponent using JIT-compiled evaluation."""
-    legal_actions = env.get_legal_action_indices(player=PLAYER_A)
-    if not legal_actions:
-        return None
-
-    if np.random.random() < opponent_epsilon:
-        return np.random.choice(legal_actions)
-
-    # Consider evaluating more actions if performance allows
-    eval_actions = legal_actions  # Evaluate all legal actions
-
-    # Pass current board state directly
-    return get_opponent_action_fast(env.board, eval_actions, opponent_epsilon)
 
 def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wandb=True, opponent_epsilon_start=None):
     """Phase 1: Train against a progressively stronger opponent using tf.data."""
@@ -74,11 +92,14 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
     train_times = deque(maxlen=100)
     losses_log = deque(maxlen=100)  # Log training loss
     best_avg_score = float('-inf')
+    best_win_rate = 0.0
+    
+    # Track repeated positions to discourage stalemates
+    position_history = {}
     
     # Training stability monitoring
     loss_trend = deque(maxlen=10)  # Track short-term loss trend
     consecutive_loss_increases = 0
-    best_win_rate = 0.0
     no_improvement_count = 0
     initial_lr = agent.learning_rate
 
@@ -90,18 +111,16 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         start_eps = opponent_epsilon_start
     else:
         start_eps = 1.0
-    opponent_epsilon_end = 0.1  # Increased minimum epsilon for opponent
-    # Slower opponent epsilon decay with square root curve
-    opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / (episodes * 2.5))
+    # More aggressive epsilon decay - make opponent tougher faster
+    opponent_epsilon_end = 0.08  # Lower minimum epsilon for tougher opponent
+    opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / (episodes * 2.0))
     opponent_epsilon = start_eps
 
     # Adjust epsilon decay to reach min later in training
-    # Agent should explore more consistently
-    agent.epsilon_min = 0.15  # Increased minimum epsilon for better exploration
-    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.85))
+    agent.epsilon_min = 0.1  # Reduced minimum epsilon for more exploitation
+    agent_epsilon_decay = (agent.epsilon_min / agent.epsilon) ** (1 / (episodes * 0.8))
 
-    # Create dataset iterator outside the episode loop (or recreate periodically)
-    # Only create if buffer has enough samples initially
+    # Create dataset iterator outside the episode loop
     dataset_iterator = None
     if len(agent) >= agent.batch_size:
         print("Creating initial dataset iterator...")
@@ -118,13 +137,16 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         move_time = train_time = 0
         episode_start = time.time()
         state = env.reset(choice(initial_position))
-        # Ensure state is float32 from the start
         state = state.astype(np.float32)
         episode_reward = 0
         episode_steps = 0  # Steps within the current episode
         episode_loss_sum = 0.0
         episode_train_count = 0
-
+        
+        # Clear position history for new episode
+        if e % 100 == 0:  # Periodically clear to prevent memory bloat
+            position_history.clear()
+        
         # Refresh part of the buffer if scheduled
         if buffer_refresh_scheduled and e % 500 == 0:
             if len(agent) >= agent.replay_buffer_size * 0.9:  # Buffer almost full
@@ -137,26 +159,125 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         for step in range(MAX_STEPS_PER_EPISODE):
             current_player = env.current_player
             step_start = time.time()
+            
+            # Track position by converting to binary representation
+            from binary_board import board_to_binary
+            current_binary = tuple(map(int, board_to_binary(env.board)))  # Convert ndarray to tuple for hashing
+            position_key = f"{current_player}_{current_binary}"
+            
+            # Count position occurrences
+            if position_key in position_history:
+                position_history[position_key] += 1
+            else:
+                position_history[position_key] = 1
 
             action = None  # Initialize action
             if current_player == PLAYER_B:  # Agent's turn
                 legal_actions = env.get_legal_action_indices(player=PLAYER_B)
                 if not legal_actions:
                     break  # No moves for agent, end episode
-
+                
+                # Score and filter actions to encourage progress
+                filtered_actions = []
+                action_scores = {}
+                
+                for action in legal_actions:
+                    board_copy = env.board.copy()
+                    move = _action_index_to_move(action)
+                    if move is None:
+                        continue
+                        
+                    start_r, start_c, end_r, end_c = move
+                    if 0 <= start_r < 8 and 0 <= start_c < 4 and 0 <= end_r < 8 and 0 <= end_c < 4:
+                        _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
+                        
+                        # Evaluate based on board position
+                        score = _evaluate_board_jit(board_copy, PLAYER_B_ID)
+                        
+                        # Add progress incentive: reward moving toward opponent's side
+                        if start_r > end_r:  # Moving upward (toward Player A's side)
+                            progress = (start_r - end_r) * PROGRESS_REWARD
+                            score += progress
+                        
+                        # Penalize repetitive positions
+                        next_binary = tuple(map(int, board_to_binary(board_copy)))
+                        next_key = f"{PLAYER_B}_{next_binary}"
+                        if next_key in position_history and position_history[next_key] >= MOVE_TIMEOUT:
+                            score -= 20  # Significant penalty for repeated positions
+                        
+                        action_scores[action] = score
+                        
+                        # Only include reasonably good moves
+                        if score > -50:  # Filter threshold
+                            filtered_actions.append(action)
+                
+                # Use filtered actions unless none are good enough
+                action_pool = filtered_actions if filtered_actions else legal_actions
+                
                 # Agent acts
-                action = agent.act(state, legal_actions)
+                action = agent.act(state, action_pool)
                 next_state, reward, done, info = env.step(action)
                 next_state = next_state.astype(np.float32)  # Ensure float32
+                
+                # Apply reward modifications
+                original_reward = reward
+                
+                # Enhanced win reward scaled by speed
+                if done and info.get('winner') == PLAYER_B:
+                    # Scale win reward by how quickly the game was won
+                    speed_factor = 1.0 - (step / MAX_STEPS_PER_EPISODE) * 0.5
+                    reward = WIN_REWARD * speed_factor
+                
+                # Heavy penalty for draws/timeouts
+                if done and (info.get('winner') is None or info.get('winner') == 'DRAW'):
+                    reward = DRAW_PENALTY
+                
+                # Apply repetition penalty
+                pos_key = f"{PLAYER_B}_{current_binary}"
+                if pos_key in position_history and position_history[pos_key] > MOVE_TIMEOUT:
+                    reward -= 5.0  # Penalty for repeated positions
+                
+                # Apply step penalty
+                reward += STEP_PENALTY
 
-                reward = _validate_reward(reward) # Validate final reward from env
+                reward = _validate_reward(reward) # Validate final reward
                 agent.remember(state, action, reward, next_state, done)
                 episode_reward += reward
                 total_agent_steps += 1
                 episode_steps += 1
 
             else:  # Opponent's turn
-                action = get_opponent_action(env, opponent_epsilon=opponent_epsilon)
+                legal_actions = env.get_legal_action_indices(player=PLAYER_A)
+                if not legal_actions:
+                    break  # No moves for opponent, end episode
+                
+                # Filter actions for opponent to avoid repetitive play
+                if step > 10:  # Only after early game
+                    filtered_actions = []
+                    for act in legal_actions:
+                        board_copy = env.board.copy()
+                        move = _action_index_to_move(act)
+                        if move is None:
+                            continue
+                            
+                        start_r, start_c, end_r, end_c = move
+                        if 0 <= start_r < 8 and 0 <= start_c < 4 and 0 <= end_r < 8 and 0 <= end_c < 4:
+                            _apply_move_jit(board_copy, start_r, start_c, end_r, end_c)
+                            next_binary = tuple(map(int, board_to_binary(board_copy)))
+                            next_key = f"{PLAYER_A}_{next_binary}"
+                            
+                            # Skip highly repetitive positions
+                            if next_key in position_history and position_history[next_key] >= MOVE_TIMEOUT + 1:
+                                continue
+                                
+                            filtered_actions.append(act)
+                    
+                    # Use filtered actions unless all are filtered out
+                    action_pool = filtered_actions if filtered_actions else legal_actions
+                else:
+                    action_pool = legal_actions
+
+                action = get_opponent_action_fast(env.board, action_pool, opponent_epsilon)
                 if action is None:
                     break  # No moves for opponent, end episode
 
@@ -214,6 +335,22 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                 steps.append(episode_steps)
                 train_times.append(train_time)
                 move_times.append(move_time)
+                break
+                
+            # Force early end to prevent stalemates
+            if step >= MAX_STEPS_PER_EPISODE - 1:
+                done = True
+                # reward = DRAW_PENALTY  # Heavy penalty for timeouts. This is already applied if winner is DRAW
+                info['winner'] = 'DRAW'
+                info['timeout'] = True
+                
+                # Give the agent a negative reward if it's about to time out
+                if current_player == PLAYER_B:
+                    # Apply step penalty before final reward adjustment
+                    current_reward = STEP_PENALTY + DRAW_PENALTY 
+                    current_reward = _validate_reward(current_reward)
+                    agent.remember(state, action, current_reward, next_state, done)
+                    episode_reward += current_reward
                 break
 
         # --- End of Episode ---
@@ -276,20 +413,16 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
             else:
                 consecutive_loss_increases = 0
 
-        # Implement early stopping if win rate is not improving
-        if win_rate > best_win_rate:
+        # Track best win rate
+        if win_rate > best_win_rate and len(wins) >= 30:
             best_win_rate = win_rate
+            # Save model with best win rate
+            win_rate_model_file = f"phase1_best_winrate_{int(win_rate*100)}.weights.h5"
+            agent.save(win_rate_model_file)
+            print(f"New best win rate model: {win_rate:.3f}")
             no_improvement_count = 0
         else:
             no_improvement_count += 1
-            
-        # If win rate stalls for a long time, reset learning rate
-        if no_improvement_count >= 1000:
-            agent.learning_rate = initial_lr  # Reset to initial learning rate
-            print(f"Episode {e}: No improvement for 1000 episodes, resetting learning rate to {initial_lr:.2e}")
-            no_improvement_count = 0
-            dataset = agent.create_tf_dataset() 
-            dataset_iterator = iter(dataset)
 
         if wandb_enabled and e % log_freq == 0:
             try:
@@ -310,7 +443,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                     "per_beta": agent.per_beta,
                     "memory_size": len(agent),
                     "total_agent_steps": total_agent_steps,
-                    "time_per_episode": time.time() - episode_start
+                    "time_per_episode": time.time() - episode_start,
+                    "best_win_rate": best_win_rate
                 })
             except Exception as log_e:
                 print(f"\nWarning: Failed to log to wandb: {log_e}")
@@ -329,13 +463,12 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         if e % 100 == 0:
             print(f"Phase 1 - Ep: {e}/{episodes} | "
                   f"Avg Score: {avg_score:.2f} | "
-                  f"Avg Steps: {avg_steps:.2f} | "
-                  f"Avg Train Time: {avg_train_time:.4f} | "
-                  f"Avg Loss: {avg_rolling_loss:.4f} | "
                   f"Win Rate: {win_rate:.2f} | "
+                  f"Loss Rate: {loss_rate:.2f} | "  # Added Loss Rate
+                  f"Draw Rate: {draw_rate:.2f} | "
+                  f"Avg Steps: {avg_steps:.2f} | "
                   f"Epsilon: {agent.epsilon:.4f} | "
-                  f"Opp Epsilon: {opponent_epsilon:.4f} | "
-                  f"Buffer: {len(agent)}")
+                  f"Opp Epsilon: {opponent_epsilon:.4f}")
 
     # --- End of Training ---
     agent.save(BASE_MODEL_FILE)

@@ -257,15 +257,16 @@ class DQNAgent:
 
             # Use importance weights only if PER is enabled
             if self.use_per:
-                weighted_loss = element_wise_loss * importance_weights
+                weighted_loss = element_wise_loss * importance_weights # Added importance_weights usage
             else:
-                weighted_loss = element_wise_loss
+                weighted_loss = element_wise_loss # No weighting if PER is off
+            
 
             loss = tf.reduce_mean(weighted_loss)
 
         if tf.math.is_nan(loss) or tf.math.is_inf(loss):
             tf.print("Warning: NaN or Inf detected in loss. Skipping gradient update.")
-            return loss, tf.zeros_like(td_errors, dtype=tf.float32)
+            return loss, td_errors # Return loss and td_errors even if skipping update for PER
 
         grads = tape.gradient(loss, self.model.trainable_variables)
         
@@ -274,17 +275,17 @@ class DQNAgent:
         
         grads_have_nan_inf = tf.constant(False, dtype=tf.bool)
         for grad in grads:
-            if grad is not None and grad.dtype.is_floating:
-                is_invalid = tf.reduce_any(tf.math.is_nan(grad)) or tf.reduce_any(tf.math.is_inf(grad))
-                grads_have_nan_inf = grads_have_nan_inf or is_invalid
+            if grad is not None and tf.reduce_any(tf.math.is_nan(grad) | tf.math.is_inf(grad)): # Check grad is not None
+                grads_have_nan_inf = tf.constant(True, dtype=tf.bool)
+                break
 
         if grads_have_nan_inf:
-            tf.print("Warning: NaN or Inf detected in gradients. Skipping gradient update.")
-            return loss, tf.zeros_like(td_errors, dtype=tf.float32)
+            tf.print("Warning: NaN or Inf detected in gradients. Skipping gradient update.") # Log message
         else:
-            self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+            self.optimizer.apply_gradients(zip(grads, self.model.trainable_variables)) # Apply gradients
+            
 
-        return loss, td_errors
+        return loss, td_errors # Return loss and td_errors
 
     def _experience_generator(self):
         while True:
