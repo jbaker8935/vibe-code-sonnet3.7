@@ -70,9 +70,9 @@ def main():
                 # epsilon=1.0, # Use default from class
                 # epsilon_decay=.999, # Use default from class
                 # epsilon_min=0.01, # Use default from class
-                replay_buffer_size=250000,
+                # replay_buffer_size=250000,  # Use default from class
                 batch_size=128,
-                target_update_freq=200,
+                target_update_freq=500,  # Consistent with modified training plan for stability
                 use_per=True # Re-enable PER with adjusted alpha
             )
 

@@ -45,16 +45,16 @@ from binary_board import board_to_binary, binary_to_board
 
 class DQNAgent:
     def __init__(self, state_size=STATE_SIZE, action_size=ACTION_SIZE,
-                 learning_rate=2e-07,  # Reduced learning rate further
-                 gamma=0.99, epsilon=1.0,
-                 epsilon_decay=0.999, epsilon_min=0.01,
-                 replay_buffer_size=100000, batch_size=64,
-                 target_update_freq=1000, # Increased target update frequency
+                 learning_rate=1e-6,  # Initial learning rate, consider decay in later episodes
+                 gamma=0.95, epsilon=1.0,  # Reduced gamma to lessen focus on distant rewards
+                 epsilon_decay=0.995, epsilon_min=0.05,  # Faster decay to reduce exploration earlier
+                 replay_buffer_size=50000, batch_size=64,  # Reduced buffer size to focus on recent experiences
+                 target_update_freq=500,  # More frequent updates for stability
                  gradient_clip_norm=1.0,
                  use_per=True,  # Flag to enable/disable PER
-                 per_alpha=0.3,  # Reduced priority exponent
+                 per_alpha=0.5,  # Increased priority exponent for balanced sampling
                  per_beta=0.4,   # Importance sampling exponent
-                 per_beta_increment=0.001, # Annealing beta
+                 per_beta_increment=0.002, # Faster annealing beta for late-stage adjustment
                  per_epsilon=1e-6): # Small constant added to priorities
         self.state_size = state_size
         self.action_size = action_size

@@ -7,6 +7,11 @@ PHASE2_EPISODES = 20000     # Episodes for Phase 2 (self-play)
 MAX_STEPS_PER_EPISODE = 300  # Maximum steps per episode
 REPLAY_FREQUENCY = 2         # Frequency of replay buffer sampling
 
+# Learning rate decay and opponent epsilon cap configuration
+EPISODE_THRESHOLD = 28000  # Episode threshold for learning rate decay and opponent epsilon cap
+NEW_LR = 5e-7  # New learning rate after threshold
+OPPONENT_EPSILON_CAP = 0.4  # Cap for opponent epsilon after threshold
+
 # Tournament Configuration
 TOURNAMENT_FREQ = 2000       # How often to run tournaments
 NUM_VARIANTS = 4             # Number of agent variants for tournament
@@ -99,5 +104,7 @@ A..A
 .BB.
 A..A"""
 ]
+
+
 
 initial_position = initial_position_base

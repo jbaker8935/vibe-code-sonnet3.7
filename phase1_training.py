@@ -14,7 +14,7 @@ from game_env import (SwitcharooEnv)
 from train_dqn import save_checkpoint  # , safe_replay
 from utils import _action_index_to_move, _validate_reward, init_wandb
 from config import (PHASE1_EPISODES, MAX_STEPS_PER_EPISODE, REPLAY_FREQUENCY,
-                   BASE_MODEL_FILE, SAVE_FREQ, initial_position)
+                   BASE_MODEL_FILE, SAVE_FREQ, initial_position, EPISODE_THRESHOLD, NEW_LR, OPPONENT_EPSILON_CAP)
 from dqn_agent import DQNAgent
 
 def get_opponent_action_fast(board_state, legal_actions, opponent_epsilon):
@@ -83,7 +83,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         start_eps = opponent_epsilon_start
     else:
         start_eps = 1.0
-    opponent_epsilon_end = 0.01
+    opponent_epsilon_end = 0.1  # Less aggressive opponent difficulty progression
     opponent_epsilon_decay = (opponent_epsilon_end / start_eps) ** (1 / (episodes * 1.5)) # Slower decay
     opponent_epsilon = start_eps
 
@@ -190,6 +190,15 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                     agent.update_counter += 1
                     if agent.update_counter % agent.target_update_freq == 0:
                         agent.update_target_model()
+                    
+                    # Learning rate decay after episode threshold
+                    if e >= EPISODE_THRESHOLD:
+                        agent.optimizer.learning_rate.assign(NEW_LR)
+                        # print(f"Learning rate decayed to {NEW_LR} at episode {e}")
+                        # Adjust target update frequency for stability
+                        if agent.target_update_freq != 300:
+                            agent.target_update_freq = 300
+                            print(f"Target update frequency adjusted to {agent.target_update_freq} at episode {e}")
 
                 except StopIteration:
                     # Should not happen with infinite generator, but handle defensively
@@ -216,9 +225,11 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         if agent.epsilon > agent.epsilon_min:
             agent.epsilon *= agent_epsilon_decay
 
-        # Anneal opponent epsilon (Standard annealing)
-        opponent_epsilon = max(opponent_epsilon_end, opponent_epsilon * opponent_epsilon_decay)
-        # Removed the periodic random reset, standard annealing is preferred here.
+        # Anneal opponent epsilon with a cap after episode threshold
+        if e < EPISODE_THRESHOLD:
+            opponent_epsilon = max(opponent_epsilon_end, opponent_epsilon * opponent_epsilon_decay)
+        else:
+            opponent_epsilon = max(OPPONENT_EPSILON_CAP, opponent_epsilon * opponent_epsilon_decay)  # Cap after threshold
 
         # Anneal PER beta
         agent.per_beta = min(1.0, agent.per_beta + agent.per_beta_increment)
@@ -278,6 +289,22 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         if e % SAVE_FREQ == 0:
             save_checkpoint(agent, e)
 
+        # More aggressive learning rate decay and higher epsilon spike
+        if e % 5000 == 0 and e > 0:
+            # Decay learning rate more aggressively
+            new_lr = max(agent.optimizer.learning_rate.numpy() * 0.1, 1e-8)
+            agent.optimizer.learning_rate.assign(new_lr)
+            print(f"Learning rate decayed to {new_lr} at episode {e}")
+
+            # Spike epsilon higher for more exploration
+            agent.epsilon = max(agent.epsilon, 0.4)
+            print(f"Epsilon spiked to {agent.epsilon} at episode {e}")
+
+        # Periodically refresh part of the replay buffer if supported
+        if hasattr(agent, 'clear_buffer_portion') and e % 10000 == 0 and e > 0:
+            agent.clear_buffer_portion(0.5)  # Clear 50% of buffer
+            print(f"Cleared 50% of replay buffer at episode {e}")
+
         # Console logging
         if e % 100 == 0:
             print(f"Phase 1 - Ep: {e}/{episodes} | "
@@ -286,6 +313,8 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                   f"Avg Train Time: {avg_train_time:.4f} | "
                   f"Avg Loss: {avg_rolling_loss:.4f} | "
                   f"Win Rate: {win_rate:.2f} | "
+                  f"Loss Rate: {loss_rate:.2f} | "
+                  f"Draw Rate: {draw_rate:.2f} | "
                   f"Epsilon: {agent.epsilon:.4f} | "
                   f"Opp Epsilon: {opponent_epsilon:.4f} | "
                   f"Buffer: {len(agent)}")

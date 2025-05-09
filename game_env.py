@@ -218,7 +218,7 @@ class SwitcharooEnv:
         has_won, win_path = self.check_win_condition(ID_PLAYER_MAP[current_player_id])
         if has_won:
             self.winner_id = current_player_id
-            reward = 20.0 # Reduced win reward
+            reward = 15.0 # Further reduced win reward for balance
             # Add quick win bonus
             quick_win_bonus = max(0, 10 - self.step_count / 10)
             reward += quick_win_bonus
@@ -244,7 +244,7 @@ class SwitcharooEnv:
                 
                 # Position improvement reward
                 position_delta = _evaluate_board_jit(self.board, current_player_id) - current_score
-                reward += position_delta * 1.0 # Reduced position delta multiplier
+                reward += position_delta * 0.5 # Further reduced position delta multiplier for balance
                 
                 done = False
 
@@ -255,7 +255,7 @@ class SwitcharooEnv:
         # If the game ended because the *other* player won (we lost)
         # This condition needs careful checking after player switch
         if done and self.winner_id != 0 and self.winner_id != 3 and self.winner_id != current_player_id:
-             reward = -20.0 # Reduced loss reward
+             reward = -15.0 # Further reduced loss reward for balance
 
         return next_state, reward, done, info
 
