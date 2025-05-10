@@ -119,9 +119,9 @@ def main():
                     agent.load(BASE_MODEL_FILE)
 
                 # Phase 2: Tournament self-play
-                agent.epsilon = 0.01 # Keep agent epsilon low for exploitation in Phase 2
+                agent.epsilon = 0.05 # Keep agent epsilon low for exploitation in Phase 2
                 agent.epsilon_decay = 1.0 # No further decay needed
-                agent.epsilon_min = 0.01
+                agent.epsilon_min = 0.05
 
                 # Call phase2_training directly, without the extra loop
                 agent = phase2_training(agent, start_episode=start_episode, episodes=args.episodes,

@@ -45,7 +45,7 @@ from binary_board import board_to_binary, binary_to_board
 
 class DQNAgent:
     def __init__(self, state_size=STATE_SIZE, action_size=ACTION_SIZE,
-                 learning_rate=1e-6,  # Initial learning rate, consider decay in later episodes
+                 learning_rate=0.00025,  # Initial learning rate, consider decay in later episodes
                  gamma=0.95, epsilon=1.0,  # Reduced gamma to lessen focus on distant rewards
                  epsilon_decay=0.995, epsilon_min=0.05,  # Faster decay to reduce exploration earlier
                  replay_buffer_size=50000, batch_size=64,  # Reduced buffer size to focus on recent experiences

@@ -6,6 +6,10 @@ from game_env import SwitcharooEnv, PLAYER_A, PLAYER_B
 from config import (initial_position, NUM_VARIANTS, TOURNAMENT_MATCHES, 
                    MAX_STEPS_PER_EPISODE, NOISE_SCALE, TOURNAMENT_MODEL_FILE)
 from dqn_agent import DQNAgent # Import DQNAgent to use its class definition
+import os
+from tensorflow import keras
+import argparse
+from time import sleep
 
 def create_agent_variant(base_agent, noise_scale=NOISE_SCALE, epsilon=0.0):
     """Create a variant of the base agent by adding Gaussian noise to its weights."""
@@ -126,3 +130,81 @@ def run_tournament(base_agent, num_variants=NUM_VARIANTS, matches_per_pair=TOURN
         print(f"Variant {i}: {score} points")
     
     return variants[best_idx], best_score, total_matches
+
+def run_pretrained_tournament(models_dir, matches_per_pair=10, max_steps=MAX_STEPS_PER_EPISODE):
+    """Run a round-robin tournament between agents loaded from .h5 files in a directory, with progress bar."""
+    # Find all .h5 files in the directory
+    model_files = [f for f in os.listdir(models_dir) if f.endswith('.h5')]
+    if not model_files:
+        print(f"No .h5 model files found in {models_dir}")
+        return
+    print(f"Found {len(model_files)} models: {model_files}")
+
+    # Load all agents
+    agents = []
+    for fname in model_files:
+        agent = DQNAgent()
+        agent.load(models_dir + '/' + fname)
+        agent.epsilon = 0.01  # Ensure evaluation mode
+        agents.append((fname, agent))
+
+    n = len(agents)
+    scores = {fname: 0 for fname, _ in agents}
+    env = SwitcharooEnv()
+    total_matches = 0
+    total_pairings = n * (n - 1)
+    total_pair_matches = matches_per_pair * 2
+    total_expected_matches = (n * (n - 1) // 2) * total_pair_matches
+    match_counter = 0
+
+    def print_progress(agent1, agent2, match_num, total, reverse=False):
+        bar_len = 30
+        filled_len = int(round(bar_len * match_num / float(total)))
+        bar = '=' * filled_len + '-' * (bar_len - filled_len)
+        pos = "(reversed)" if reverse else ""
+        print(f"\r[{bar}] {match_num}/{total}  {agent1} vs {agent2} {pos} ", end='', flush=True)
+
+    for i in range(n):
+        for j in range(i+1, n):
+            agent_a_name, agent_a = agents[i]
+            agent_b_name, agent_b = agents[j]
+            # Normal position
+            for m in range(1, matches_per_pair + 1):
+                print_progress(agent_a_name, agent_b_name, m, matches_per_pair, reverse=False)
+                winner = run_match(env, agent_a, agent_b, max_steps)
+                if winner == PLAYER_A:
+                    scores[agent_a_name] += 1
+                elif winner == PLAYER_B:
+                    scores[agent_b_name] += 1
+                total_matches += 1
+            print()  # Newline after progress bar
+            # Reversed position
+            for m in range(1, matches_per_pair + 1):
+                print_progress(agent_b_name, agent_a_name, m, matches_per_pair, reverse=True)
+                winner = run_match(env, agent_b, agent_a, max_steps)
+                if winner == PLAYER_A:
+                    scores[agent_b_name] += 1
+                elif winner == PLAYER_B:
+                    scores[agent_a_name] += 1
+                total_matches += 1
+            print()  # Newline after progress bar
+
+    print(f"Tournament completed: {total_matches} matches played")
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    print("Results:")
+    for fname, score in sorted_scores:
+        print(f"{fname}: {score} points")
+    print(f"Winner: {sorted_scores[0][0]} with {sorted_scores[0][1]} points")
+    return sorted_scores
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Switcharoo Tournament Runner")
+    parser.add_argument('--pretrained_tournament', action='store_true', help='Run round-robin tournament between all .h5 agents in a directory')
+    parser.add_argument('--models_dir', type=str, default='.', help='Directory containing .h5 agent files')
+    parser.add_argument('--matches_per_pair', type=int, default=10, help='Matches per agent pair (per side)')
+    args = parser.parse_args()
+
+    if args.pretrained_tournament:
+        run_pretrained_tournament(args.models_dir, args.matches_per_pair)
+    else:
+        print("No mode selected. Use --pretrained_tournament to run a round-robin tournament.")

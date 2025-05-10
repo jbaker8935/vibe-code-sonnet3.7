@@ -5,6 +5,7 @@ import numpy as np
 from collections import deque
 import wandb
 from random import choice
+import random
 
 from dqn_agent import DQNAgent
 from env_const import (PLAYER_A, PLAYER_B, PLAYER_B_ID)
@@ -31,8 +32,49 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
     steps = deque(maxlen=100)
     move_times = deque(maxlen=100)
     train_times = deque(maxlen=100)
-
+    
+    # --- 1. Replay Buffer Pre-fill ---
+    if len(agent) < agent.batch_size * 10:
+        print("Pre-filling replay buffer with self-play...")
+        for _ in range(agent.batch_size * 10):
+            state = env.reset(choice(initial_position))
+            legal_actions = env.get_legal_action_indices(player=PLAYER_B)
+            if legal_actions:
+                action = random.choice(legal_actions)
+                next_state, reward, done, info = env.step(action)
+                agent.remember(state, action, reward, next_state, done)
+    
+    # --- 2. Epsilon: Higher min, periodic spikes ---
+    agent.epsilon_min = 0.05
+    epsilon_spike_every = 1000
+    epsilon_spike_value = 0.2
+    epsilon_spike_duration = 10
+    epsilon_spike_counter = 0
+    
+    # --- 4. Learning Rate Decay ---
+    initial_lr = agent.learning_rate
+    min_lr = 1e-5
+    lr_decay_every = 2000
+    lr_decay_factor = 0.5
+    
     for e in range(start_episode, episodes + 1):
+        # --- Epsilon spike logic ---
+        if e % epsilon_spike_every == 0:
+            agent.epsilon = epsilon_spike_value
+            epsilon_spike_counter = epsilon_spike_duration
+        elif epsilon_spike_counter > 0:
+            epsilon_spike_counter -= 1
+        elif agent.epsilon > agent.epsilon_min:
+            agent.epsilon *= agent.epsilon_decay
+            agent.epsilon = max(agent.epsilon, agent.epsilon_min)
+        
+        # --- Learning rate decay logic ---
+        if e % lr_decay_every == 0 and agent.learning_rate > min_lr:
+            agent.learning_rate = max(agent.learning_rate * lr_decay_factor, min_lr)
+            if hasattr(agent.optimizer, 'lr'):
+                agent.optimizer.lr.assign(agent.learning_rate)
+            print(f"Decayed learning rate to {agent.learning_rate}")
+        
         move_time = train_time = 0
         episode_start = time.time()
         state = env.reset(choice(initial_position))
@@ -98,9 +140,6 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 info['timeout'] = True
                 break
         
-        if agent.epsilon > agent.epsilon_min:
-            agent.epsilon *= agent.epsilon_decay
-        
         scores.append(episode_reward)
         if info.get('winner') == PLAYER_B:
             wins.append(1)
@@ -150,13 +189,17 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
             pre_weights = agent.model.get_weights()
             best_agent, tournament_best_score, tournament_matches = run_tournament(agent, direct_phase2=direct_phase2)
             best_weights = best_agent.model.get_weights()
-            blend_rate = 0.2
-            new_weights = [pw * (1 - blend_rate) + bw * blend_rate 
-                         for pw, bw in zip(pre_weights, best_weights)]
-            agent.model.set_weights(new_weights)
+            # --- 3. Adaptive blend: Only blend if best agent is better ---
+            if tournament_best_score > 0:
+                blend_rate = max(0.2 * (1 - e / episodes), 0.05)  # Decrease blend rate over time
+                new_weights = [pw * (1 - blend_rate) + bw * blend_rate 
+                             for pw, bw in zip(pre_weights, best_weights)]
+                agent.model.set_weights(new_weights)
+                print(f"Tournament completed - updated agents with blended weights (blend_rate={blend_rate:.3f})")
+            else:
+                print(f"Tournament completed - no blending (best agent not better)")
             tournament_agent = copy.deepcopy(agent)
             tournament_agent.save(TOURNAMENT_MODEL_FILE)
-            print(f"Tournament completed - updated agents with blended weights")
             
             if wandb_enabled:
                 try:
@@ -165,8 +208,8 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                         "tournament_best_score": tournament_best_score,
                         "tournament_matches": tournament_matches
                     })
-                except Exception as e:
-                    print(f"\nWarning: Failed to log tournament metrics to wandb: {e}")
+                except Exception as ex:
+                    print(f"\nWarning: Failed to log tournament metrics to wandb: {ex}")
                     wandb_enabled = False
         
         if e % SAVE_FREQ == 0:
@@ -200,9 +243,9 @@ def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_fil
     
     agent = DQNAgent(
         learning_rate=0.00025,
-        epsilon=0.01,
+        epsilon=0.05,
         epsilon_decay=1.0,
-        epsilon_min=0.01,
+        epsilon_min=0.05,
         replay_buffer_size=500000,
         batch_size=64,
         target_update_freq=100
