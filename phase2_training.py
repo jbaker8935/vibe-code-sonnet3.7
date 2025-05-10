@@ -46,6 +46,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
     
     # --- 2. Epsilon: Higher min, periodic spikes ---
     agent.epsilon_min = 0.05
+    agent.epsilon_decay = 0.995  # Ensure correct decay rate for Phase 2
     epsilon_spike_every = 1000
     epsilon_spike_value = 0.2
     epsilon_spike_duration = 10
@@ -58,12 +59,13 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
     lr_decay_factor = 0.5
     
     for e in range(start_episode, episodes + 1):
-        # --- Epsilon spike logic ---
-        if e % epsilon_spike_every == 0:
+        # --- Epsilon spike logic (corrected order) ---
+        if epsilon_spike_counter > 0:
             agent.epsilon = epsilon_spike_value
-            epsilon_spike_counter = epsilon_spike_duration
-        elif epsilon_spike_counter > 0:
             epsilon_spike_counter -= 1
+        elif e % epsilon_spike_every == 0:
+            epsilon_spike_counter = epsilon_spike_duration
+            agent.epsilon = epsilon_spike_value
         elif agent.epsilon > agent.epsilon_min:
             agent.epsilon *= agent.epsilon_decay
             agent.epsilon = max(agent.epsilon, agent.epsilon_min)
@@ -124,7 +126,6 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
                 action = tournament_agent.act(state, legal_actions)
                 next_state, reward, done, info = env.step(action)
             
-            move_time += time.time() - step_start
             state = next_state
             
             if done:
@@ -244,7 +245,7 @@ def direct_phase2_training(model_file, episodes=PHASE2_EPISODES, final_model_fil
     agent = DQNAgent(
         learning_rate=0.00025,
         epsilon=0.05,
-        epsilon_decay=1.0,
+        epsilon_decay=0.995,  # Changed from 1.0 to enable decay
         epsilon_min=0.05,
         replay_buffer_size=500000,
         batch_size=64,
