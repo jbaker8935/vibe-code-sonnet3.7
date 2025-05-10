@@ -348,6 +348,51 @@ class DQNAgent:
         new_priorities = np.abs(td_errors_in_bounds) + self.per_epsilon
         self.priorities[indices_in_bounds] = new_priorities
 
+    def clear_buffer_portion(self, portion=0.5):
+        """Clear a portion of the replay buffer, keeping the most recent experiences."""
+        if not (0 < portion < 1):
+            print(f"clear_buffer_portion: Portion must be between 0 and 1, got {portion}. No action taken.")
+            return
+        current_size = self.replay_buffer_size if self.memory_full else self.memory_index
+        if current_size == 0:
+            print("clear_buffer_portion: Buffer is empty. No action taken.")
+            return
+        # Number of experiences to keep
+        keep_count = int(current_size * (1 - portion))
+        if keep_count == 0:
+            print("clear_buffer_portion: Portion too large, would clear all buffer. No action taken.")
+            return
+        # Indices of experiences to keep (most recent)
+        if self.memory_full:
+            # Buffer is full, so wrap-around
+            start_idx = (self.memory_index - keep_count) % self.replay_buffer_size
+            if start_idx < self.memory_index:
+                # No wrap
+                indices = np.arange(start_idx, self.memory_index)
+            else:
+                # Wraps around
+                indices = np.concatenate((np.arange(start_idx, self.replay_buffer_size), np.arange(0, self.memory_index)))
+        else:
+            indices = np.arange(self.memory_index - keep_count, self.memory_index)
+        # Copy kept experiences to the start of the buffer
+        self.states[:keep_count] = self.states[indices]
+        self.actions[:keep_count] = self.actions[indices]
+        self.rewards[:keep_count] = self.rewards[indices]
+        self.next_states[:keep_count] = self.next_states[indices]
+        self.dones[:keep_count] = self.dones[indices]
+        self.priorities[:keep_count] = self.priorities[indices]
+        # Reset buffer pointers
+        self.memory_index = keep_count
+        self.memory_full = False
+        # Zero out the rest (optional, for debugging)
+        self.states[keep_count:] = 0
+        self.actions[keep_count:] = 0
+        self.rewards[keep_count:] = 0
+        self.next_states[keep_count:] = 0
+        self.dones[keep_count:] = 0
+        self.priorities[keep_count:] = 0
+        print(f"Cleared {portion*100:.1f}% of replay buffer, kept {keep_count} most recent experiences.")
+
     @tf.function
     def predict_batch(self, states_tensor):
         return self.model(states_tensor, training=False)
