@@ -113,7 +113,7 @@ NUM_SIMULATIONS_PER_MOVE = 25  # Number of MCTS simulations to run for each move
 C_PUCT_CONSTANT = 1.0           # Exploration constant in PUCT formula
 TEMPERATURE_START = 1.0         # Initial temperature for move selection in self-play (higher for exploration)
 TEMPERATURE_END = 0.1           # Final temperature for move selection (lower for exploitation)
-TEMPERATURE_ANNEAL_STEPS = 1000 # Number of steps over which to anneal temperature (Reduced from 500000)
+TEMPERATURE_ANNEAL_STEPS = 50000 # Number of steps over which to anneal temperature
 DIRICHLET_ALPHA = 0.3           # Alpha parameter for Dirichlet noise added to root priors
 DIRICHLET_EPSILON = 0.25        # Epsilon for Dirichlet noise (fraction of noise to apply)
 
