@@ -105,6 +105,39 @@ A..A
 A..A"""
 ]
 
-
-
 initial_position = initial_position_base
+
+# --- AlphaZero MCTS Configuration ---
+# MCTS Parameters
+NUM_SIMULATIONS_PER_MOVE = 100  # Number of MCTS simulations to run for each move
+C_PUCT_CONSTANT = 1.0           # Exploration constant in PUCT formula
+TEMPERATURE_START = 1.0         # Initial temperature for move selection in self-play (higher for exploration)
+TEMPERATURE_END = 0.1           # Final temperature for move selection (lower for exploitation)
+TEMPERATURE_ANNEAL_STEPS = 500000 # Number of steps over which to anneal temperature
+DIRICHLET_ALPHA = 0.3           # Alpha parameter for Dirichlet noise added to root priors
+DIRICHLET_EPSILON = 0.25        # Epsilon for Dirichlet noise (fraction of noise to apply)
+
+# AlphaZero Training Loop Parameters
+AZ_ITERATIONS = 1000                  # Total number of training iterations
+AZ_GAMES_PER_ITERATION = 50         # Number of self-play games to generate per iteration
+AZ_TRAINING_STEPS_PER_ITERATION = 100 # Number of training steps (batches) per iteration
+AZ_REPLAY_BUFFER_SIZE = 20000       # Maximum number of game states to store in the replay buffer
+AZ_BATCH_SIZE = 64                  # Batch size for training the neural network
+AZ_EVALUATION_GAMES_COUNT = 20      # Number of games to play for evaluating a new model
+AZ_MODEL_UPDATE_WIN_RATE = 0.55     # Minimum win rate for a new model to replace the current best
+
+# Neural Network Architecture (AlphaZero)
+AZ_NN_INPUT_DEPTH = 6 # Based on current binary board (5) + player (1)
+AZ_NN_RESIDUAL_BLOCKS = 5 # Number of residual blocks in the NN body
+AZ_NN_FILTERS = 64        # Number of filters in convolutional layers / units in dense layers
+AZ_NN_POLICY_HEAD_UNITS = 128 # Units in the dense layer before policy output
+AZ_NN_VALUE_HEAD_UNITS = 64   # Units in the dense layer before value output
+AZ_LEARNING_RATE = 0.001
+AZ_L2_REGULARIZATION = 0.0001
+AZ_VALUE_LOSS_WEIGHT = 1.0
+AZ_POLICY_LOSS_WEIGHT = 1.0
+
+# File paths for AlphaZero models
+AZ_BEST_MODEL_FILE = "switcharoo_az_best.weights.h5"
+AZ_CANDIDATE_MODEL_FILE = "switcharoo_az_candidate.weights.h5"
+AZ_CHECKPOINT_FILE_PATTERN = "switcharoo_az_checkpoint_iter{}.weights.h5"
