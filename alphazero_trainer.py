@@ -116,6 +116,10 @@ class AlphaZeroTrainer:
             game_step_count = 0
             first_player_of_game = self.game_env.current_player_id
 
+            # Log temperature at the start of the game
+            current_temp_at_game_start = get_temperature(self.total_game_steps_for_temp)
+            print(f"DEBUG: Game {game_num+1}/{AZ_GAMES_PER_ITERATION} starting. Initial Temp for this game phase: {current_temp_at_game_start:.4f}, Total cumulative steps: {self.total_game_steps_for_temp}")
+
             with tqdm(total=MAX_STEPS_PER_EPISODE, desc=f"Game {game_num+1}/{AZ_GAMES_PER_ITERATION} Moves", position=1, leave=False) as move_bar:  # New inner tqdm
                 while not done:
                     current_player_id = self.game_env.current_player_id
@@ -157,14 +161,26 @@ class AlphaZeroTrainer:
                     if done:
                         move_bar.n = game_step_count  # Set final count for the progress bar to actual steps
                         move_bar.refresh()  # Refresh to show final count correctly
+                        # Add detailed logging for game end reason
+                        winner_id_for_log = self.game_env.winner_id
+                        reason_for_done_log = "Unknown"
+                        if game_step_count >= MAX_STEPS_PER_EPISODE:
+                            reason_for_done_log = "Max Steps Reached"
+                        elif winner_id_for_log == PLAYER_A_ID or winner_id_for_log == PLAYER_B_ID:
+                            reason_for_done_log = f"Player {winner_id_for_log} won"
+                        elif winner_id_for_log == 3: # Draw
+                            reason_for_done_log = "Draw (Stalemate)"
+                        else: # If done is true but no specific win/draw/max_steps, could be an issue
+                            reason_for_done_log = "Done (Other/Unexpected)"
+                        print(f"DEBUG: Game {game_num+1}/{AZ_GAMES_PER_ITERATION} ended. Reason: {reason_for_done_log}, Steps: {game_step_count}, Winner: {self.game_env.winner_id}, First Player: {first_player_of_game}")
                         break
             
-            winner = self.game_env.winner_id
+            winner = self.game_env.winner_id # Get final winner status
             if winner == first_player_of_game:
                 iteration_game_outcomes["win"] += 1
-            elif winner == 0 or winner == 3:
+            elif winner == 0 or winner == 3: # 0 for no winner yet (should not happen if done), 3 for draw
                 iteration_game_outcomes["draw"] += 1
-            else:
+            else: # Loss for the first player
                 iteration_game_outcomes["loss"] += 1
             
             for exp in current_game_experiences:

@@ -80,6 +80,8 @@ class SwitcharooEnv:
         self.winner_id = 0
         self.step_count = 0  # Reset step counter
         self._early_game_move_counts = {PLAYER_A_ID: 0, PLAYER_B_ID: 0}
+        if hasattr(self, '_last_starting_row_counts'):
+            del self._last_starting_row_counts # Ensure this is reset
         # Only store initial starting row piece counts, not the whole board
         if initial_state:
             self.board = parse_initial_position(initial_state, A_NORMAL, B_NORMAL, EMPTY_CELL)

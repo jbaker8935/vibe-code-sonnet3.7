@@ -4,7 +4,7 @@ import os
 # Training Phases Configuration
 PHASE1_EPISODES = 50000      # Episodes for Phase 1 (random opponent)
 PHASE2_EPISODES = 50000     # Episodes for Phase 2 (self-play)
-MAX_STEPS_PER_EPISODE = 300  # Maximum steps per episode
+MAX_STEPS_PER_EPISODE = 1000  # Maximum steps per episode
 REPLAY_FREQUENCY = 2         # Frequency of replay buffer sampling
 
 # Learning rate decay and opponent epsilon cap configuration
