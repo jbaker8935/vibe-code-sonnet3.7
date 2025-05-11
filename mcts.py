@@ -2,7 +2,7 @@ import numpy as np
 import math
 
 from config import C_PUCT_CONSTANT
-from env_const import PLAYER_A_ID, PLAYER_B_ID, NUM_ACTIONS  # Assuming these are 1 and 2 respectively
+from env_const import PLAYER_A_ID, PLAYER_B_ID, NUM_ACTIONS, ID_PLAYER_MAP  # Import ID_PLAYER_MAP
 
 class MCTSNode:
     def __init__(self, parent, prior_p, player_id):
@@ -163,23 +163,39 @@ class MCTS:
             initial_player_id: The player ID whose turn it is at the root_node.
         """
         if root_node.player_id_at_node != initial_player_id:
-            pass
+            print(f"WARNING: MCTS root_node player ({root_node.player_id_at_node}) "
+                  f"differs from initial_player_id ({initial_player_id}). Using root_node's player.")
 
-        for _ in range(self.num_simulations):
+        for i_sim in range(self.num_simulations):
             sim_env = self.game_env_class()
             sim_env.board = np.copy(initial_board_array)
             sim_env.current_player_id = root_node.player_id_at_node
 
             current_selection_node = root_node
             path_taken = [root_node]
+            
+            selection_depth = 0
+            max_sim_depth = sim_env.board.size + 10
 
             while not current_selection_node.is_leaf():
+                selection_depth += 1
+
+                if selection_depth > max_sim_depth:
+                    print(f"ERROR_MCTS: Sim [{i_sim+1}] Max selection depth ({max_sim_depth}) reached. Breaking selection. "
+                          f"Node ID {id(current_selection_node)}")
+                    break
+                
                 action, next_node = current_selection_node.select_child_puct()
                 
                 if next_node is None:
                     break 
                 
-                _, _, done, _ = sim_env.step(action) 
+                if sim_env.current_player_id != current_selection_node.player_id_at_node:
+                     print(f"WARNING_MCTS_PLAYER_MISMATCH: Sim [{i_sim+1}], Depth {selection_depth}. "
+                           f"sim_env player {sim_env.current_player_id} != node player {current_selection_node.player_id_at_node} "
+                           f"BEFORE sim_env.step({action}). This might indicate an issue.")
+                
+                _, _, done, _ = sim_env.step(action)
                 
                 current_selection_node = next_node
                 path_taken.append(current_selection_node)
@@ -188,34 +204,34 @@ class MCTS:
                     break
             
             value_for_backprop = 0.0
-            
             player_at_eval_node = current_selection_node.player_id_at_node
-            has_won_current, _ = sim_env.check_win_condition(player=sim_env.ID_PLAYER_MAP[player_at_eval_node])
 
+            has_won_current, _ = sim_env.check_win_condition(player=ID_PLAYER_MAP[player_at_eval_node])
             if has_won_current:
                 value_for_backprop = 1.0
             else:
                 opponent_id = PLAYER_B_ID if player_at_eval_node == PLAYER_A_ID else PLAYER_A_ID
-                has_won_opponent, _ = sim_env.check_win_condition(player=sim_env.ID_PLAYER_MAP[opponent_id])
+                has_won_opponent, _ = sim_env.check_win_condition(player=ID_PLAYER_MAP[opponent_id])
                 if has_won_opponent:
                     value_for_backprop = -1.0
-                elif not sim_env.get_legal_action_indices(player=sim_env.ID_PLAYER_MAP[player_at_eval_node]):
+                elif not sim_env.get_legal_action_indices(player=ID_PLAYER_MAP[player_at_eval_node]):
                     value_for_backprop = 0.0 
                 else:
                     if current_selection_node.is_leaf():
-                        current_game_state_repr = sim_env._get_state()
+                        current_game_state_repr = sim_env._get_state() 
                         action_priors_nn, value_nn = self.neural_network.predict(current_game_state_repr)
+                        value_for_backprop = value_nn
                         
-                        legal_actions = sim_env.get_legal_action_indices(player=sim_env.ID_PLAYER_MAP[player_at_eval_node])
+                        legal_actions = sim_env.get_legal_action_indices(player=ID_PLAYER_MAP[player_at_eval_node])
                         if legal_actions: 
                             current_selection_node.expand(action_priors_nn, legal_actions)
-                        
-                        value_for_backprop = value_nn
                     else:
+                        print(f"ERROR_MCTS_EVAL: Sim [{i_sim+1}], Node {id(current_selection_node)} is NOT LEAF and NOT TERMINAL. "
+                              f"IsExpanded: {current_selection_node.is_expanded}. This is unexpected. Using NN value as fallback.")
                         current_game_state_repr = sim_env._get_state()
                         _, value_nn = self.neural_network.predict(current_game_state_repr)
                         value_for_backprop = value_nn
-
+            
             for node_in_path in reversed(path_taken):
                 node_in_path.update_node_value(value_for_backprop)
 
@@ -225,10 +241,11 @@ class MCTS:
                         if child_node == node_in_path:
                             action_from_parent = act
                             break
+                    
                     if action_from_parent is not None:
                         node_in_path.parent.update_edge_stats(action_from_parent, -value_for_backprop)
                 
-                value_for_backprop = -value_for_backprop
+                value_for_backprop = -value_for_backprop 
 
     def get_action_probabilities(self, root_node, temperature):
         """

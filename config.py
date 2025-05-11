@@ -26,7 +26,7 @@ CHECKPOINT_FILE = "switcharoo_dqn_checkpoint_e{}.weights.h5"
 TFJS_MODEL_DIR = "./switcharoo_tfjs_model"
 
 # Weights & Biases configuration
-WANDB_PROJECT = "switcharoo-dqn"
+WANDB_PROJECT = "switcharoo"
 WANDB_ENTITY = "farmerjohn1958-self"
 
 # Initial board positions
@@ -109,21 +109,21 @@ initial_position = initial_position_base
 
 # --- AlphaZero MCTS Configuration ---
 # MCTS Parameters
-NUM_SIMULATIONS_PER_MOVE = 100  # Number of MCTS simulations to run for each move
+NUM_SIMULATIONS_PER_MOVE = 25  # Number of MCTS simulations to run for each move (Reduced from 100)
 C_PUCT_CONSTANT = 1.0           # Exploration constant in PUCT formula
 TEMPERATURE_START = 1.0         # Initial temperature for move selection in self-play (higher for exploration)
 TEMPERATURE_END = 0.1           # Final temperature for move selection (lower for exploitation)
-TEMPERATURE_ANNEAL_STEPS = 500000 # Number of steps over which to anneal temperature
+TEMPERATURE_ANNEAL_STEPS = 1000 # Number of steps over which to anneal temperature (Reduced from 500000)
 DIRICHLET_ALPHA = 0.3           # Alpha parameter for Dirichlet noise added to root priors
 DIRICHLET_EPSILON = 0.25        # Epsilon for Dirichlet noise (fraction of noise to apply)
 
 # AlphaZero Training Loop Parameters
-AZ_ITERATIONS = 1000                  # Total number of training iterations
-AZ_GAMES_PER_ITERATION = 50         # Number of self-play games to generate per iteration
-AZ_TRAINING_STEPS_PER_ITERATION = 100 # Number of training steps (batches) per iteration
+AZ_ITERATIONS = 20                  # Total number of training iterations (Reduced from 1000)
+AZ_GAMES_PER_ITERATION = 20         # Number of self-play games to generate per iteration (Reduced from 50)
+AZ_TRAINING_STEPS_PER_ITERATION = 20 # Number of training steps (batches) per iteration (Reduced from 100)
 AZ_REPLAY_BUFFER_SIZE = 20000       # Maximum number of game states to store in the replay buffer
 AZ_BATCH_SIZE = 64                  # Batch size for training the neural network
-AZ_EVALUATION_GAMES_COUNT = 20      # Number of games to play for evaluating a new model
+AZ_EVALUATION_GAMES_COUNT = 4      # Number of games to play for evaluating a new model (Reduced from 20)
 AZ_MODEL_UPDATE_WIN_RATE = 0.55     # Minimum win rate for a new model to replace the current best
 
 # Neural Network Architecture (AlphaZero)

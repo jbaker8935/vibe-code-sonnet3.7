@@ -1,5 +1,13 @@
 # Neural Network for AlphaZero will be implemented here.
 import tensorflow as tf
+
+# # Try to force CPU execution to rule out GPU-specific issues
+# # try:
+# #     tf.config.set_visible_devices([], 'GPU')
+# #     print("INFO: TensorFlow GPU explicitly disabled. Using CPU.")
+# # except (RuntimeError, ValueError) as e: # ValueError can occur if GPUs are already initialized
+# #     print(f"INFO: Could not disable GPU, possibly already initialized or no GPU found: {e}")
+
 from tensorflow.keras import layers, Model
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.optimizers import Adam
@@ -91,10 +99,12 @@ class AlphaZeroNetwork:
         """Takes a game state, returns policy probabilities and value."""
         if not isinstance(state, tf.Tensor):
             state = tf.convert_to_tensor(state, dtype=tf.float32)
+
         if state.ndim == 1:
             state = tf.expand_dims(state, axis=0)
         
         policy_probs, value = self.model.predict_on_batch(state)
+        
         return policy_probs[0], value[0][0]
 
     def save_model(self, filepath):
