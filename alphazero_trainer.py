@@ -301,7 +301,7 @@ class AlphaZeroTrainer:
         candidate_wins = 0
         best_wins = 0
         draws = 0
-        eval_temperature = 0.1 
+        eval_temperature = 0.2  # Changed from 0.1 to introduce a bit more exploration
 
         for game_idx in tqdm(range(AZ_EVALUATION_GAMES_COUNT), desc="Evaluation Games"):  # Added tqdm
             eval_env = SwitcharooEnv()
