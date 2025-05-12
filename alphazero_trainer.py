@@ -18,7 +18,7 @@ from config import (
     AZ_CHECKPOINT_FILE_PATTERN, NUM_SIMULATIONS_PER_MOVE,
     TEMPERATURE_START, TEMPERATURE_END, TEMPERATURE_ANNEAL_STEPS,
     DIRICHLET_ALPHA, DIRICHLET_EPSILON, C_PUCT_CONSTANT,
-    WANDB_PROJECT, WANDB_ENTITY, MAX_STEPS_PER_EPISODE  # Added MAX_STEPS_PER_EPISODE
+    WANDB_PROJECT, WANDB_ENTITY, MAX_STEPS_PER_EPISODE, AZ_LEARNING_RATE  # Added AZ_LEARNING_RATE
 )
 from env_const import PLAYER_A_ID, PLAYER_B_ID, NUM_ACTIONS
 
@@ -34,17 +34,28 @@ class AlphaZeroTrainer:
     def __init__(self, use_wandb=True):  # Add use_wandb parameter
         print("Initializing AlphaZero Trainer...")
         self.game_env = SwitcharooEnv()
+
+        # Learning rate scheduler
+        self.lr_scheduler = tf.keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=AZ_LEARNING_RATE, 
+            decay_steps=10000,  # Number of training steps (batches) before decay
+            decay_rate=0.96,    # Decay rate
+            staircase=True      # Decay learning rate at discrete intervals
+        )
         
         # Initialize Neural Networks
-        self.current_nn = AlphaZeroNetwork() 
-        self.candidate_nn = AlphaZeroNetwork()
+        self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) 
+        self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
 
         if os.path.exists(AZ_BEST_MODEL_FILE):
             print(f"Loading best model from {AZ_BEST_MODEL_FILE} into current_nn and candidate_nn.")
+            # Re-initialize with scheduler before loading weights
+            self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
             self.current_nn.load_model(AZ_BEST_MODEL_FILE)
+            self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
             self.candidate_nn.load_model(AZ_BEST_MODEL_FILE)
         else:
-            print(f"No best model found at {AZ_BEST_MODEL_FILE}. Starting with fresh models.")
+            print(f"No best model found at {AZ_BEST_MODEL_FILE}. Starting with fresh models (scheduler will be used).")
 
         # DEBUG: Test prediction
         print("DEBUG: Performing a test prediction with the initialized network...")
@@ -74,6 +85,12 @@ class AlphaZeroTrainer:
         self.wandb_enabled = False  # Default to False
         if use_wandb:  # Check the flag
             try:
+                # Get current learning rate from scheduler for logging
+                # For ExponentialDecay, direct value access is tricky without a step; log initial or optimizer's current LR
+                current_lr_for_log = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
+                                     if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
+                                     else self.candidate_nn.model.optimizer.learning_rate.numpy()
+
                 wandb.init(
                     project=WANDB_PROJECT if WANDB_PROJECT else "switcharoo-alphazero", 
                     entity=WANDB_ENTITY, 
@@ -91,7 +108,9 @@ class AlphaZeroTrainer:
                         "temperature_start": TEMPERATURE_START,
                         "temperature_end": TEMPERATURE_END,
                         "temperature_anneal_steps": TEMPERATURE_ANNEAL_STEPS,
-                        "az_learning_rate": self.candidate_nn.model.optimizer.learning_rate.numpy() if hasattr(self.candidate_nn.model.optimizer, 'learning_rate') else 'N/A',
+                        "az_initial_learning_rate": AZ_LEARNING_RATE, # Log initial LR
+                        "lr_decay_steps": self.lr_scheduler.decay_steps,
+                        "lr_decay_rate": self.lr_scheduler.decay_rate,
                         "az_model_update_win_rate": AZ_MODEL_UPDATE_WIN_RATE,
                         "az_evaluation_games": AZ_EVALUATION_GAMES_COUNT,
                     }
@@ -214,7 +233,11 @@ class AlphaZeroTrainer:
         if len(self.replay_buffer) < AZ_BATCH_SIZE:
             print("Replay buffer too small to train. Skipping training phase.")
             if self.wandb_enabled:
-                wandb.log({"training/skipped": True, "training/total_loss": 0, "training/policy_loss":0, "training/value_loss":0})
+                # Log current learning rate even if skipping
+                current_lr = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
+                             if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
+                             else self.candidate_nn.model.optimizer.learning_rate.numpy()
+                wandb.log({"training/skipped": True, "training/total_loss": 0, "training/policy_loss":0, "training/value_loss":0, "training/learning_rate": current_lr})
             return
 
         print(f"\n--- Training Neural Network for {AZ_TRAINING_STEPS_PER_ITERATION} Steps ---")
@@ -261,7 +284,12 @@ class AlphaZeroTrainer:
         avg_policy_acc = policy_accuracy_this_iteration / num_actual_train_steps
         avg_value_mae = value_mae_this_iteration / num_actual_train_steps
 
-        print(f"Network training finished. Avg Total Loss: {avg_total_loss:.4f} (P: {avg_policy_loss:.4f}, V: {avg_value_loss:.4f}, P_Acc: {avg_policy_acc:.4f}, V_MAE: {avg_value_mae:.4f})")
+        # Log current learning rate after training steps
+        current_lr_after_train = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
+                                 if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
+                                 else self.candidate_nn.model.optimizer.learning_rate.numpy()
+
+        print(f"Network training finished. Avg Total Loss: {avg_total_loss:.4f} (P: {avg_policy_loss:.4f}, V: {avg_value_loss:.4f}, P_Acc: {avg_policy_acc:.4f}, V_MAE: {avg_value_mae:.4f}), LR: {current_lr_after_train:.2e}")
         if self.wandb_enabled:
             wandb.log({
                 "training/total_loss": avg_total_loss,
@@ -269,6 +297,7 @@ class AlphaZeroTrainer:
                 "training/value_loss": avg_value_loss,
                 "training/policy_accuracy": avg_policy_acc,
                 "training/value_mae": avg_value_mae,
+                "training/learning_rate": current_lr_after_train,
                 "training/skipped": False
             })
 
@@ -278,6 +307,7 @@ class AlphaZeroTrainer:
              if not os.path.exists(AZ_BEST_MODEL_FILE):
                 print(f"No best model exists. Saving current candidate_nn to {AZ_BEST_MODEL_FILE}")
                 self.candidate_nn.save_model(AZ_BEST_MODEL_FILE)
+                self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) # Ensure new current_nn also has scheduler
                 self.current_nn.load_model(AZ_BEST_MODEL_FILE)
              if self.wandb_enabled:
                 wandb.log({"evaluation/skipped": True, "evaluation/candidate_win_rate": 0})
@@ -285,14 +315,17 @@ class AlphaZeroTrainer:
 
         print(f"\n--- Evaluating Candidate Model (Iteration {iteration_num}) ---")
         self.candidate_nn.save_model(AZ_CANDIDATE_MODEL_FILE)
-        eval_candidate_nn = AlphaZeroNetwork()
+        
+        eval_candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) # Pass scheduler
         eval_candidate_nn.load_model(AZ_CANDIDATE_MODEL_FILE)
-        eval_best_nn = AlphaZeroNetwork()
+        
+        eval_best_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) # Pass scheduler
         if os.path.exists(AZ_BEST_MODEL_FILE):
             eval_best_nn.load_model(AZ_BEST_MODEL_FILE)
         else:
             print(f"No existing best model found at {AZ_BEST_MODEL_FILE} for evaluation. Candidate becomes best.")
             self.candidate_nn.save_model(AZ_BEST_MODEL_FILE)
+            self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) # Pass scheduler
             self.current_nn.load_model(AZ_BEST_MODEL_FILE)
             if self.wandb_enabled:
                 wandb.log({"evaluation/skipped": True, "evaluation/candidate_win_rate": 1.0, "evaluation/best_model_updated": True})
@@ -374,6 +407,7 @@ class AlphaZeroTrainer:
         if win_rate > AZ_MODEL_UPDATE_WIN_RATE:
             print(f"Candidate model is better (Win Rate {win_rate:.2%} > {AZ_MODEL_UPDATE_WIN_RATE:.2%}). Updating best model.")
             self.candidate_nn.save_model(AZ_BEST_MODEL_FILE)
+            self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) # Pass scheduler
             self.current_nn.load_model(AZ_BEST_MODEL_FILE)
             best_model_updated = True
         else:

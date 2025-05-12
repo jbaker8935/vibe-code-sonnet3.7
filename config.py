@@ -109,21 +109,21 @@ initial_position = initial_position_base
 
 # --- AlphaZero MCTS Configuration ---
 # MCTS Parameters
-NUM_SIMULATIONS_PER_MOVE = 25  # Number of MCTS simulations to run for each move (Reduced from 100)
+NUM_SIMULATIONS_PER_MOVE = 75  # Number of MCTS simulations to run for each move (Reduced from 100)
 C_PUCT_CONSTANT = 1.0           # Exploration constant in PUCT formula
 TEMPERATURE_START = 1.0         # Initial temperature for move selection in self-play (higher for exploration)
 TEMPERATURE_END = 0.1           # Final temperature for move selection (lower for exploitation)
-TEMPERATURE_ANNEAL_STEPS = 50000 # Number of steps over which to anneal temperature
+TEMPERATURE_ANNEAL_STEPS = 100000 # Number of steps over which to anneal temperature
 DIRICHLET_ALPHA = 0.3           # Alpha parameter for Dirichlet noise added to root priors
 DIRICHLET_EPSILON = 0.25        # Epsilon for Dirichlet noise (fraction of noise to apply)
 
 # AlphaZero Training Loop Parameters
-AZ_ITERATIONS = 20                  # Total number of training iterations (Reduced from 1000)
-AZ_GAMES_PER_ITERATION = 20         # Number of self-play games to generate per iteration (Reduced from 50)
-AZ_TRAINING_STEPS_PER_ITERATION = 20 # Number of training steps (batches) per iteration (Reduced from 100)
+AZ_ITERATIONS = 40                  # Total number of training iterations (Reduced from 1000)
+AZ_GAMES_PER_ITERATION = 30         # Number of self-play games to generate per iteration (Reduced from 50)
+AZ_TRAINING_STEPS_PER_ITERATION = 30 # Number of training steps (batches) per iteration (Reduced from 100)
 AZ_REPLAY_BUFFER_SIZE = 20000       # Maximum number of game states to store in the replay buffer
 AZ_BATCH_SIZE = 64                  # Batch size for training the neural network
-AZ_EVALUATION_GAMES_COUNT = 4      # Number of games to play for evaluating a new model (Reduced from 20)
+AZ_EVALUATION_GAMES_COUNT = 40      # Number of games to play for evaluating a new model (Increased from 10)
 AZ_MODEL_UPDATE_WIN_RATE = 0.55     # Minimum win rate for a new model to replace the current best
 
 # Neural Network Architecture (AlphaZero)

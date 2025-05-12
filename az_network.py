@@ -37,9 +37,15 @@ def build_residual_block(input_tensor, filters):
     x = layers.ReLU()(x)
     return x
 
-def build_alpha_zero_network(input_shape=(AZ_NN_INPUT_DEPTH,), num_actions=NUM_ACTIONS):
+def build_alpha_zero_network(input_shape=(AZ_NN_INPUT_DEPTH,), num_actions=NUM_ACTIONS, learning_rate_schedule=None):
     """Builds the AlphaZero-style neural network."""
-    input_tensor = layers.Input(shape=input_shape)
+    # Ensure input_shape is a tuple, e.g., (AZ_NN_INPUT_DEPTH,)
+    # The Input layer will have a batch dimension of None by default when used in `model.fit` or `model.predict`
+    # For TFJS, this definition should be fine, and if issues arise at TFJS runtime,
+    # they are often handled by how TFJS loads the model or by the conversion process itself.
+    # Let's revert to the standard Keras way and let the SavedModel format handle specifics.
+    actual_input_shape = input_shape 
+    input_tensor = layers.Input(shape=actual_input_shape)
 
     # Initial Dense layer to process the flat input vector
     x = layers.Dense(AZ_NN_FILTERS, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(input_tensor)
@@ -62,11 +68,14 @@ def build_alpha_zero_network(input_shape=(AZ_NN_INPUT_DEPTH,), num_actions=NUM_A
     value_head = layers.Dense(AZ_NN_VALUE_HEAD_UNITS, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(common_representation)
     value_head = layers.BatchNormalization()(value_head)
     value_head = layers.ReLU()(value_head)
-    value_output = layers.Dense(1, activation='tanh', name='value_output', kernel_regularizer=l2(AZ_L2_REGULARIZATION))(value_head)
+    x = layers.Dense(1, name='value_dense_before_tanh', kernel_regularizer=l2(AZ_L2_REGULARIZATION))(value_head)
+    value_output = layers.Lambda(lambda t: 2 * tf.math.sigmoid(2 * t) - 1, name='value_output')(x)
 
     model = Model(inputs=input_tensor, outputs=[policy_output, value_output])
 
-    optimizer = Adam(learning_rate=AZ_LEARNING_RATE)
+    # Use the provided learning rate schedule if available, otherwise use the fixed rate
+    current_lr = learning_rate_schedule if learning_rate_schedule is not None else AZ_LEARNING_RATE
+    optimizer = Adam(learning_rate=current_lr)
 
     model.compile(
         optimizer=optimizer,
@@ -86,8 +95,8 @@ def build_alpha_zero_network(input_shape=(AZ_NN_INPUT_DEPTH,), num_actions=NUM_A
     return model
 
 class AlphaZeroNetwork:
-    def __init__(self, model_path=None):
-        self.model = build_alpha_zero_network()
+    def __init__(self, model_path=None, learning_rate_schedule=None):
+        self.model = build_alpha_zero_network(learning_rate_schedule=learning_rate_schedule)
         if model_path:
             try:
                 self.load_model(model_path)

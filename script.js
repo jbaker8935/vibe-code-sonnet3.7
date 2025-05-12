@@ -1,13 +1,36 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    // Force CPU backend for wider operation support
+    try {
+        if (typeof tf !== 'undefined') {
+            await tf.setBackend('cpu');
+            console.log("TensorFlow.js backend set to CPU.");
+        } else {
+            console.warn("tf object not available at the time of setting backend.");
+        }
+    } catch (e) {
+        console.error("Error setting TF.js backend to CPU:", e);
+    }
+
     const ROWS = 8;
     const COLS = 4;
     const PLAYER_A = 'A'; // White
     const PLAYER_B = 'B'; // Black
     const NORMAL = 'normal';
     const SWAPPED = 'swapped';
+    const NUM_DIRECTIONS = 8;
+    const JS_DIRECTIONS = [
+        { dr: -1, dc: -1 }, // 0
+        { dr: -1, dc:  0 }, // 1
+        { dr: -1, dc:  1 }, // 2
+        { dr:  0, dc: -1 }, // 3
+        { dr:  0, dc:  1 }, // 4
+        { dr:  1, dc: -1 }, // 5
+        { dr:  1, dc:  0 }, // 6
+        { dr:  1, dc:  1 }  // 7
+    ];
     let AI_DIFFICULTY = 'easy'; // easy, hard1, hard2, hard_ai
     let AI_DEPTH = 5; // Will be set based on difficulty
-    let ANALYSIS_MODE = false;
+    let ANALYSIS_MODE = true; // Ensure this is true for detailed NN logging
     let tfModel = null; // TensorFlow.js model
     let startingPosition = null; // Starting position for the game
     let startingPositionIndex = 0; // Index for the initial position in the array
@@ -27,34 +50,41 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadTFJSModel() {
         try {
             console.log("Loading TensorFlow.js model...");
-            
+            console.log("TensorFlow.js version:", tf.version.tfjs); // Log TFJS version
+
             // Try direct model loading first
             try {
-                console.info("Attempting to load graph model from: ./tfjs_model/web_model/model.json");
-                // Use tf.loadGraphModel for models converted from SavedModel
-                const loadedModel = await tf.loadGraphModel('./tfjs_model/web_model/model.json');
+                console.info("Attempting to load GRAPH model from: ./switcharoo_tfjs_model/model.json");
+                console.log("BEFORE await tf.loadGraphModel"); 
+                // Switched back to loadGraphModel
+                const loadedModel = await tf.loadGraphModel('./switcharoo_tfjs_model/model.json');
+                console.log("AFTER await tf.loadGraphModel. Model object:", loadedModel); 
                 console.info("Graph model loaded successfully!");
-                
+
                 // Use the loaded model directly
                 tfModel = loadedModel;
-                // GraphModel doesn't have .summary(), log inputs/outputs instead if needed
-                // console.log("Model structure:", tfModel.summary());
-                console.log("Model inputs:", tfModel.inputs);
-                console.log("Model outputs:", tfModel.outputs);
                 
-                
+                // GraphModel does not have .summary() or .inputs/.outputs in the same way as LayersModel
+                // console.log("Model summary:"); // tfModel.summary(); // This would error for GraphModel
+                // console.log("Model inputs:", tfModel.inputs); // Different structure for GraphModel
+                // console.log("Model outputs:", tfModel.outputs);
+                console.log("Model signature:", tfModel.signature);
+
+
                 // Enable the hard_ai option once the model is loaded
                 document.getElementById('difficulty-btn').classList.add('model-loaded');
                 return true;
             } catch (directLoadError) {
-                console.warn("Could not load pre-trained graph model:", directLoadError);
+                console.warn("Could not load pre-trained graph model. Error object:", directLoadError); // Log the error object
                 console.warn("The Neural Network AI option will be disabled as it requires pre-trained weights to work properly.");
-                
+
                 // Don't create a fallback model with random weights as it's not useful for gameplay
                 console.warn("Using standard heuristic AI only (easy/hard modes).");
                 return false;
+            } finally { // Added finally block
+                console.log("Finally block of model loading reached.");
             }
-            
+
         } catch (error) {
             console.error("Failed to initialize TensorFlow.js:", error);
             return false;
@@ -101,7 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let touchStartY = 0;
     const transpositionTable = new Map();
 
-    var DEBUG = false; // Set to false to disable
+    var DEBUG = true; // Set to false to disable
     var old_console_log = console.log;
     console.log = function() {
         if (DEBUG) {
@@ -678,7 +708,72 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- AI Opponent (Player B) ---
 
-    function triggerAIMove() {
+    // Function to convert a move object to an action index
+    function moveToActionIndex(move) {
+        const startCellIndex = move.start.row * COLS + move.start.col;
+        const dr = move.end.row - move.start.row;
+        const dc = move.end.col - move.start.col;
+
+        let directionIndex = -1;
+        for (let i = 0; i < JS_DIRECTIONS.length; i++) {
+            if (JS_DIRECTIONS[i].dr === dr && JS_DIRECTIONS[i].dc === dc) {
+                directionIndex = i;
+                break;
+            }
+        }
+
+        if (directionIndex === -1) {
+            console.error("Could not find direction for move:", JSON.stringify(move)); // Log input move
+            return null; 
+        }
+        const actionIndex = startCellIndex * NUM_DIRECTIONS + directionIndex;
+        if (DEBUG) console.log(`moveToActionIndex: move: ${JSON.stringify(move)}, startCellIndex: ${startCellIndex}, directionIndex: ${directionIndex}, actionIndex: ${actionIndex}`); // Log details
+        return actionIndex;
+    }
+
+    // Function to convert board state to neural network input
+    function boardToNNInput(boardState) {
+        if (DEBUG) console.log("boardToNNInput: input boardState (first row):", JSON.stringify(boardState[0])); // Log part of input board
+        const binaryBoard = [0, 0, 0, 0, 0]; 
+
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const pos = r * COLS + c;
+                const pieceData = boardState[r][c];
+                let pieceVal = 0; 
+
+                if (pieceData) {
+                    if (pieceData.player === PLAYER_A) {
+                        pieceVal = (pieceData.state === NORMAL) ? 1 : 2;
+                    } else { 
+                        pieceVal = (pieceData.state === NORMAL) ? 3 : 4;
+                    }
+                }
+                
+                if (pieceVal === 0) {  
+                    binaryBoard[0] |= (1 << pos);
+                } else if (pieceVal === 1) { 
+                    binaryBoard[1] |= (1 << pos);
+                } else if (pieceVal === 2) { 
+                    binaryBoard[2] |= (1 << pos);
+                } else if (pieceVal === 3) { 
+                    binaryBoard[3] |= (1 << pos);
+                } else if (pieceVal === 4) { 
+                    binaryBoard[4] |= (1 << pos);
+                }
+            }
+        }
+
+        const nnInput = new Float32Array(6);
+        for(let i=0; i<5; i++) {
+            nnInput[i] = binaryBoard[i]; 
+        }
+        nnInput[5] = (currentPlayer === PLAYER_A) ? 0.0 : 1.0;
+        if (DEBUG) console.log("boardToNNInput: output nnInput:", nnInput); // Log output
+        return nnInput;
+    }
+
+    async function triggerAIMove() {
         if (gameOver) return;
         console.log("AI (Player B) is thinking...");
 
@@ -836,115 +931,184 @@ document.addEventListener('DOMContentLoaded', () => {
         if (AI_DIFFICULTY === 'hard_ai' && tfModel) {
             console.log("Using neural network for move selection");
             let bestScore = -Infinity;
-            let scoredMoves = []; // Store all moves with their scores
+            let scoredMoves = [];
+            let topMoves = []; // Initialize topMoves
 
-            // --- Prepare inputs for all possible moves ---
-            const inputs = [];
-            const validMoves = []; // Keep track of moves corresponding to inputs
+            // Get the neural network input from the CURRENT board state
+            const currentNNInput = boardToNNInput(boardState); // boardState is the current game board
 
-            for (const move of possibleMoves) {
-                // Create a copy of the board with the move applied
-                const tempBoard = cloneBoard(boardState);
-                const { start, end } = move;
-                const movingPiece = tempBoard[start.row][start.col];
-                const targetPiece = tempBoard[end.row][end.col];
-                
-                if (!targetPiece) {
-                    tempBoard[end.row][end.col] = { ...movingPiece };
-                    tempBoard[start.row][start.col] = null;
-                    unmarkPlayerSwapped(PLAYER_B, tempBoard); 
-                } else {
-                    tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
-                    tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
-                }
-                
-                // Check if this move allows Player A to win immediately
-                if (allowsOpponentWin(tempBoard, PLAYER_A)) {
-                     if (ANALYSIS_MODE) {
-                         console.log(`Skipping move ${start.row},${start.col} to ${end.row},${end.col}: allows opponent win`);
-                     }
-                    continue; // Skip moves that allow opponent to win
-                }
-                
-                // Convert board state to neural network input (MUST BE 6 elements)
-                const input = boardToNNInput(tempBoard); // Ensure this returns 6 elements
-                if (input.length !== 6) {
-                    console.error("boardToNNInput did not return 6 elements!", input);
-                    continue; // Skip if input is incorrect
-                }
-                inputs.push(input);
-                validMoves.push(move);
+            if (!currentNNInput || currentNNInput.length !== 6) {
+                console.error("Failed to generate valid NN input from current board state. Falling back.", currentNNInput);
+                // Fallback to heuristic AI if NN input generation fails
+                AI_DIFFICULTY = 'hard1'; // Temporarily change difficulty
+                const fallbackMove = await findBestAIMove(boardState); // Recurse with heuristic
+                AI_DIFFICULTY = 'hard_ai'; // Change back
+                return fallbackMove;
             }
 
-            if (inputs.length === 0) {
-                 console.warn("Neural network: No valid moves found after filtering opponent wins. Falling back.");
-                 // Fall through to easy/hard mode logic
-            } else {
-                // --- Batch Prediction ---
-                try {
-                    // Create a single tensor for all inputs
-                    const inputTensor = tf.tensor2d(inputs); // Shape [batch_size, 6]
+            let inputTensor;
+            let outputTensors;
+            let policyQValues;
 
-                    // Use executeAsync for GraphModel prediction
-                    const inputNodeName = tfModel.inputs[0].name;
-                    const predictionTensor = await tfModel.executeAsync({[inputNodeName]: inputTensor}); // Shape [batch_size, 256]
+            try {
+                // Create a single tensor for the current board state input
+                // Reshape to [1, 6] as the model expects a batch dimension
+                inputTensor = tf.tensor2d([currentNNInput]); 
 
-                    // Get the Q-values as a 2D array [batch_size, 256]
-                    const qValues = await predictionTensor.array(); // <-- Change from .data() to .array()
+                if (ANALYSIS_MODE) console.log("NN Input Tensor Shape:", inputTensor.shape);
 
-                    inputTensor.dispose();
-                    predictionTensor.dispose(); // Dispose the output tensor
+                // Use executeAsync for GraphModel prediction
+                const inputNodeName = tfModel.inputs[0].name;
+                outputTensors = await tfModel.executeAsync({[inputNodeName]: inputTensor});
 
-                    // --- Process Scores ---
-                    for (let i = 0; i < validMoves.length; i++) {
-                        const move = validMoves[i];
+                if (ANALYSIS_MODE) {
+                    console.log("--- Model Output Inspection (Current State Prediction) ---");
+                    console.log("tfModel.outputs:", tfModel.outputs);
+                    if (tfModel.outputs && tfModel.outputs.length > 0) {
+                        tfModel.outputs.forEach((outputNode, index) => {
+                            console.log(`Model Output Node ${index}: name='${outputNode.name}', shape=${JSON.stringify(outputNode.shape)}`);
+                        });
+                    }
+                    console.log(`Actual number of output tensors: ${outputTensors.length}`);
+                    outputTensors.forEach((tensor, index) => {
+                        console.log(`Output Tensor ${index}: shape=${JSON.stringify(tensor.shape)}, rank=${tensor.rank}, dtype=${tensor.dtype}`);
+                    });
+                    console.log("--- End Model Output Inspection ---");
+                }
 
-                        // --- Calculate the action index for this specific move ---
-                        // !!! CRITICAL: Implement this function based on your Python action mapping !!!
-                        const actionIndex = moveToActionIndex(move);
+                const valueOutputTensor = outputTensors[0]; // Shape [1, 1]
+                const policyOutputTensor = outputTensors[1]; // Shape [1, 256]
 
-                        if (actionIndex === null || actionIndex < 0 || actionIndex >= 256) {
-                            console.error("Invalid action index calculated for move:", move, actionIndex);
-                            continue; // Skip this move if action index is invalid
+                if (!policyOutputTensor) {
+                    console.error("Policy output tensor (outputTensors[1]) is undefined. Cannot proceed with NN.");
+                    throw new Error("Policy tensor is missing, cannot use NN.");
+                }
+                
+                // policyQValues will be an array like [[q0, q1, ..., q255]]
+                const policyData = await policyOutputTensor.array(); 
+                policyQValues = policyData[0]; // Extract the actual Q-values array
+
+                if (ANALYSIS_MODE) {
+                    console.log(`Predicted Value from NN: ${ (await valueOutputTensor.array())[0][0] }`);
+                    console.log(`Policy Q-Values (first 10 of ${policyQValues.length}):`, policyQValues.slice(0,10));
+                }
+
+                // Dispose tensors as soon as their data is extracted
+                if (valueOutputTensor && !valueOutputTensor.isDisposed) valueOutputTensor.dispose();
+                if (policyOutputTensor && !policyOutputTensor.isDisposed) policyOutputTensor.dispose();
+                if (inputTensor && !inputTensor.isDisposed) inputTensor.dispose();
+                // Ensure all original outputTensors are disposed if not already
+                outputTensors.forEach(t => { if (t && !t.isDisposed) t.dispose(); });
+
+
+                // --- Process Scores for all possible moves from the CURRENT state ---
+                for (const move of possibleMoves) {
+                    const { start, end } = move;
+
+                    // Create a temporary board to check if the move allows an opponent win
+                    const tempBoard = cloneBoard(boardState);
+                    const movingPiece = tempBoard[start.row][start.col];
+                    const targetPiece = tempBoard[end.row][end.col];
+
+                    if (!targetPiece) {
+                        tempBoard[end.row][end.col] = { ...movingPiece };
+                        tempBoard[start.row][start.col] = null;
+                        unmarkPlayerSwapped(PLAYER_B, tempBoard);
+                    } else {
+                        tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+                        tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
+                    }
+
+                    // Check if this move allows Player A to win immediately
+                    if (allowsOpponentWin(tempBoard, PLAYER_A)) {
+                        if (ANALYSIS_MODE) {
+                            console.log(`NN: Skipping move ${start.row},${start.col} to ${end.row},${end.col}: allows opponent win`);
                         }
+                        continue; // Skip moves that allow opponent to win
+                    }
 
-                        // Get the Q-value for the i-th state and the specific actionIndex
-                        const score = qValues[i][actionIndex]; // <-- Correctly access Q-value
+                    const actionIndex = moveToActionIndex(move);
 
+                    if (actionIndex === null || actionIndex < 0 || actionIndex >= policyQValues.length) {
+                        if (ANALYSIS_MODE) console.warn(`NN: Skipping move due to invalid actionIndex (${actionIndex}) for move:`, move);
+                        continue;
+                    }
+
+                    const score = policyQValues[actionIndex];
+
+                    if (typeof score === 'number' && !isNaN(score)) {
                         scoredMoves.push({ move, score });
                         if (score > bestScore) {
                             bestScore = score;
                         }
                         if (ANALYSIS_MODE) {
-                            const {start, end} = move;
-                            console.log(`Move ${start.row},${start.col} to ${end.row},${end.col} (Action ${actionIndex}): Q-value ${score.toFixed(4)}`);
+                            console.log(`NN Move ${start.row},${start.col} to ${end.row},${end.col} (Action ${actionIndex}): Q-value ${score.toFixed(4)}`);
+                        }
+                    } else {
+                        if (ANALYSIS_MODE) {
+                            console.warn(`NN Move ${start.row},${start.col} to ${end.row},${end.col} (Action ${actionIndex}): Q-value is invalid (Score: ${score}, Type: ${typeof score})`);
                         }
                     }
+                }
 
-                    // Filter moves within a threshold of the best score (e.g., 5% or a small absolute value)
-                    const scoreThreshold = bestScore - Math.abs(bestScore * 0.05); // Example threshold
-                    const topMoves = scoredMoves
-                        .filter(({ score }) => score >= scoreThreshold)
+                if (scoredMoves.length > 0 && bestScore > -Infinity) {
+                    // Use a threshold relative to the best score.
+                    // Example: moves within 20% of the best score are considered.
+                    // Adjust the 0.2 (20%) factor as needed.
+                    // If bestScore is negative, threshold should be higher (less negative).
+                    // If bestScore is positive, threshold should be lower.
+                    let dynamicScoreThreshold;
+                    if (bestScore >= 0) {
+                        dynamicScoreThreshold = bestScore * 0.8; // e.g. if best is 1.0, threshold is 0.8
+                    } else {
+                        dynamicScoreThreshold = bestScore * 1.2; // e.g. if best is -1.0, threshold is -1.2 (scores > -1.2)
+                    }
+                    // A simpler way: bestScore - Math.abs(bestScore * 0.20)
+                    // For very small scores, this might not be ideal. Let's use a small absolute tolerance too.
+                    const scoreTolerance = 0.05; // Add a small absolute tolerance
+                    dynamicScoreThreshold = bestScore - Math.abs(bestScore * 0.20) - scoreTolerance;
+
+
+                    if (ANALYSIS_MODE) console.log(`NN: Final bestScore: ${bestScore.toFixed(4)}, dynamicScoreThreshold: ${dynamicScoreThreshold.toFixed(4)}`);
+
+                    topMoves = scoredMoves
+                        .filter(sm => typeof sm.score === 'number' && !isNaN(sm.score) && sm.score >= dynamicScoreThreshold)
                         .map(({ move }) => move);
                     
-                    if (topMoves.length > 0) {
-                        // Randomly select from the top moves
-                        const randomIndex = Math.floor(Math.random() * topMoves.length);
-                        console.log(`NN chose from ${topMoves.length} top moves. Best score: ${bestScore}`);
-                        return topMoves[randomIndex];
-                    } else {
-                        console.warn("Neural network failed to find any moves above threshold, falling back.");
-                        // Fall through to easy/hard mode logic
+                    if (ANALYSIS_MODE && topMoves.length === 0 && scoredMoves.length > 0) {
+                        console.log("NN: No moves met the dynamic threshold, but scored moves exist. Considering all scored moves as top moves.");
+                        // Fallback: if no moves meet the threshold but there are scored moves, consider all of them.
+                        // Or, more simply, take the one(s) with the absolute bestScore.
+                        topMoves = scoredMoves.filter(sm => sm.score === bestScore).map(({move}) => move);
                     }
-                    
-                } catch (error) {
-                    console.error("Error in neural network prediction:", error);
-                    // Fall through to easy/hard mode logic
+
+                } else {
+                     if (ANALYSIS_MODE) console.log("NN: No moves scored or bestScore remained -Infinity.");
                 }
+
+                if (topMoves.length > 0) {
+                    const randomIndex = Math.floor(Math.random() * topMoves.length);
+                    if (ANALYSIS_MODE) console.log(`NN chose from ${topMoves.length} top moves. Best Q-value: ${bestScore.toFixed(4)}`);
+                    return topMoves[randomIndex];
+                } else {
+                    console.warn("Neural network failed to find any moves above threshold or any valid moves. Falling back to heuristic.");
+                    // Fall through to heuristic AI logic
+                }
+                
+            } catch (error) {
+                console.error("Error in neural network prediction or processing:", error);
+                // Dispose any tensors that might still be around from the try block
+                if (inputTensor && !inputTensor.isDisposed) inputTensor.dispose();
+                if (outputTensors) {
+                    outputTensors.forEach(t => { if (t && !t.isDisposed) t.dispose(); });
+                }
+                // Fall through to heuristic AI logic
             }
         }
 
-        // If no immediate win, proceed with normal evaluation
+        // --- Fallback Heuristic AI Logic (easy, hard1, or if NN fails) ---
+        console.log(`Falling back to heuristic AI: ${AI_DIFFICULTY}`);
+
         if (AI_DIFFICULTY === 'easy') {
             // Filter out moves that allow immediate opponent win
             let safeMoves = [];
@@ -1665,21 +1829,50 @@ document.addEventListener('DOMContentLoaded', () => {
         // This function needs to take the 8x4 boardState and produce
         // an array of 5 numbers (integers) exactly like the Python
         // board_to_binary function does (likely using bitwise operations).
-        console.warn("convertBoardToBinaryJS is not implemented! Neural network input will be incorrect.");
+        
+        // Initialize 5 numbers (unsigned 32-bit integers)
+        // JavaScript bitwise operations operate on 32-bit signed integers,
+        // but for setting bits with OR, this should be fine.
+        // The `>>> 0` operation can be used to treat a number as unsigned 32-bit if needed,
+        // but it's mainly for the final result if it could be negative.
+        let emptyMask = 0;
+        let playerANormalMask = 0;
+        let playerASwappedMask = 0;
+        let playerBNormalMask = 0;
+        let playerBSwappedMask = 0;
 
-        // Example structure (replace with actual logic):
-        // Initialize 5 numbers (e.g., 32-bit integers)
-        let bin1 = 0, bin2 = 0, bin3 = 0, bin4 = 0, bin5 = 0;
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const pos = r * COLS + c; // COLS is 4, so r * 4 + c
+                const piece = boardState[r][c];
 
-        // Iterate through the board (r, c)
-        // For each piece, set the corresponding bit in the correct integer
-        // based on player (A/B) and potentially state (Normal/Swapped)
-        // using bitwise OR (|) and left shifts (<<).
-        // The exact mapping of (r, c, player, state) to (integer_index, bit_position)
-        // MUST match the Python implementation.
+                if (piece === null) { // Empty
+                    emptyMask |= (1 << pos);
+                } else if (piece.player === PLAYER_A) {
+                    if (piece.state === NORMAL) { // Player A normal
+                        playerANormalMask |= (1 << pos);
+                    } else { // Player A swapped
+                        playerASwappedMask |= (1 << pos);
+                    }
+                } else if (piece.player === PLAYER_B) {
+                    if (piece.state === NORMAL) { // Player B normal
+                        playerBNormalMask |= (1 << pos);
+                    } else { // Player B swapped
+                        playerBSwappedMask |= (1 << pos);
+                    }
+                }
+            }
+        }
 
-        // Return the 5 numbers
-        return [bin1, bin2, bin3, bin4, bin5]; // Placeholder
+        // Ensure results are treated as unsigned 32-bit integers if necessary,
+        // though for positive results from ORing bits, it might not change much.
+        return [
+            emptyMask >>> 0,
+            playerANormalMask >>> 0,
+            playerASwappedMask >>> 0,
+            playerBNormalMask >>> 0,
+            playerBSwappedMask >>> 0
+        ];
     }
 
     function serializeBoardState(boardState) {
@@ -1700,7 +1893,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('Best move for this board state:', bestMove);
         } else {
             console.log('No historical move selected.');
-        }
+        }    
     }    
     window.analyzeHistoricalMove = analyzeHistoricalMove;
 
