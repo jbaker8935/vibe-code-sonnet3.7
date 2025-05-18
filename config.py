@@ -119,9 +119,9 @@ DIRICHLET_EPSILON = 0.25        # Epsilon for Dirichlet noise (fraction of noise
 
 # AlphaZero Training Loop Parameters
 AZ_ITERATIONS = 40                  # Total number of training iterations (Reduced from 1000)
-AZ_GAMES_PER_ITERATION = 30         # Number of self-play games to generate per iteration (Reduced from 50)
-AZ_TRAINING_STEPS_PER_ITERATION = 30 # Number of training steps (batches) per iteration (Reduced from 100)
-AZ_REPLAY_BUFFER_SIZE = 20000       # Maximum number of game states to store in the replay buffer
+AZ_GAMES_PER_ITERATION = 50         # Number of self-play games to generate per iteration 
+AZ_TRAINING_STEPS_PER_ITERATION = 50 # Number of training steps (batches) per iteration (Reduced from 100)
+AZ_REPLAY_BUFFER_SIZE = 50000       # Maximum number of game states to store in the replay buffer
 AZ_BATCH_SIZE = 64                  # Batch size for training the neural network
 AZ_EVALUATION_GAMES_COUNT = 40      # Number of games to play for evaluating a new model (Increased from 10)
 AZ_MODEL_UPDATE_WIN_RATE = 0.55     # Minimum win rate for a new model to replace the current best
@@ -141,3 +141,6 @@ AZ_POLICY_LOSS_WEIGHT = 1.0
 AZ_BEST_MODEL_FILE = "switcharoo_az_best.weights.h5"
 AZ_CANDIDATE_MODEL_FILE = "switcharoo_az_candidate.weights.h5"
 AZ_CHECKPOINT_FILE_PATTERN = "switcharoo_az_checkpoint_iter{}.weights.h5"
+
+# MCTS Implementation Configuration
+USE_NUMBA = True  # Set to True to use Numba MCTS, False for Python MCTS

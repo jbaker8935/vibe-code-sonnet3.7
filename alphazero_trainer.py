@@ -10,7 +10,8 @@ import argparse  # Add argparse import
 
 from game_env import SwitcharooEnv
 from az_network import AlphaZeroNetwork, build_alpha_zero_network
-from mcts import MCTS, MCTSNode
+from mcts import MCTS, MCTSNode  # Your Python MCTS
+from mcts_numba import MCTSNumba  # Your Numba MCTS
 from config import (
     AZ_ITERATIONS, AZ_GAMES_PER_ITERATION, AZ_TRAINING_STEPS_PER_ITERATION,
     AZ_REPLAY_BUFFER_SIZE, AZ_BATCH_SIZE, AZ_EVALUATION_GAMES_COUNT,
@@ -18,7 +19,9 @@ from config import (
     AZ_CHECKPOINT_FILE_PATTERN, NUM_SIMULATIONS_PER_MOVE,
     TEMPERATURE_START, TEMPERATURE_END, TEMPERATURE_ANNEAL_STEPS,
     DIRICHLET_ALPHA, DIRICHLET_EPSILON, C_PUCT_CONSTANT,
-    WANDB_PROJECT, WANDB_ENTITY, MAX_STEPS_PER_EPISODE, AZ_LEARNING_RATE  # Added AZ_LEARNING_RATE
+    WANDB_PROJECT, WANDB_ENTITY, MAX_STEPS_PER_EPISODE, AZ_LEARNING_RATE,  # Added AZ_LEARNING_RATE
+    initial_position,  # Added initial_position
+    USE_NUMBA  # Added USE_NUMBA
 )
 from env_const import PLAYER_A_ID, PLAYER_B_ID, NUM_ACTIONS
 
@@ -130,7 +133,9 @@ class AlphaZeroTrainer:
 
         for game_num in tqdm(range(AZ_GAMES_PER_ITERATION), desc="Self-Play Games", position=0, leave=True):  # Modified outer tqdm
             current_game_experiences = [] 
-            current_board_state_arr = self.game_env.reset()
+            # Randomly select a starting position from config.initial_position
+            starting_position_str = random.choice(initial_position)
+            current_board_state_arr = self.game_env.reset(starting_position=starting_position_str)
             done = False
             game_step_count = 0
             first_player_of_game = self.game_env.current_player_id
@@ -142,15 +147,39 @@ class AlphaZeroTrainer:
             with tqdm(total=MAX_STEPS_PER_EPISODE, desc=f"Game {game_num+1}/{AZ_GAMES_PER_ITERATION} Moves", position=1, leave=False) as move_bar:  # New inner tqdm
                 while not done:
                     current_player_id = self.game_env.current_player_id
-                    mcts_handler = MCTS(neural_network=self.current_nn, 
-                                        game_env_class=SwitcharooEnv, 
-                                        config=self.mcts_config)
-                    root_node = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id)
-                    mcts_handler.run_mcts_simulations(root_node, 
-                                                      np.copy(self.game_env.board), 
-                                                      current_player_id)
+                    if USE_NUMBA:
+                        # print("Using Numba-optimized MCTS implementation.")
+                        mcts_handler = MCTSNumba(neural_network=self.current_nn, 
+                                                 game_env_class=SwitcharooEnv, 
+                                                 config=self.mcts_config)
+                        mcts_handler.run_mcts_simulations(
+                            NUM_SIMULATIONS_PER_MOVE,
+                            np.copy(self.game_env.board),
+                            current_player_id,
+                            root_node_dummy=None
+                        )
+                        action_probs_from_mcts = mcts_handler.get_action_probabilities(
+                            np.copy(self.game_env.board),
+                            current_player_id,
+                            get_temperature(self.total_game_steps_for_temp),
+                            root_node_dummy=None
+                        )
+                    else:
+                        # print("Using Python MCTS implementation.")
+                        root_node = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id)
+                        mcts_handler = MCTS(neural_network=self.current_nn, 
+                                            game_env_class=SwitcharooEnv, 
+                                            config=self.mcts_config)
+                        mcts_handler.run_mcts_simulations(
+                            root_node,
+                            np.copy(self.game_env.board),
+                            current_player_id
+                        )
+                        action_probs_from_mcts = mcts_handler.get_action_probabilities(
+                            root_node,
+                            get_temperature(self.total_game_steps_for_temp)
+                        )
                     temp = get_temperature(self.total_game_steps_for_temp)
-                    action_probs_from_mcts = mcts_handler.get_action_probabilities(root_node, temp)
                     nn_input_state = self.game_env._get_state() 
                     current_game_experiences.append({'state': nn_input_state, 
                                                      'policy_target': action_probs_from_mcts, 
@@ -338,7 +367,9 @@ class AlphaZeroTrainer:
 
         for game_idx in tqdm(range(AZ_EVALUATION_GAMES_COUNT), desc="Evaluation Games"):  # Added tqdm
             eval_env = SwitcharooEnv()
-            eval_env.reset()
+            # Randomly select a starting position from config.initial_position
+            starting_position_str = random.choice(initial_position)
+            eval_env.reset(starting_position=starting_position_str)
             done = False
             game_step_count_eval = 0  # Initialize step counter for evaluation game
             if game_idx % 2 == 0:
@@ -354,13 +385,42 @@ class AlphaZeroTrainer:
                 while not done:
                     current_player_id_eval = eval_env.current_player_id
                     active_model = current_models[current_player_id_eval]
-                    mcts_eval = MCTS(neural_network=active_model, 
-                                     game_env_class=SwitcharooEnv, 
-                                     config=self.mcts_config)
-                    root_eval = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id_eval)
-                    mcts_eval.run_mcts_simulations(root_eval, np.copy(eval_env.board), current_player_id_eval)
-                    action_probs_eval = mcts_eval.get_action_probabilities(root_eval, eval_temperature)
-                    
+                    if USE_NUMBA:
+                        # print("Using Numba-optimized MCTS implementation.")
+                        mcts_eval = MCTSNumba(
+                            neural_network=active_model,
+                            game_env_class=SwitcharooEnv,
+                            config=self.mcts_config
+                        )
+                        mcts_eval.run_mcts_simulations(
+                            NUM_SIMULATIONS_PER_MOVE,
+                            np.copy(eval_env.board),
+                            current_player_id_eval,
+                            root_node_dummy=None
+                        )
+                        action_probs_eval = mcts_eval.get_action_probabilities(
+                            np.copy(eval_env.board),
+                            current_player_id_eval,
+                            eval_temperature,
+                            root_node_dummy=None
+                        )
+                    else:
+                        # print("Using Python MCTS implementation.")
+                        root_eval = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id_eval)
+                        mcts_eval = MCTS(
+                            neural_network=active_model,
+                            game_env_class=SwitcharooEnv,
+                            config=self.mcts_config
+                        )
+                        mcts_eval.run_mcts_simulations(
+                            root_eval,
+                            np.copy(eval_env.board),
+                            current_player_id_eval
+                        )
+                        action_probs_eval = mcts_eval.get_action_probabilities(
+                            root_eval,
+                            eval_temperature
+                        )                    
                     if np.sum(action_probs_eval) == 0:
                         legal_actions_eval = eval_env.get_legal_action_indices()
                         if not legal_actions_eval: 
@@ -383,18 +443,30 @@ class AlphaZeroTrainer:
                         eval_move_bar.n = game_step_count_eval
                         eval_move_bar.refresh()
                         break
+
             
             game_winner_id = eval_env.winner_id
-            if game_winner_id == 3: 
+            # --- Draw logic fix ---
+            is_draw = False
+            if game_winner_id == 3:
+                is_draw = True
+            elif game_winner_id is None or game_winner_id == 0:
+                is_draw = True
+            elif game_step_count_eval >= MAX_STEPS_PER_EPISODE:
+                is_draw = True
+            if is_draw:
                 draws += 1
-            elif game_winner_id != 0:
-                if (player_A_model == eval_candidate_nn and game_winner_id == PLAYER_A_ID) or \
-                   (player_B_model == eval_candidate_nn and game_winner_id == PLAYER_B_ID):
-                    candidate_wins +=1
-                else:
-                    best_wins +=1
-            
+            elif (player_A_model == eval_candidate_nn and game_winner_id == PLAYER_A_ID) or \
+                 (player_B_model == eval_candidate_nn and game_winner_id == PLAYER_B_ID):
+                candidate_wins += 1
+            else:
+                best_wins += 1
+            # --- End draw logic fix ---
             print(f"  Eval Game {game_idx+1}/{AZ_EVALUATION_GAMES_COUNT}: Candidate ({player_A_name if player_A_model==eval_candidate_nn else player_B_name}) vs Best ({player_A_name if player_A_model==eval_best_nn else player_B_name}). Winner: {eval_env.winner}")
+
+        # Print/check sum of outcomes
+        total_outcomes = candidate_wins + best_wins + draws
+        print(f"[DEBUG] Outcome sum check: Candidate Wins: {candidate_wins}, Best Wins: {best_wins}, Draws: {draws}, Total: {total_outcomes} (should be {AZ_EVALUATION_GAMES_COUNT})")
 
         win_rate = 0
         if (AZ_EVALUATION_GAMES_COUNT - draws) > 0:

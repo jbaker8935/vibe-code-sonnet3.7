@@ -70,32 +70,48 @@ class SwitcharooEnv:
         self.move_history_b = None
         self.reset()
 
-    def reset(self, initial_state=None):
+    def reset(self, starting_position=None, board_state_array=None, specific_player_to_start=None):
         """
-        Resets the game to the initial state.
-        If `initial_state` is provided, it should be a string describing the board.
+        Reset the environment to the initial state.
+
+        Args:
+            starting_position: Optional string describing the board (from config.initial_position).
+            board_state_array: Optional numpy array with the board state to use.
+            specific_player_to_start: Optional player ID to force as the starting player.
+            
+        Returns:
+            The initial state representation.
         """
         self.board.fill(EMPTY_CELL)
-        self.current_player_id = PLAYER_A_ID
+        self.current_player_id = PLAYER_A_ID if specific_player_to_start is None else specific_player_to_start
         self.winner_id = 0
         self.step_count = 0  # Reset step counter
         self._early_game_move_counts = {PLAYER_A_ID: 0, PLAYER_B_ID: 0}
         if hasattr(self, '_last_starting_row_counts'):
             del self._last_starting_row_counts # Ensure this is reset
-        # Only store initial starting row piece counts, not the whole board
-        if initial_state:
-            self.board = parse_initial_position(initial_state, A_NORMAL, B_NORMAL, EMPTY_CELL)
+
+        # Support both string position and direct board array initialization
+        if board_state_array is not None:
+            # Direct copy of provided board state
+            self.board = np.copy(board_state_array)
+        elif starting_position:
+            # Parse string representation
+            self.board = parse_initial_position(starting_position, A_NORMAL, B_NORMAL, EMPTY_CELL)  
         else:
+            # Default initialization
             for r in range(ROWS):
                 for c in range(COLS):
                     if (r < 2):
                         self.board[r, c] = B_NORMAL
                     elif (r > 5):
                         self.board[r, c] = A_NORMAL
+                        
+        # Store initial starting row piece counts
         self._initial_starting_rows = {
             PLAYER_A_ID: np.sum((self.board[6:8, :] == A_NORMAL) | (self.board[6:8, :] == A_SWAPPED)),
             PLAYER_B_ID: np.sum((self.board[0:2, :] == B_NORMAL) | (self.board[0:2, :] == B_SWAPPED)),
         }
+
         return self._get_state()
 
     def _get_state(self):
@@ -109,6 +125,11 @@ class SwitcharooEnv:
         state[-1] = 0.0 if self.current_player_id == PLAYER_A_ID else 1.0
 
         return state
+
+    def _get_state_for_nn(self):
+        """Returns state representation in the format expected by the neural network.
+        This is an alias for _get_state() to maintain compatibility with both MCTS implementations."""
+        return self._get_state()
 
     # _is_valid is now a JIT function
 
@@ -273,6 +294,10 @@ class SwitcharooEnv:
             return 'DRAW'
         return ID_PLAYER_MAP.get(self.winner_id)
 
+    @property
+    def done(self):
+        """Returns whether the game is finished (has a winner or is a draw)."""
+        return self.winner_id != 0  # Any non-zero winner_id (1, 2, or 3) means game is done
 
     def render(self):
         """Prints the board to the console."""
