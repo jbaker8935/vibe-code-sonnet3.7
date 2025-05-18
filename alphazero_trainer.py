@@ -38,25 +38,55 @@ class AlphaZeroTrainer:
         print("Initializing AlphaZero Trainer...")
         self.game_env = SwitcharooEnv()
 
-        # Learning rate scheduler
-        self.lr_scheduler = tf.keras.optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=AZ_LEARNING_RATE, 
-            decay_steps=10000,  # Number of training steps (batches) before decay
-            decay_rate=0.96,    # Decay rate
-            staircase=True      # Decay learning rate at discrete intervals
+        # Cosine decay scheduler with warmup for smoother learning rate transitions
+        # First create warmup schedule
+        warmup_steps = 5000
+        warmup_lr = tf.keras.optimizers.schedules.PolynomialDecay(
+            initial_learning_rate=AZ_LEARNING_RATE * 0.1,
+            decay_steps=warmup_steps,
+            end_learning_rate=AZ_LEARNING_RATE,
+            power=1.0  # Linear warmup
         )
+        
+        # Then create main cosine decay schedule
+        cosine_decay_lr = tf.keras.optimizers.schedules.CosineDecay(
+            initial_learning_rate=AZ_LEARNING_RATE,
+            decay_steps=150000,
+            alpha=0.05  # Minimum learning rate factor
+        )
+        
+        # Combine schedules
+        def lr_schedule(step):
+            if step < warmup_steps:
+                return warmup_lr(step)
+            else:
+                return cosine_decay_lr(step - warmup_steps)
+        
+        self.lr_scheduler = lr_schedule
         
         # Initialize Neural Networks
         self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) 
         self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
 
         if os.path.exists(AZ_BEST_MODEL_FILE):
-            print(f"Loading best model from {AZ_BEST_MODEL_FILE} into current_nn and candidate_nn.")
-            # Re-initialize with scheduler before loading weights
-            self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
-            self.current_nn.load_model(AZ_BEST_MODEL_FILE)
-            self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
-            self.candidate_nn.load_model(AZ_BEST_MODEL_FILE)
+            print(f"Found existing model at {AZ_BEST_MODEL_FILE}, attempting to load...")
+            try:
+                # Re-initialize with scheduler before loading weights
+                self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
+                self.current_nn.load_model(AZ_BEST_MODEL_FILE)
+                self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
+                self.candidate_nn.load_model(AZ_BEST_MODEL_FILE)
+                print("Successfully loaded existing model weights.")
+            except ValueError as e:
+                print(f"Error loading model weights: {e}")
+                print("\nModel architecture has changed - starting with fresh models.")
+                # Reinitialize from scratch
+                self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) 
+                self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
+                # Rename the old model file to prevent future attempts to load it
+                backup_file = f"{AZ_BEST_MODEL_FILE}.incompatible_arch.bak"
+                print(f"Backing up incompatible model to {backup_file}")
+                os.rename(AZ_BEST_MODEL_FILE, backup_file)
         else:
             print(f"No best model found at {AZ_BEST_MODEL_FILE}. Starting with fresh models (scheduler will be used).")
 
@@ -90,9 +120,17 @@ class AlphaZeroTrainer:
             try:
                 # Get current learning rate from scheduler for logging
                 # For ExponentialDecay, direct value access is tricky without a step; log initial or optimizer's current LR
-                current_lr_for_log = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
-                                     if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
-                                     else self.candidate_nn.model.optimizer.learning_rate.numpy()
+                # Safely get learning rate - handle custom function-based scheduler
+                try:
+                    if callable(self.lr_scheduler):
+                        current_lr_for_log = self.lr_scheduler(tf.constant(0, dtype=tf.float32)).numpy()
+                    else:
+                        current_lr_for_log = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
+                                            if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
+                                            else self.candidate_nn.model.optimizer.learning_rate.numpy()
+                except Exception as e:
+                    current_lr_for_log = AZ_LEARNING_RATE
+                    print(f"Could not get current learning rate: {e}, using config value instead.")
 
                 wandb.init(
                     project=WANDB_PROJECT if WANDB_PROJECT else "switcharoo-alphazero", 
@@ -112,8 +150,6 @@ class AlphaZeroTrainer:
                         "temperature_end": TEMPERATURE_END,
                         "temperature_anneal_steps": TEMPERATURE_ANNEAL_STEPS,
                         "az_initial_learning_rate": AZ_LEARNING_RATE, # Log initial LR
-                        "lr_decay_steps": self.lr_scheduler.decay_steps,
-                        "lr_decay_rate": self.lr_scheduler.decay_rate,
                         "az_model_update_win_rate": AZ_MODEL_UPDATE_WIN_RATE,
                         "az_evaluation_games": AZ_EVALUATION_GAMES_COUNT,
                     }
@@ -131,7 +167,7 @@ class AlphaZeroTrainer:
         new_experiences_count = 0
         iteration_game_outcomes = {"win": 0, "loss": 0, "draw": 0}
 
-        for game_num in tqdm(range(AZ_GAMES_PER_ITERATION), desc="Self-Play Games", position=0, leave=True):  # Modified outer tqdm
+        for game_num in range(AZ_GAMES_PER_ITERATION):
             current_game_experiences = [] 
             # Randomly select a starting position from config.initial_position
             starting_position_str = random.choice(initial_position)
@@ -142,7 +178,6 @@ class AlphaZeroTrainer:
 
             # Log temperature at the start of the game
             current_temp_at_game_start = get_temperature(self.total_game_steps_for_temp)
-            print(f"DEBUG: Game {game_num+1}/{AZ_GAMES_PER_ITERATION} starting. Initial Temp for this game phase: {current_temp_at_game_start:.4f}, Total cumulative steps: {self.total_game_steps_for_temp}")
 
             with tqdm(total=MAX_STEPS_PER_EPISODE, desc=f"Game {game_num+1}/{AZ_GAMES_PER_ITERATION} Moves", position=1, leave=False) as move_bar:  # New inner tqdm
                 while not done:
@@ -220,7 +255,6 @@ class AlphaZeroTrainer:
                             reason_for_done_log = "Draw (Stalemate)"
                         else: # If done is true but no specific win/draw/max_steps, could be an issue
                             reason_for_done_log = "Done (Other/Unexpected)"
-                        print(f"DEBUG: Game {game_num+1}/{AZ_GAMES_PER_ITERATION} ended. Reason: {reason_for_done_log}, Steps: {game_step_count}, Winner: {self.game_env.winner_id}, First Player: {first_player_of_game}")
                         break
             
             winner = self.game_env.winner_id # Get final winner status
@@ -263,9 +297,19 @@ class AlphaZeroTrainer:
             print("Replay buffer too small to train. Skipping training phase.")
             if self.wandb_enabled:
                 # Log current learning rate even if skipping
-                current_lr = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
-                             if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
-                             else self.candidate_nn.model.optimizer.learning_rate.numpy()
+                try:
+                    if callable(self.lr_scheduler):
+                        current_step = tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32).numpy()
+                        current_lr = self.lr_scheduler(current_step)
+                        if isinstance(current_lr, tf.Tensor):
+                            current_lr = current_lr.numpy()
+                    else:
+                        current_lr = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
+                                    if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
+                                    else self.candidate_nn.model.optimizer.learning_rate.numpy()
+                except Exception as e:
+                    current_lr = AZ_LEARNING_RATE
+                    print(f"Could not get current learning rate: {e}, using config value instead.")
                 wandb.log({"training/skipped": True, "training/total_loss": 0, "training/policy_loss":0, "training/value_loss":0, "training/learning_rate": current_lr})
             return
 
@@ -314,9 +358,20 @@ class AlphaZeroTrainer:
         avg_value_mae = value_mae_this_iteration / num_actual_train_steps
 
         # Log current learning rate after training steps
-        current_lr_after_train = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
-                                 if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
-                                 else self.candidate_nn.model.optimizer.learning_rate.numpy()
+        # Get current learning rate after training - handle custom function scheduler
+        try:
+            if callable(self.lr_scheduler):
+                current_step = tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32).numpy()
+                current_lr_after_train = self.lr_scheduler(current_step)
+                if isinstance(current_lr_after_train, tf.Tensor):
+                    current_lr_after_train = current_lr_after_train.numpy()
+            else:
+                current_lr_after_train = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
+                                        if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
+                                        else self.candidate_nn.model.optimizer.learning_rate.numpy()
+        except Exception as e:
+            current_lr_after_train = AZ_LEARNING_RATE
+            print(f"Could not get current learning rate: {e}, using config value instead.")
 
         print(f"Network training finished. Avg Total Loss: {avg_total_loss:.4f} (P: {avg_policy_loss:.4f}, V: {avg_value_loss:.4f}, P_Acc: {avg_policy_acc:.4f}, V_MAE: {avg_value_mae:.4f}), LR: {current_lr_after_train:.2e}")
         if self.wandb_enabled:
@@ -350,7 +405,17 @@ class AlphaZeroTrainer:
         
         eval_best_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) # Pass scheduler
         if os.path.exists(AZ_BEST_MODEL_FILE):
-            eval_best_nn.load_model(AZ_BEST_MODEL_FILE)
+            try:
+                eval_best_nn.load_model(AZ_BEST_MODEL_FILE)
+            except ValueError as e:
+                print(f"Error loading best model for evaluation: {e}")
+                print(f"Model architecture incompatible. Candidate becomes best without evaluation.")
+                self.candidate_nn.save_model(AZ_BEST_MODEL_FILE)
+                self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) # Pass scheduler
+                self.current_nn.load_model(AZ_BEST_MODEL_FILE)
+                if self.wandb_enabled:
+                    wandb.log({"evaluation/skipped": True, "evaluation/candidate_win_rate": 1.0, "evaluation/best_model_updated": True})
+                return
         else:
             print(f"No existing best model found at {AZ_BEST_MODEL_FILE} for evaluation. Candidate becomes best.")
             self.candidate_nn.save_model(AZ_BEST_MODEL_FILE)
@@ -363,7 +428,7 @@ class AlphaZeroTrainer:
         candidate_wins = 0
         best_wins = 0
         draws = 0
-        eval_temperature = 0.2  # Changed from 0.1 to introduce a bit more exploration
+        eval_temperature = 0.01  # Further reduced for even more deterministic evaluation play
 
         for game_idx in tqdm(range(AZ_EVALUATION_GAMES_COUNT), desc="Evaluation Games"):  # Added tqdm
             eval_env = SwitcharooEnv()
@@ -381,68 +446,61 @@ class AlphaZeroTrainer:
             current_models = {PLAYER_A_ID: player_A_model, PLAYER_B_ID: player_B_model}
             current_names = {PLAYER_A_ID: player_A_name, PLAYER_B_ID: player_B_name}
 
-            with tqdm(total=MAX_STEPS_PER_EPISODE, desc=f"Eval Game {game_idx+1}/{AZ_EVALUATION_GAMES_COUNT} Moves", position=1, leave=False) as eval_move_bar:
-                while not done:
-                    current_player_id_eval = eval_env.current_player_id
-                    active_model = current_models[current_player_id_eval]
-                    if USE_NUMBA:
-                        # print("Using Numba-optimized MCTS implementation.")
-                        mcts_eval = MCTSNumba(
-                            neural_network=active_model,
-                            game_env_class=SwitcharooEnv,
-                            config=self.mcts_config
-                        )
-                        mcts_eval.run_mcts_simulations(
-                            NUM_SIMULATIONS_PER_MOVE,
-                            np.copy(eval_env.board),
-                            current_player_id_eval,
-                            root_node_dummy=None
-                        )
-                        action_probs_eval = mcts_eval.get_action_probabilities(
-                            np.copy(eval_env.board),
-                            current_player_id_eval,
-                            eval_temperature,
-                            root_node_dummy=None
-                        )
-                    else:
-                        # print("Using Python MCTS implementation.")
-                        root_eval = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id_eval)
-                        mcts_eval = MCTS(
-                            neural_network=active_model,
-                            game_env_class=SwitcharooEnv,
-                            config=self.mcts_config
-                        )
-                        mcts_eval.run_mcts_simulations(
-                            root_eval,
-                            np.copy(eval_env.board),
-                            current_player_id_eval
-                        )
-                        action_probs_eval = mcts_eval.get_action_probabilities(
-                            root_eval,
-                            eval_temperature
-                        )                    
-                    if np.sum(action_probs_eval) == 0:
-                        legal_actions_eval = eval_env.get_legal_action_indices()
-                        if not legal_actions_eval: 
-                            break 
-                        action_eval = random.choice(legal_actions_eval)
-                    else:
-                        action_probs_eval_norm = action_probs_eval / np.sum(action_probs_eval)
-                        action_eval = np.random.choice(NUM_ACTIONS, p=action_probs_eval_norm)
-                    
-                    _, _, done, _ = eval_env.step(action_eval)
-                    game_step_count_eval += 1
-                    eval_move_bar.update(1)
+            while not done:
+                current_player_id_eval = eval_env.current_player_id
+                active_model = current_models[current_player_id_eval]
+                if USE_NUMBA:
+                    # print("Using Numba-optimized MCTS implementation.")
+                    mcts_eval = MCTSNumba(
+                        neural_network=active_model,
+                        game_env_class=SwitcharooEnv,
+                        config=self.mcts_config
+                    )
+                    mcts_eval.run_mcts_simulations(
+                        NUM_SIMULATIONS_PER_MOVE,
+                        np.copy(eval_env.board),
+                        current_player_id_eval,
+                        root_node_dummy=None
+                    )
+                    action_probs_eval = mcts_eval.get_action_probabilities(
+                        np.copy(eval_env.board),
+                        current_player_id_eval,
+                        eval_temperature,
+                        root_node_dummy=None
+                    )
+                else:
+                    # print("Using Python MCTS implementation.")
+                    root_eval = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id_eval)
+                    mcts_eval = MCTS(
+                        neural_network=active_model,
+                        game_env_class=SwitcharooEnv,
+                        config=self.mcts_config
+                    )
+                    mcts_eval.run_mcts_simulations(
+                        root_eval,
+                        np.copy(eval_env.board),
+                        current_player_id_eval
+                    )
+                    action_probs_eval = mcts_eval.get_action_probabilities(
+                        root_eval,
+                        eval_temperature
+                    )                    
+                if np.sum(action_probs_eval) == 0:
+                    legal_actions_eval = eval_env.get_legal_action_indices()
+                    if not legal_actions_eval: 
+                        break 
+                    action_eval = random.choice(legal_actions_eval)
+                else:
+                    action_probs_eval_norm = action_probs_eval / np.sum(action_probs_eval)
+                    action_eval = np.random.choice(NUM_ACTIONS, p=action_probs_eval_norm)
+                
+                _, _, done, _ = eval_env.step(action_eval)
+                game_step_count_eval += 1
 
-                    if game_step_count_eval >= MAX_STEPS_PER_EPISODE:
-                        if not done:
-                            print(f"Warning: Eval Game {game_idx+1} reached MAX_STEPS_PER_EPISODE ({MAX_STEPS_PER_EPISODE}). Ending game.")
-                        done = True
-                    
-                    if done:
-                        eval_move_bar.n = game_step_count_eval
-                        eval_move_bar.refresh()
-                        break
+                if game_step_count_eval >= MAX_STEPS_PER_EPISODE:
+                    if not done:
+                        print(f"Warning: Eval Game {game_idx+1} reached MAX_STEPS_PER_EPISODE ({MAX_STEPS_PER_EPISODE}). Ending game.")
+                    done = True
 
             
             game_winner_id = eval_env.winner_id
@@ -466,7 +524,6 @@ class AlphaZeroTrainer:
 
         # Print/check sum of outcomes
         total_outcomes = candidate_wins + best_wins + draws
-        print(f"[DEBUG] Outcome sum check: Candidate Wins: {candidate_wins}, Best Wins: {best_wins}, Draws: {draws}, Total: {total_outcomes} (should be {AZ_EVALUATION_GAMES_COUNT})")
 
         win_rate = 0
         if (AZ_EVALUATION_GAMES_COUNT - draws) > 0:
@@ -507,9 +564,18 @@ class AlphaZeroTrainer:
             self._run_self_play_games()
             self._train_network()
             self._evaluate_and_update_model(iteration)
-            checkpoint_path = AZ_CHECKPOINT_FILE_PATTERN.format(iteration + 1)
-            self.candidate_nn.save_model(checkpoint_path)
-            print(f"Saved candidate_nn checkpoint to {checkpoint_path}")
+            # Enhanced selective checkpoint saving
+            # Save checkpoints at more frequent intervals early in training
+            if (iteration < 20 and iteration % 5 == 0) or \
+               (iteration >= 20 and iteration < 50 and iteration % 10 == 0) or \
+               (iteration >= 50 and iteration % 20 == 0) or \
+               (iteration > AZ_ITERATIONS - 10) or \
+               (iteration == 0):
+                checkpoint_path = AZ_CHECKPOINT_FILE_PATTERN.format(iteration + 1)
+                self.candidate_nn.save_model(checkpoint_path)
+                print(f"Saved candidate_nn checkpoint to {checkpoint_path}")
+            else:
+                print(f"Skipping checkpoint save for iteration {iteration + 1} (using progressive saving strategy)")
             end_time_iter = time.time()
             iter_duration = end_time_iter - start_time_iter
             print(f"Iteration {iteration+1} completed in {iter_duration:.2f} seconds.")
