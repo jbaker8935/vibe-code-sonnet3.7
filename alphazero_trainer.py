@@ -563,6 +563,22 @@ class AlphaZeroTrainer:
         for iteration in range(AZ_ITERATIONS):
             print(f"\n===== Iteration {iteration+1}/{AZ_ITERATIONS} =====")
             start_time_iter = time.time()
+            # Log GPU memory usage if available
+            try:
+                if gpus:
+                    memory_info = {}
+                    for device in tf.config.list_physical_devices('GPU'):
+                        device_idx = device.name.split(':')[-1]
+                        memory_stats = tf.config.experimental.get_memory_info(f'/device:GPU:{device_idx}')
+                        if memory_stats:
+                            memory_info[f'gpu_{device_idx}_memory_used_gb'] = memory_stats['current'] / (1024**3)
+                            memory_info[f'gpu_{device_idx}_memory_limit_gb'] = memory_stats['peak'] / (1024**3)
+                    if memory_info and self.wandb_enabled:
+                        wandb.log(memory_info)
+                    print(f"GPU Memory Usage: {memory_info}")
+            except Exception as e:
+                print(f"Note: Could not log GPU memory usage: {e}")
+            
             self._run_self_play_games()
             self._train_network()
             self._evaluate_and_update_model(iteration)
@@ -592,6 +608,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run AlphaZero Trainer for Switcharoo.")
     parser.add_argument('--no-wandb', action='store_true', help="Disable Weights & Biases logging.")
     args = parser.parse_args()
+
+    # Enable XLA JIT compilation for better GPU performance
+    tf.config.optimizer.set_jit(True)
+    
+    # Enable mixed precision training for better GPU utilization and reduced register usage
+    try:
+        policy = tf.keras.mixed_precision.Policy('mixed_float16')
+        tf.keras.mixed_precision.set_global_policy(policy)
+        print("Mixed precision training enabled (float16/float32)")
+    except Exception as e:
+        print(f"Could not enable mixed precision training: {e}")
 
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:

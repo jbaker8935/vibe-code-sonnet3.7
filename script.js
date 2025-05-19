@@ -1,14 +1,42 @@
-document.addEventListener('DOMContentLoaded', async () => {
-    // Force CPU backend for wider operation support
+document.addEventListener('DOMContentLoaded', async () => {    // Try best available backend: WebGL > WASM > CPU
     try {
         if (typeof tf !== 'undefined') {
-            await tf.setBackend('cpu');
-            console.log("TensorFlow.js backend set to CPU.");
+            // Check available backends
+            const backends = Object.keys(tf.engine().registryFactory);
+            console.log("Available TF.js backends:", backends);
+            
+            // Try WebGL first for better performance on devices that support it
+            if (backends.includes('webgl')) {
+                try {
+                    await tf.setBackend('webgl');
+                    console.log("TensorFlow.js using WebGL backend for best performance");
+                } catch (webglError) {
+                    console.warn("WebGL backend failed, falling back to alternatives:", webglError);
+                }
+            }
+            // If WebGL fails or isn't available, try WASM for better CPU performance
+            else if (backends.includes('wasm')) {
+                try {
+                    await tf.setBackend('wasm');
+                    console.log("TensorFlow.js using WASM backend for improved CPU performance");
+                } catch (wasmError) {
+                    console.warn("WASM backend failed, falling back to CPU:", wasmError);
+                    await tf.setBackend('cpu');
+                    console.log("TensorFlow.js using CPU backend");
+                }
+            } 
+            // Default to CPU as last resort
+            else {
+                await tf.setBackend('cpu');
+                console.log("TensorFlow.js using CPU backend");
+            }
+            
+            console.log("Active backend:", tf.getBackend());
         } else {
             console.warn("tf object not available at the time of setting backend.");
         }
     } catch (e) {
-        console.error("Error setting TF.js backend to CPU:", e);
+        console.error("Error setting TF.js backend:", e);
     }
 
     const ROWS = 8;

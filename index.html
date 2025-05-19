@@ -109,10 +109,10 @@
             <div class="spinner"></div>
             Thinking ...
         </div>
-    </div>
-
-    <!-- Import TensorFlow.js library first -->
+    </div>    <!-- Import TensorFlow.js Core library first -->
     <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+    <!-- Add WASM backend for better mobile performance -->
+    <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.22.0/dist/tf-backend-wasm.min.js"></script>
     <!-- Then load our module code -->
     <script defer src="script.js"></script>
 </body>

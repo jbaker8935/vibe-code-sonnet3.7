@@ -101,6 +101,7 @@ if __name__ == '__main__':
                     "tensorflowjs_converter",
                     "--input_format", "tf_saved_model",
                     "--output_format", "tfjs_graph_model", # Explicitly graph model
+                    "--quantize_float16", # Add 16-bit floating point quantization for mobile
                     ABS_SAVED_MODEL_PATH, 
                     ABS_TFJS_OUTPUT_DIR
                 ]

@@ -120,9 +120,9 @@ DIRICHLET_EPSILON = 0.25        # Moderate noise application for balance
 # AlphaZero Training Loop Parameters
 AZ_ITERATIONS = 500                # Increased from 180 to 500 for 12-hour training
 AZ_GAMES_PER_ITERATION = 80        # Increased from 60 to 80 for more experience collection
-AZ_TRAINING_STEPS_PER_ITERATION = 1200 # Increased from 800 to 1200 for deeper learning
+AZ_TRAINING_STEPS_PER_ITERATION = 1500 # Increased from 800 to 1500 for deeper learning with smaller batch
 AZ_REPLAY_BUFFER_SIZE = 500000     # Doubled from 250000 to maintain more diverse experiences
-AZ_BATCH_SIZE = 512                # Increased from 384 to 512 for better gradient estimates
+AZ_BATCH_SIZE = 384                # Reduced from 512 to 384 to avoid register spilling
 AZ_EVALUATION_GAMES_COUNT = 60     # Increased from 40 to 60 for more statistically significant evaluation
 AZ_MODEL_UPDATE_WIN_RATE = 0.52    # Slightly increased from 0.48 for more selective model updates
 
