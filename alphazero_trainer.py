@@ -55,14 +55,31 @@ class AlphaZeroTrainer:
             alpha=0.05  # Minimum learning rate factor
         )
         
-        # Combine schedules
-        def lr_schedule(step):
-            if step < warmup_steps:
-                return warmup_lr(step)
-            else:
-                return cosine_decay_lr(step - warmup_steps)
+        # Combine schedules using a proper LearningRateSchedule class
+        class CustomLearningRateSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
+            def __init__(self, warmup_schedule, main_schedule, warmup_steps):
+                super(CustomLearningRateSchedule, self).__init__()
+                self.warmup_schedule = warmup_schedule
+                self.main_schedule = main_schedule
+                self.warmup_steps = warmup_steps
+            
+            def __call__(self, step):
+                step_float = tf.cast(step, tf.float32)
+                # Use tf.cond for TensorFlow-compatible conditional logic
+                return tf.cond(
+                    tf.less(step_float, tf.cast(self.warmup_steps, tf.float32)),
+                    lambda: self.warmup_schedule(step_float),
+                    lambda: self.main_schedule(step_float - tf.cast(self.warmup_steps, tf.float32))
+                )
+            
+            def get_config(self):
+                return {
+                    "warmup_schedule": self.warmup_schedule,
+                    "main_schedule": self.main_schedule,
+                    "warmup_steps": self.warmup_steps
+                }
         
-        self.lr_scheduler = lr_schedule
+        self.lr_scheduler = CustomLearningRateSchedule(warmup_lr, cosine_decay_lr, warmup_steps)
         
         # Initialize Neural Networks
         self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) 
@@ -122,12 +139,9 @@ class AlphaZeroTrainer:
                 # For ExponentialDecay, direct value access is tricky without a step; log initial or optimizer's current LR
                 # Safely get learning rate - handle custom function-based scheduler
                 try:
-                    if callable(self.lr_scheduler):
-                        current_lr_for_log = self.lr_scheduler(tf.constant(0, dtype=tf.float32)).numpy()
-                    else:
-                        current_lr_for_log = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
-                                            if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
-                                            else self.candidate_nn.model.optimizer.learning_rate.numpy()
+                    # Get current learning rate using the scheduler
+                    step = tf.constant(0, dtype=tf.float32)
+                    current_lr_for_log = self.lr_scheduler(step).numpy()
                 except Exception as e:
                     current_lr_for_log = AZ_LEARNING_RATE
                     print(f"Could not get current learning rate: {e}, using config value instead.")
@@ -298,15 +312,9 @@ class AlphaZeroTrainer:
             if self.wandb_enabled:
                 # Log current learning rate even if skipping
                 try:
-                    if callable(self.lr_scheduler):
-                        current_step = tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32).numpy()
-                        current_lr = self.lr_scheduler(current_step)
-                        if isinstance(current_lr, tf.Tensor):
-                            current_lr = current_lr.numpy()
-                    else:
-                        current_lr = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
-                                    if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
-                                    else self.candidate_nn.model.optimizer.learning_rate.numpy()
+                    # Get current learning rate using the scheduler with current optimizer step
+                    current_step = tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32)
+                    current_lr = self.lr_scheduler(current_step).numpy()
                 except Exception as e:
                     current_lr = AZ_LEARNING_RATE
                     print(f"Could not get current learning rate: {e}, using config value instead.")
@@ -360,15 +368,9 @@ class AlphaZeroTrainer:
         # Log current learning rate after training steps
         # Get current learning rate after training - handle custom function scheduler
         try:
-            if callable(self.lr_scheduler):
-                current_step = tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32).numpy()
-                current_lr_after_train = self.lr_scheduler(current_step)
-                if isinstance(current_lr_after_train, tf.Tensor):
-                    current_lr_after_train = current_lr_after_train.numpy()
-            else:
-                current_lr_after_train = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy() \
-                                        if hasattr(self.candidate_nn.model.optimizer.learning_rate, '__call__') \
-                                        else self.candidate_nn.model.optimizer.learning_rate.numpy()
+            # Get current learning rate using the scheduler with current optimizer step
+            current_step = tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32)
+            current_lr_after_train = self.lr_scheduler(current_step).numpy()
         except Exception as e:
             current_lr_after_train = AZ_LEARNING_RATE
             print(f"Could not get current learning rate: {e}, using config value instead.")
