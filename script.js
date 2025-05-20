@@ -31,6 +31,9 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 console.log("TensorFlow.js using CPU backend");
             }
             
+            // Ensure backend is ready before loading model
+            await tf.ready();
+            
             console.log("Active backend:", tf.getBackend());
         } else {
             console.warn("tf object not available at the time of setting backend.");

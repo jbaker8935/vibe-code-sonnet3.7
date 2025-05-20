@@ -5,8 +5,9 @@ import time
 import os
 import random
 import wandb
-from tqdm import tqdm  # Added for progress bars
-import argparse  # Add argparse import
+import argparse
+import traceback
+from tqdm import tqdm
 
 from game_env import SwitcharooEnv
 from az_network import AlphaZeroNetwork, build_alpha_zero_network
@@ -21,7 +22,8 @@ from config import (
     DIRICHLET_ALPHA, DIRICHLET_EPSILON, C_PUCT_CONSTANT,
     WANDB_PROJECT, WANDB_ENTITY, MAX_STEPS_PER_EPISODE, AZ_LEARNING_RATE,  # Added AZ_LEARNING_RATE
     initial_position,  # Added initial_position
-    USE_NUMBA  # Added USE_NUMBA
+    USE_NUMBA,  # Added USE_NUMBA
+    AZ_POLICY_LOSS_WEIGHT, AZ_VALUE_LOSS_WEIGHT  # Added loss weights
 )
 from env_const import PLAYER_A_ID, PLAYER_B_ID, NUM_ACTIONS
 
@@ -306,6 +308,30 @@ class AlphaZeroTrainer:
                 "self_play/current_temperature": get_temperature(self.total_game_steps_for_temp) 
             })
 
+    @tf.function
+    def get_gradients_and_norm(self, state_batch, policy_targets, value_targets):
+        with tf.GradientTape() as tape:
+            # Use the model directly for the forward pass
+            policy_output, value_output = self.candidate_nn.model(state_batch, training=True)
+            
+            # Ensure outputs are float32 for loss calculation if mixed precision is used
+            policy_output = tf.cast(policy_output, tf.float32)
+            value_output = tf.cast(value_output, tf.float32)
+            policy_targets = tf.cast(policy_targets, tf.float32) # These are already float32 from caller
+            value_targets = tf.cast(value_targets, tf.float32)   # These are already float32 from caller
+
+            policy_loss = tf.reduce_mean(tf.keras.losses.categorical_crossentropy(policy_targets, policy_output))
+            value_loss = tf.reduce_mean(tf.square(value_targets - value_output))
+            total_loss = policy_loss + value_loss
+            
+            # Apply L2 regularization
+            l2_loss = sum(self.candidate_nn.model.losses) # Access losses from the model
+            total_loss += l2_loss
+
+        gradients = tape.gradient(total_loss, self.candidate_nn.model.trainable_variables) # Get gradients from the model
+        grad_norm = tf.linalg.global_norm(gradients)
+        return gradients, grad_norm, total_loss, policy_loss, value_loss
+
     def _train_network(self):
         if len(self.replay_buffer) < AZ_BATCH_SIZE:
             print("Replay buffer too small to train. Skipping training phase.")
@@ -327,6 +353,10 @@ class AlphaZeroTrainer:
         value_loss_this_iteration = 0
         policy_accuracy_this_iteration = 0
         value_mae_this_iteration = 0
+        
+        # Track gradient norms for debugging
+        gradient_norms = []
+        nan_loss_count = 0
 
         for train_step in tqdm(range(AZ_TRAINING_STEPS_PER_ITERATION), desc="Training Steps"):  # Added tqdm
             if len(self.replay_buffer) < AZ_BATCH_SIZE:
@@ -336,56 +366,135 @@ class AlphaZeroTrainer:
             batch_states = np.array([data[0] for data in minibatch])
             batch_policy_targets = np.array([data[1] for data in minibatch])
             batch_value_targets = np.array([data[2] for data in minibatch]).reshape(-1, 1)
-
-            loss_metrics = self.candidate_nn.model.train_on_batch(
-                batch_states,
-                {'policy_output': batch_policy_targets, 'value_output': batch_value_targets}
+            
+            # Check for NaN or Inf values in input data
+            has_invalid_data = (
+                np.any(np.isnan(batch_states)) or 
+                np.any(np.isnan(batch_policy_targets)) or 
+                np.any(np.isnan(batch_value_targets)) or
+                np.any(np.isinf(batch_states)) or 
+                np.any(np.isinf(batch_policy_targets)) or 
+                np.any(np.isinf(batch_value_targets))
             )
             
-            if isinstance(loss_metrics, list) and len(loss_metrics) >= 5:
-                 total_loss_this_iteration += loss_metrics[0]
-                 policy_loss_this_iteration += loss_metrics[1] 
-                 value_loss_this_iteration += loss_metrics[2]
-                 policy_accuracy_this_iteration += loss_metrics[3]
-                 value_mae_this_iteration += loss_metrics[4]
-            elif isinstance(loss_metrics, list) and len(loss_metrics) >=3:
-                 total_loss_this_iteration += loss_metrics[0]
-                 policy_loss_this_iteration += loss_metrics[1]
-                 value_loss_this_iteration += loss_metrics[2]
-            else: 
-                total_loss_this_iteration += loss_metrics
+            if has_invalid_data:
+                print(f"Warning: Invalid data detected in batch {train_step}. Skipping this batch.")
+                continue
+
+            # Normalize policy targets to ensure they sum to 1.0
+            # Sometimes numerical precision can cause softmax outputs to not sum exactly to 1
+            sum_policy = np.sum(batch_policy_targets, axis=1, keepdims=True)
+            valid_policy_sums = sum_policy > 1e-10  # Filter out all-zero policies
+            batch_policy_targets = np.where(
+                valid_policy_sums, 
+                batch_policy_targets / np.maximum(sum_policy, 1e-10),  # Normalize to sum to 1
+                batch_policy_targets
+            )
+            
+            # Monitor gradients every 100 steps (to avoid slowing down training)
+            if train_step % 100 == 0:
+                try:
+                    # Convert numpy arrays to tensors
+                    state_tensor = tf.convert_to_tensor(batch_states, dtype=tf.float32)
+                    policy_tensor = tf.convert_to_tensor(batch_policy_targets, dtype=tf.float32)
+                    value_tensor = tf.convert_to_tensor(batch_value_targets, dtype=tf.float32)
+                    
+                    # Get gradients and norm
+                    gradients, grad_norm, _, _, _ = self.get_gradients_and_norm(state_tensor, policy_tensor, value_tensor)
+                    gradient_norms.append(grad_norm.numpy())
+                except TypeError as te:
+                    print(f"Error calculating gradient norm: {te}")
+                    # Optionally, log the traceback for more details
+                    # traceback.print_exc()
+                except Exception as e:
+                    print(f"An unexpected error occurred during gradient norm calculation: {e}")
+                    # traceback.print_exc()
+            
+            # Perform the training step
+            # The train_step method is part of the Keras Model API, not custom
+            loss_info = self.candidate_nn.model.train_on_batch(
+                batch_states, 
+                {'policy_output': batch_policy_targets, 'value_output': batch_value_targets},
+                return_dict=True
+            )
+            # Keras train_on_batch returns a dict with loss and metrics if return_dict=True
+            # The keys depend on what was compiled. Default is 'loss', 'policy_output_loss', 'value_output_loss'
+            # and metrics like 'policy_output_accuracy', 'value_output_mae'
+            total_loss = loss_info.get('loss', 0) # Default to 'loss' for total loss
+            policy_loss = loss_info.get('policy_output_loss', 0) # Or the specific name of policy loss
+            value_loss = loss_info.get('value_output_loss', 0)   # Or the specific name of value loss
+            policy_accuracy = loss_info.get('policy_output_accuracy', 0) # Or specific name
+            value_mae = loss_info.get('value_output_mae', 0) # Or specific name
+
+            # Check for NaN in loss metrics
+            if np.isnan(total_loss):
+                print(f"Warning: NaN loss detected at step {train_step}. Model may be diverging.")
+                nan_loss_count += 1
+                
+                # If we get too many NaN losses, stop training
+                if nan_loss_count > 10:
+                    print("Too many NaN losses detected. Stopping training.")
+                    break
+                continue  # Skip this batch for metrics accumulation
+            
+            total_loss_this_iteration += total_loss
+            policy_loss_this_iteration += policy_loss
+            value_loss_this_iteration += value_loss
+            policy_accuracy_this_iteration += policy_accuracy
+            value_mae_this_iteration += value_mae
+
+        # Calculate effective number of steps for averaging
+        # train_step is the index of the last step run or attempted in the loop.
+        # If loop completed, train_step = AZ_TRAINING_STEPS_PER_ITERATION - 1.
+        # If loop broke early, train_step is the index of the step it broke on.
+        # Number of iterations for averaging = train_step + 1, if loop ran at least once.
+        num_steps_processed = 0
+        if 'train_step' in locals() and train_step >= 0 : # Check if loop ran at least one iteration
+            num_steps_processed = train_step + 1
+            if nan_loss_count >= 10: # If training stopped due to NaNs
+                 # Only count steps before NaN limit was hit.
+                 # train_step is the step where the 10th NaN occurred or loop ended.
+                 # The actual number of steps that contributed to sums is train_step (0-indexed)
+                 # if the break was due to NaNs.
+                 # However, the current logic accumulates losses even for NaN steps before breaking.
+                 # For simplicity, we use train_step + 1, assuming it reflects iterations attempted.
+                 pass # num_steps_processed is already train_step + 1
+
+        avg_total_loss = total_loss_this_iteration / num_steps_processed if num_steps_processed > 0 else 0
+        avg_policy_loss = policy_loss_this_iteration / num_steps_processed if num_steps_processed > 0 else 0
+        avg_value_loss = value_loss_this_iteration / num_steps_processed if num_steps_processed > 0 else 0
+        avg_policy_accuracy = policy_accuracy_this_iteration / num_steps_processed if num_steps_processed > 0 else 0
+        avg_value_mae = value_mae_this_iteration / num_steps_processed if num_steps_processed > 0 else 0
         
-        num_actual_train_steps = AZ_TRAINING_STEPS_PER_ITERATION if AZ_TRAINING_STEPS_PER_ITERATION > 0 else 1
-        if train_step + 1 < AZ_TRAINING_STEPS_PER_ITERATION and train_step + 1 > 0:  # check if training broke early
-             num_actual_train_steps = train_step + 1
-
-        avg_total_loss = total_loss_this_iteration / num_actual_train_steps
-        avg_policy_loss = policy_loss_this_iteration / num_actual_train_steps
-        avg_value_loss = value_loss_this_iteration / num_actual_train_steps
-        avg_policy_acc = policy_accuracy_this_iteration / num_actual_train_steps
-        avg_value_mae = value_mae_this_iteration / num_actual_train_steps
-
-        # Log current learning rate after training steps
-        # Get current learning rate after training - handle custom function scheduler
+        current_lr_val = 0.0
         try:
-            # Get current learning rate using the scheduler with current optimizer step
-            current_step = tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32)
-            current_lr_after_train = self.lr_scheduler(current_step).numpy()
-        except Exception as e:
-            current_lr_after_train = AZ_LEARNING_RATE
-            print(f"Could not get current learning rate: {e}, using config value instead.")
+            # Try to get LR from the optimizer directly
+            current_lr_val = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy()
+        except AttributeError: # Optimizer might not be Keras Adam or iterations not tracked that way
+            try:
+                current_lr_val = self.lr_scheduler(tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32)).numpy()
+            except Exception: # Fallback if everything else fails
+                 current_lr_val = AZ_LEARNING_RATE # Default to initial config if dynamic LR cannot be fetched
+        except Exception: # Catch any other errors during LR fetching
+            current_lr_val = AZ_LEARNING_RATE
 
-        print(f"Network training finished. Avg Total Loss: {avg_total_loss:.4f} (P: {avg_policy_loss:.4f}, V: {avg_value_loss:.4f}, P_Acc: {avg_policy_acc:.4f}, V_MAE: {avg_value_mae:.4f}), LR: {current_lr_after_train:.2e}")
+
+        print(f"Network training finished. Avg Total Loss: {avg_total_loss:.4f} (P: {avg_policy_loss:.4f}, V: {avg_value_loss:.4f}, P_Acc: {avg_policy_accuracy:.4f}, V_MAE: {avg_value_mae:.4f}), LR: {current_lr_val:.2e}")
+
         if self.wandb_enabled:
-            wandb.log({
+            wandb_logs = {
                 "training/total_loss": avg_total_loss,
                 "training/policy_loss": avg_policy_loss,
                 "training/value_loss": avg_value_loss,
-                "training/policy_accuracy": avg_policy_acc,
+                "training/policy_accuracy": avg_policy_accuracy,
                 "training/value_mae": avg_value_mae,
-                "training/learning_rate": current_lr_after_train,
-                "training/skipped": False
-            })
+                "training/learning_rate": current_lr_val,
+                "training/skipped": False, # Reaching here means training wasn't fully skipped initially
+                "training/nan_loss_count": nan_loss_count
+            }
+            if gradient_norms: 
+                wandb_logs["training/avg_gradient_norm"] = np.mean(gradient_norms)
+            wandb.log(wandb_logs)
 
     def _evaluate_and_update_model(self, iteration_num):
         if iteration_num == 0: 
@@ -607,18 +716,46 @@ class AlphaZeroTrainer:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run AlphaZero Trainer for Switcharoo.")
     parser.add_argument('--no-wandb', action='store_true', help="Disable Weights & Biases logging.")
+    parser.add_argument('--debug-run', action='store_true', help="Run a short debug training session")
+    parser.add_argument('--reduce-lr', type=float, help="Override learning rate with a lower value")
+    parser.add_argument('--disable-xla', action='store_true', help="Disable XLA JIT compilation")
     args = parser.parse_args()
 
-    # Enable XLA JIT compilation for better GPU performance
-    tf.config.optimizer.set_jit(True)
+    # Enable TensorFlow debug logging for numerical issues
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'  # Show warnings
+
+    # Disable XLA JIT compilation for now due to slow compilation and potential memory issues
+    # if not args.disable_xla:
+    #     tf.config.optimizer.set_jit(True)
+    # else:
+    #     tf.config.optimizer.set_jit(False) # Ensure it's off if arg is present
+    tf.config.optimizer.set_jit(False)
+    print("XLA JIT compilation explicitly disabled to prevent slow compilation and potential OOM issues.")
+    
+    # Set shorter training parameters for debug runs
+    if args.debug_run:
+        AZ_ITERATIONS = 2
+        AZ_GAMES_PER_ITERATION = 5
+        AZ_TRAINING_STEPS_PER_ITERATION = 50
+        print(f"Running in debug mode with reduced parameters:"
+              f"\n- AZ_ITERATIONS: {AZ_ITERATIONS}"
+              f"\n- AZ_GAMES_PER_ITERATION: {AZ_GAMES_PER_ITERATION}"
+              f"\n- AZ_TRAINING_STEPS_PER_ITERATION: {AZ_TRAINING_STEPS_PER_ITERATION}")
+    
+    # Override learning rate if specified (useful for handling NaN losses)
+    if args.reduce_lr is not None and args.reduce_lr > 0:
+        original_lr = AZ_LEARNING_RATE
+        AZ_LEARNING_RATE = args.reduce_lr
+        print(f"Overriding learning rate: {original_lr} → {AZ_LEARNING_RATE}")
     
     # Enable mixed precision training for better GPU utilization and reduced register usage
-    try:
-        policy = tf.keras.mixed_precision.Policy('mixed_float16')
-        tf.keras.mixed_precision.set_global_policy(policy)
-        print("Mixed precision training enabled (float16/float32)")
-    except Exception as e:
-        print(f"Could not enable mixed precision training: {e}")
+    # try:
+    #     policy = tf.keras.mixed_precision.Policy('mixed_float16')
+    #     tf.keras.mixed_precision.set_global_policy(policy)
+    #     print("Mixed precision training enabled (float16/float32)")
+    # except Exception as e:
+    #     print(f"Could not enable mixed precision training: {e}")
+    print("Mixed precision training *disabled* for debugging NaN issues.")
 
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:

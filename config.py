@@ -118,13 +118,13 @@ DIRICHLET_ALPHA = 0.3           # Moderate noise at root node for diversity
 DIRICHLET_EPSILON = 0.25        # Moderate noise application for balance
 
 # AlphaZero Training Loop Parameters
-AZ_ITERATIONS = 500                # Increased from 180 to 500 for 12-hour training
-AZ_GAMES_PER_ITERATION = 80        # Increased from 60 to 80 for more experience collection
-AZ_TRAINING_STEPS_PER_ITERATION = 1500 # Increased from 800 to 1500 for deeper learning with smaller batch
-AZ_REPLAY_BUFFER_SIZE = 500000     # Doubled from 250000 to maintain more diverse experiences
-AZ_BATCH_SIZE = 384                # Reduced from 512 to 384 to avoid register spilling
-AZ_EVALUATION_GAMES_COUNT = 60     # Increased from 40 to 60 for more statistically significant evaluation
-AZ_MODEL_UPDATE_WIN_RATE = 0.52    # Slightly increased from 0.48 for more selective model updates
+AZ_ITERATIONS = 200                # Reduced from 500 to 200 for faster training
+AZ_GAMES_PER_ITERATION = 40        # Reduced from 80 to 40 for faster self-play
+AZ_TRAINING_STEPS_PER_ITERATION = 600 # Reduced from 1500 to 600 for faster training
+AZ_REPLAY_BUFFER_SIZE = 200000     # Reduced from 500000 to 200000 to match smaller run
+AZ_BATCH_SIZE = 384                # Kept the same for stability
+AZ_EVALUATION_GAMES_COUNT = 30     # Reduced from 60 to 30 for faster evaluation
+AZ_MODEL_UPDATE_WIN_RATE = 0.52    # Kept the same for selectivity
 
 # Neural Network Architecture (AlphaZero)
 AZ_NN_INPUT_DEPTH = 6 # Based on current binary board (5) + player (1)
@@ -132,8 +132,8 @@ AZ_NN_RESIDUAL_BLOCKS = 9          # Increased from 7 to 9 for better pattern re
 AZ_NN_FILTERS = 128                # Increased from 96 to 128 for more feature extraction capacity
 AZ_NN_POLICY_HEAD_UNITS = 256      # Increased from 192 to 256 for better policy representation
 AZ_NN_VALUE_HEAD_UNITS = 128       # Increased from 96 to 128 for better value estimation
-AZ_LEARNING_RATE = 0.0005          # Slightly decreased from 0.0006 for more stable learning
-AZ_L2_REGULARIZATION = 0.001       # Slightly increased from 0.0008 for better generalization
+AZ_LEARNING_RATE = 1e-5          # Reduced from 0.0001 to 1e-5 to prevent NaN losses
+AZ_L2_REGULARIZATION = 0.0001      # Reduced from 0.0005 for better numerical stability
 AZ_VALUE_LOSS_WEIGHT = 1.0         # Kept balanced weighting
 AZ_POLICY_LOSS_WEIGHT = 2.5        # Maintained emphasis on policy learning
 

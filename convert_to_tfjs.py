@@ -88,7 +88,17 @@ if __name__ == '__main__':
         
         if saved_model_export_success:
             print(f"\n--- Attempting TensorFlow.js Conversion from SavedModel ---")
-            if not os.path.exists(ABS_TFJS_OUTPUT_DIR):
+            # Extra debug: print paths before running converter
+            print(f"[DEBUG] ABS_SAVED_MODEL_PATH: '{ABS_SAVED_MODEL_PATH}'")
+            print(f"[DEBUG] ABS_TFJS_OUTPUT_DIR: '{ABS_TFJS_OUTPUT_DIR}'")
+            if not ABS_SAVED_MODEL_PATH or not ABS_TFJS_OUTPUT_DIR:
+                print("ERROR: One or both paths for conversion are empty. Aborting.")
+            elif not os.path.exists(ABS_SAVED_MODEL_PATH):
+                print(f"ERROR: SavedModel path does not exist: {ABS_SAVED_MODEL_PATH}")
+            else:
+                if os.path.exists(ABS_TFJS_OUTPUT_DIR):
+                    print(f"[DEBUG] Output directory {ABS_TFJS_OUTPUT_DIR} already exists. Removing it for a clean conversion.")
+                    shutil.rmtree(ABS_TFJS_OUTPUT_DIR)
                 try:
                     os.makedirs(ABS_TFJS_OUTPUT_DIR)
                     print(f"Created output directory: {ABS_TFJS_OUTPUT_DIR}")
@@ -100,8 +110,7 @@ if __name__ == '__main__':
                 command = [
                     "tensorflowjs_converter",
                     "--input_format", "tf_saved_model",
-                    "--output_format", "tfjs_graph_model", # Explicitly graph model
-                    "--quantize_float16", # Add 16-bit floating point quantization for mobile
+                    "--output_format", "tfjs_graph_model",
                     ABS_SAVED_MODEL_PATH, 
                     ABS_TFJS_OUTPUT_DIR
                 ]

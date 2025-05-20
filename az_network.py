@@ -68,20 +68,34 @@ def build_alpha_zero_network(input_shape=(AZ_NN_INPUT_DEPTH,), num_actions=NUM_A
     value_head = layers.Dense(AZ_NN_VALUE_HEAD_UNITS, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(common_representation)
     value_head = layers.BatchNormalization()(value_head)
     value_head = layers.ReLU()(value_head)
-    x = layers.Dense(1, name='value_dense_before_tanh', kernel_regularizer=l2(AZ_L2_REGULARIZATION))(value_head)
-    value_output = layers.Lambda(lambda t: 2 * tf.math.sigmoid(2 * t) - 1, name='value_output')(x)
+    x = layers.Dense(1, name='value_dense_output', kernel_regularizer=l2(AZ_L2_REGULARIZATION))(value_head) # Changed name
+    # Apply tanh as a separate TensorFlow operation, not as a Keras layer activation
+    # This might prevent the problematic fusion.
+    value_output_tensor = tf.keras.activations.tanh(x)
+    # Ensure the output tensor has the correct Keras name for loss calculation
+    value_output = layers.Lambda(lambda t: t, name='value_output')(value_output_tensor)
 
     model = Model(inputs=input_tensor, outputs=[policy_output, value_output])
 
     # Use the provided learning rate schedule if available, otherwise use the fixed rate
     current_lr = learning_rate_schedule if learning_rate_schedule is not None else AZ_LEARNING_RATE
-    optimizer = Adam(learning_rate=current_lr)
+    
+    # Add gradient clipping to prevent exploding gradients that lead to NaN values
+    optimizer = Adam(
+        learning_rate=current_lr,
+        clipnorm=1.0,  # Clip gradients to prevent explosion
+        epsilon=1e-7   # Slightly larger epsilon for numerical stability
+    )
 
     model.compile(
         optimizer=optimizer,
         loss={
-            'policy_output': tf.keras.losses.CategoricalCrossentropy(), # from_logits=False as softmax is applied
-            'value_output': tf.keras.losses.MeanSquaredError()
+            # Use direct tf.keras.losses.categorical_crossentropy function
+            'policy_output': lambda y_true, y_pred: tf.reduce_mean(
+                tf.keras.losses.categorical_crossentropy(y_true, y_pred)
+            ),
+            # Use direct MSE calculation to avoid compatibility issues
+            'value_output': lambda y_true, y_pred: tf.reduce_mean(tf.square(y_true - y_pred))
         },
         loss_weights={
             'policy_output': AZ_POLICY_LOSS_WEIGHT,
@@ -112,7 +126,19 @@ class AlphaZeroNetwork:
         if state.ndim == 1:
             state = tf.expand_dims(state, axis=0)
         
-        policy_probs, value = self.model.predict_on_batch(state)
+        try:
+            # First try predict_on_batch which is more efficient
+            policy_probs, value = self.model.predict_on_batch(state)
+        except Exception as e:
+            # Fall back to standard predict method if predict_on_batch fails
+            print(f"Warning: predict_on_batch failed, falling back to predict: {e}")
+            outputs = self.model.predict(state, verbose=0)
+            if isinstance(outputs, list) and len(outputs) == 2:
+                policy_probs, value = outputs
+            else:
+                # Alternative output format
+                policy_probs = outputs["policy_output"]
+                value = outputs["value_output"]
         
         return policy_probs[0], value[0][0]
 
