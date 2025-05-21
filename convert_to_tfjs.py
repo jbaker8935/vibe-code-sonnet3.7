@@ -24,6 +24,9 @@ if TFJS_MODEL_DIR:
 else:
     ABS_TFJS_OUTPUT_DIR = os.path.join(SCRIPT_DIR, 'switcharoo_tfjs_model_default')
 
+# Normalize the path to remove any '.' or '..' components
+ABS_TFJS_OUTPUT_DIR = os.path.normpath(ABS_TFJS_OUTPUT_DIR)
+
 
 def export_model_for_tfjs(weights_path, output_saved_model_path):
     """
@@ -35,16 +38,9 @@ def export_model_for_tfjs(weights_path, output_saved_model_path):
         print(f"ERROR: Weights file not found at {weights_path}")
         return False
 
-    print(f"Building model architecture...")
+    print(f"Building model architecture without loading weights...")
     az_net = AlphaZeroNetwork()
-
-    print(f"Loading weights from: {weights_path}")
-    try:
-        az_net.load_model(weights_path)
-    except Exception as e:
-        print(f"ERROR: Failed to load weights from {weights_path}: {e}")
-        return False
-
+    az_net.model.summary()  # Print model summary for debugging
     print(f"Preparing to save full model in SavedModel format to: {output_saved_model_path}")
     try:
         # Ensure the directory is clean before saving
@@ -109,10 +105,13 @@ if __name__ == '__main__':
             if saved_model_export_success:
                 command = [
                     "tensorflowjs_converter",
-                    "--input_format", "tf_saved_model",
-                    "--output_format", "tfjs_graph_model",
-                    ABS_SAVED_MODEL_PATH, 
-                    ABS_TFJS_OUTPUT_DIR
+                    "--input_format=tf_saved_model",
+                    ABS_SAVED_MODEL_PATH,  # Positional arg 1
+                    ABS_TFJS_OUTPUT_DIR,   # Positional arg 2
+                    "--skip_op_check",
+                    "--strip_debug_ops", "true",
+                    "--control_flow_v2=True",
+                    "--saved_model_tags", "serve"
                 ]
                 print(f"Executing command: {' '.join(command)}")
                 

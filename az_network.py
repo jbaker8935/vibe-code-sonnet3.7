@@ -39,11 +39,6 @@ def build_residual_block(input_tensor, filters):
 
 def build_alpha_zero_network(input_shape=(AZ_NN_INPUT_DEPTH,), num_actions=NUM_ACTIONS, learning_rate_schedule=None):
     """Builds the AlphaZero-style neural network."""
-    # Ensure input_shape is a tuple, e.g., (AZ_NN_INPUT_DEPTH,)
-    # The Input layer will have a batch dimension of None by default when used in `model.fit` or `model.predict`
-    # For TFJS, this definition should be fine, and if issues arise at TFJS runtime,
-    # they are often handled by how TFJS loads the model or by the conversion process itself.
-    # Let's revert to the standard Keras way and let the SavedModel format handle specifics.
     actual_input_shape = input_shape 
     input_tensor = layers.Input(shape=actual_input_shape)
 
@@ -57,30 +52,28 @@ def build_alpha_zero_network(input_shape=(AZ_NN_INPUT_DEPTH,), num_actions=NUM_A
     for _ in range(AZ_NN_RESIDUAL_BLOCKS):
         common_representation = build_residual_block(common_representation, AZ_NN_FILTERS)
 
-    # Policy Head
+    # Policy Head - Separate logits and activation
     policy_head = layers.Dense(AZ_NN_POLICY_HEAD_UNITS, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(common_representation)
     policy_head = layers.BatchNormalization()(policy_head)
     policy_head = layers.ReLU()(policy_head)
     policy_logits = layers.Dense(num_actions, name='policy_logits', kernel_regularizer=l2(AZ_L2_REGULARIZATION))(policy_head)
     policy_output = layers.Activation('softmax', name='policy_output')(policy_logits)
 
-    # Value Head
+    # Value Head - Modified to use ReLU and scaling instead of tanh
     value_head = layers.Dense(AZ_NN_VALUE_HEAD_UNITS, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(common_representation)
     value_head = layers.BatchNormalization()(value_head)
     value_head = layers.ReLU()(value_head)
-    x = layers.Dense(1, name='value_dense_output', kernel_regularizer=l2(AZ_L2_REGULARIZATION))(value_head) # Changed name
-    # Apply tanh as a separate TensorFlow operation, not as a Keras layer activation
-    # This might prevent the problematic fusion.
-    value_output_tensor = tf.keras.activations.tanh(x)
-    # Ensure the output tensor has the correct Keras name for loss calculation
-    value_output = layers.Lambda(lambda t: t, name='value_output')(value_output_tensor)
+    value_head = layers.Dense(64, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(value_head)
+    value_head = layers.ReLU()(value_head)
+    # Output a scalar in [-1, 1] by using linear activation and scaling
+    value_pre = layers.Dense(1, name='value_pre_activation', kernel_regularizer=l2(AZ_L2_REGULARIZATION))(value_head)
+    value_scaled = layers.Lambda(lambda x: tf.clip_by_value(x / 2.0, -1.0, 1.0), name='value_output')(value_pre)
 
-    model = Model(inputs=input_tensor, outputs=[policy_output, value_output])
+    model = Model(inputs=input_tensor, outputs=[policy_output, value_scaled])
 
     # Use the provided learning rate schedule if available, otherwise use the fixed rate
     current_lr = learning_rate_schedule if learning_rate_schedule is not None else AZ_LEARNING_RATE
     
-    # Add gradient clipping to prevent exploding gradients that lead to NaN values
     optimizer = Adam(
         learning_rate=current_lr,
         clipnorm=1.0,  # Clip gradients to prevent explosion
@@ -90,11 +83,9 @@ def build_alpha_zero_network(input_shape=(AZ_NN_INPUT_DEPTH,), num_actions=NUM_A
     model.compile(
         optimizer=optimizer,
         loss={
-            # Use direct tf.keras.losses.categorical_crossentropy function
             'policy_output': lambda y_true, y_pred: tf.reduce_mean(
                 tf.keras.losses.categorical_crossentropy(y_true, y_pred)
             ),
-            # Use direct MSE calculation to avoid compatibility issues
             'value_output': lambda y_true, y_pred: tf.reduce_mean(tf.square(y_true - y_pred))
         },
         loss_weights={

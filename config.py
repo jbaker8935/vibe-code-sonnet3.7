@@ -109,33 +109,33 @@ initial_position = initial_position_base
 
 # --- AlphaZero MCTS Configuration ---
 # MCTS Parameters
-NUM_SIMULATIONS_PER_MOVE = 300  # Increased from 200 for deeper search
-C_PUCT_CONSTANT = 1.5           # Balanced value for exploration vs exploitation
-TEMPERATURE_START = 1.1         # Moderately high for adequate exploration
-TEMPERATURE_END = 0.05          # Low for deterministic play in later stages
-TEMPERATURE_ANNEAL_STEPS = 200000 # Increased from 100000 for slower annealing with longer training
-DIRICHLET_ALPHA = 0.3           # Moderate noise at root node for diversity
-DIRICHLET_EPSILON = 0.25        # Moderate noise application for balance
+NUM_SIMULATIONS_PER_MOVE = 400  # Increased for deeper search
+C_PUCT_CONSTANT = 1.5           # Balance exploration vs exploitation
+TEMPERATURE_START = 1.1         # High for exploration
+TEMPERATURE_END = 0.05          # Low for deterministic play
+TEMPERATURE_ANNEAL_STEPS = 300000 # Increased for longer annealing
+DIRICHLET_ALPHA = 0.3          # Root node exploration
+DIRICHLET_EPSILON = 0.25       # Noise weight
 
 # AlphaZero Training Loop Parameters
-AZ_ITERATIONS = 200                # Reduced from 500 to 200 for faster training
-AZ_GAMES_PER_ITERATION = 40        # Reduced from 80 to 40 for faster self-play
-AZ_TRAINING_STEPS_PER_ITERATION = 600 # Reduced from 1500 to 600 for faster training
-AZ_REPLAY_BUFFER_SIZE = 200000     # Reduced from 500000 to 200000 to match smaller run
-AZ_BATCH_SIZE = 384                # Kept the same for stability
-AZ_EVALUATION_GAMES_COUNT = 30     # Reduced from 60 to 30 for faster evaluation
-AZ_MODEL_UPDATE_WIN_RATE = 0.52    # Kept the same for selectivity
+AZ_ITERATIONS = 500            # Increased for longer training
+AZ_GAMES_PER_ITERATION = 80    # More games per iteration
+AZ_TRAINING_STEPS_PER_ITERATION = 1200  # More training steps
+AZ_REPLAY_BUFFER_SIZE = 500000  # Larger buffer
+AZ_BATCH_SIZE = 384            # Keep stable
+AZ_EVALUATION_GAMES_COUNT = 40  # More evaluation games
+AZ_MODEL_UPDATE_WIN_RATE = 0.52  # Keep selective
 
 # Neural Network Architecture (AlphaZero)
-AZ_NN_INPUT_DEPTH = 6 # Based on current binary board (5) + player (1)
-AZ_NN_RESIDUAL_BLOCKS = 9          # Increased from 7 to 9 for better pattern recognition
-AZ_NN_FILTERS = 128                # Increased from 96 to 128 for more feature extraction capacity
-AZ_NN_POLICY_HEAD_UNITS = 256      # Increased from 192 to 256 for better policy representation
-AZ_NN_VALUE_HEAD_UNITS = 128       # Increased from 96 to 128 for better value estimation
-AZ_LEARNING_RATE = 1e-5          # Reduced from 0.0001 to 1e-5 to prevent NaN losses
-AZ_L2_REGULARIZATION = 0.0001      # Reduced from 0.0005 for better numerical stability
-AZ_VALUE_LOSS_WEIGHT = 1.0         # Kept balanced weighting
-AZ_POLICY_LOSS_WEIGHT = 2.5        # Maintained emphasis on policy learning
+AZ_NN_INPUT_DEPTH = 6          # Based on current binary board (5) + player (1)
+AZ_NN_RESIDUAL_BLOCKS = 12     # Increased for better pattern recognition
+AZ_NN_FILTERS = 192            # Increased for feature extraction
+AZ_NN_POLICY_HEAD_UNITS = 256  # Stable
+AZ_NN_VALUE_HEAD_UNITS = 128   # Stable
+AZ_LEARNING_RATE = 5e-6        # Reduced for stability
+AZ_L2_REGULARIZATION = 0.0001  # Keep stable
+AZ_VALUE_LOSS_WEIGHT = 1.0     # Balanced value learning
+AZ_POLICY_LOSS_WEIGHT = 2.5    # Emphasis on policy
 
 # File paths for AlphaZero models
 AZ_BEST_MODEL_FILE = "switcharoo_az_best.weights.h5"
