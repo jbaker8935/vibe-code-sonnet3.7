@@ -115,15 +115,41 @@ class SwitcharooEnv:
         return self._get_state()
 
     def _get_state(self):
-        """Simplified state representation using binary board encoding."""
-        # Convert current board to binary
-        current_binary = board_to_binary(self.board)
+        """
+        Returns a 6-channel binary representation of the board state and current player.
+        Channel 0: Player A Normal pieces (A_NORMAL) (1.0 if present, 0.0 otherwise)
+        Channel 1: Player A Swapped pieces (A_SWAPPED)
+        Channel 2: Player B Normal pieces (B_NORMAL)
+        Channel 3: Player B Swapped pieces (B_SWAPPED)
+        Channel 4: Empty cells (EMPTY_CELL)
+        Channel 5: Current player (all 0.0 for Player A, all 1.0 for Player B)
 
-        # Combine current state and player indicator
-        state = np.zeros(5 + 1, dtype=np.float32)  # reduced size: 5 + 1 = 6
-        state[:5] = current_binary
-        state[-1] = 0.0 if self.current_player_id == PLAYER_A_ID else 1.0
+        Each channel is a flattened ROWS x COLS board.
+        Total state size: 6 * ROWS * COLS.
+        """
+        flat_board_size = ROWS * COLS
 
+        # Board state channels
+        channel_a_normal = (self.board == A_NORMAL).astype(np.float32).flatten()
+        channel_a_swapped = (self.board == A_SWAPPED).astype(np.float32).flatten()
+        channel_b_normal = (self.board == B_NORMAL).astype(np.float32).flatten()
+        channel_b_swapped = (self.board == B_SWAPPED).astype(np.float32).flatten()
+        channel_empty = (self.board == EMPTY_CELL).astype(np.float32).flatten()
+
+        # Player channel
+        player_channel = np.zeros(flat_board_size, dtype=np.float32)
+        if self.current_player_id == PLAYER_B_ID:
+            player_channel.fill(1.0)
+
+        # Concatenate all channels
+        state = np.concatenate([
+            channel_a_normal,
+            channel_a_swapped,
+            channel_b_normal,
+            channel_b_swapped,
+            channel_empty,
+            player_channel
+        ])
         return state
 
     def _get_state_for_nn(self):

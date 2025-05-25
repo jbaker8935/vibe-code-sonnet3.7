@@ -43,3 +43,7 @@ DIRECTIONS = np.array([(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1,
 NUM_DIRECTIONS = len(DIRECTIONS)
 NUM_CELLS = ROWS * COLS
 NUM_ACTIONS = NUM_CELLS * NUM_DIRECTIONS # 32 * 8 = 256
+
+# Constants for AlphaZero
+NUM_PIECES = 8  # Each player has 2 rows * 4 cols = 8 pieces
+MAX_MOVES_PER_PIECE = NUM_DIRECTIONS # Each piece can move in 8 directions

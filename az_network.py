@@ -1,5 +1,6 @@
 # Neural Network for AlphaZero will be implemented here.
 import tensorflow as tf
+import config # Add this import
 
 # # Try to force CPU execution to rule out GPU-specific issues
 # # try:
@@ -15,78 +16,195 @@ from tensorflow.keras.optimizers import Adam
 from config import (AZ_NN_INPUT_DEPTH, AZ_NN_RESIDUAL_BLOCKS, AZ_NN_FILTERS,
                     AZ_NN_POLICY_HEAD_UNITS, AZ_NN_VALUE_HEAD_UNITS,
                     AZ_LEARNING_RATE, AZ_L2_REGULARIZATION,
-                    AZ_VALUE_LOSS_WEIGHT, AZ_POLICY_LOSS_WEIGHT)
+                    AZ_VALUE_LOSS_WEIGHT, AZ_POLICY_LOSS_WEIGHT,
+                    AZ_DISABLE_ATTENTION, AZ_RECOVERY_MODE, AZ_GRADIENT_CLIP_NORM)
 from env_const import NUM_ACTIONS
 
-def build_residual_block(input_tensor, filters):
-    """Builds a residual block using Dense layers for 1D input."""
-    # Path 1
-    x = layers.Dense(filters, kernel_regularizer=l2(AZ_L2_REGULARIZATION), activation='relu')(input_tensor)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dense(filters, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(x)
-    x = layers.BatchNormalization()(x)
-
-    # Path 2 (skip connection)
-    # Ensure the skip connection has the same number of filters if input_tensor filters != filters
-    if input_tensor.shape[-1] != filters:
-        input_tensor_reshaped = layers.Dense(filters, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(input_tensor)
-    else:
-        input_tensor_reshaped = input_tensor
-
-    x = layers.Add()([input_tensor_reshaped, x])
-    x = layers.ReLU()(x)
-    return x
-
 def build_alpha_zero_network(input_shape=(AZ_NN_INPUT_DEPTH,), num_actions=NUM_ACTIONS, learning_rate_schedule=None):
-    """Builds the AlphaZero-style neural network."""
-    actual_input_shape = input_shape 
-    input_tensor = layers.Input(shape=actual_input_shape)
+    """Builds a simplified AlphaZero network for learning recovery."""
+    input_tensor = layers.Input(shape=input_shape)
 
-    # Initial Dense layer to process the flat input vector
-    x = layers.Dense(AZ_NN_FILTERS, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(input_tensor)
-    x = layers.BatchNormalization()(x)
-    x = layers.ReLU()(x)
+    # Check if we're in recovery mode - use config directly
+    recovery_mode = AZ_RECOVERY_MODE
+    disable_attention = AZ_DISABLE_ATTENTION
+    
+    print(f"[Network] Recovery mode: {recovery_mode}, Disable attention: {disable_attention}")
+    print(f"[Network] Residual blocks: {AZ_NN_RESIDUAL_BLOCKS}, Filters: {AZ_NN_FILTERS}")
+    
+    # Initial feature extraction
+    x = layers.Dense(
+        AZ_NN_FILTERS, 
+        activation='relu',
+        kernel_initializer='he_normal',
+        kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None,
+        name='initial_dense'  # NAME HERE
+    )(input_tensor)
+    
+    # Simplified residual blocks for recovery
+    for i in range(AZ_NN_RESIDUAL_BLOCKS):
+        if AZ_NN_RESIDUAL_BLOCKS > 0:
+            res_input = x # Store the input to the Add layer
+            # First dense layer of residual block
+            residual_tensor = layers.Dense(
+                AZ_NN_FILTERS,
+                activation='relu', 
+                kernel_initializer='he_normal',
+                kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None,
+                name=f'res_block_{i}_dense1' # NAME HERE
+            )(x)
+            
+            # Second dense layer
+            residual_tensor = layers.Dense(
+                AZ_NN_FILTERS,
+                activation='relu',
+                kernel_initializer='he_normal',
+                kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None,
+                name=f'res_block_{i}_dense2' # NAME HERE
+            )(residual_tensor)
+            
+            # Simple residual connection without layer norm in recovery mode
+            x = layers.Add(name=f'res_block_{i}_add')([res_input, residual_tensor]) # NAME HERE
+            
+            # Only add layer norm if not in recovery mode
+            if not recovery_mode and i < 3:  # Reduce complexity
+                x = layers.LayerNormalization(name=f'res_block_{i}_layernorm')(x) # NAME HERE
 
-    # Common Body with Dense Residual Blocks
-    common_representation = x
-    for _ in range(AZ_NN_RESIDUAL_BLOCKS):
-        common_representation = build_residual_block(common_representation, AZ_NN_FILTERS)
+    # Add an identity layer to easily tap the output of the shared trunk
+    shared_trunk_output = layers.Activation('linear', name='final_shared_output')(x)
 
-    # Policy Head - Separate logits and activation
-    policy_head = layers.Dense(AZ_NN_POLICY_HEAD_UNITS, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(common_representation)
-    policy_head = layers.BatchNormalization()(policy_head)
-    policy_head = layers.ReLU()(policy_head)
-    policy_logits = layers.Dense(num_actions, name='policy_logits', kernel_regularizer=l2(AZ_L2_REGULARIZATION))(policy_head)
-    policy_output = layers.Activation('softmax', name='policy_output')(policy_logits)
+    # Simplified policy head (no attention in recovery mode)
+    if disable_attention:
+        # Simple policy head
+        policy_head = layers.Dense(
+            AZ_NN_POLICY_HEAD_UNITS,
+            activation='relu',
+            kernel_initializer='he_normal',
+            kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None,
+            name='policy_head_dense' # NAME HERE
+        )(shared_trunk_output)
+        
+        policy_logits = layers.Dense(
+            num_actions, 
+            name='policy_logits', # NAME HERE (already named in original code, ensuring consistency)
+            kernel_initializer='he_normal',
+            kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None
+        )(policy_head)
+    else:
+        # Enhanced policy head with attention (original complex version)
+        policy_head_pre_attention = layers.Dense(
+            AZ_NN_POLICY_HEAD_UNITS,
+            activation='relu',
+            kernel_initializer='he_normal',
+            kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None,
+            name='policy_head_dense_pre_attention' # NAME HERE
+        )(shared_trunk_output)
+        
+        # Attention mechanism
+        policy_attention = layers.Dense(
+            AZ_NN_POLICY_HEAD_UNITS,
+            activation='sigmoid',
+            kernel_initializer='he_normal',
+            name='policy_attention_weights' # NAME HERE
+        )(shared_trunk_output) # Attention often derived from the same shared trunk
+        
+        policy_head_multiplied = layers.Multiply(name='policy_head_multiply')([policy_head_pre_attention, policy_attention]) # NAME HERE
+        
+        policy_head_after_attention = layers.Dense(
+            AZ_NN_POLICY_HEAD_UNITS // 2,
+            activation='relu',
+            kernel_initializer='he_normal',
+            kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None,
+            name='policy_head_dense_after_attention' # NAME HERE
+        )(policy_head_multiplied)
+        
+        policy_logits = layers.Dense(
+            num_actions, 
+            name='policy_logits', # NAME HERE (already named in original code, ensuring consistency)
+            kernel_initializer='he_normal',
+            kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None
+        )(policy_head_after_attention)
+    
+    policy_output = layers.Activation('softmax', name='policy_output')(policy_logits) # NAME HERE (already named)
 
-    # Value Head - Modified to use ReLU and scaling instead of tanh
-    value_head = layers.Dense(AZ_NN_VALUE_HEAD_UNITS, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(common_representation)
-    value_head = layers.BatchNormalization()(value_head)
-    value_head = layers.ReLU()(value_head)
-    value_head = layers.Dense(64, kernel_regularizer=l2(AZ_L2_REGULARIZATION))(value_head)
-    value_head = layers.ReLU()(value_head)
-    # Output a scalar in [-1, 1] by using linear activation and scaling
-    value_pre = layers.Dense(1, name='value_pre_activation', kernel_regularizer=l2(AZ_L2_REGULARIZATION))(value_head)
-    value_scaled = layers.Lambda(lambda x: tf.clip_by_value(x / 2.0, -1.0, 1.0), name='value_output')(value_pre)
+    # Simplified value head (no attention in recovery mode)
+    if disable_attention:
+        # Simple value head
+        value_head = layers.Dense(
+            AZ_NN_VALUE_HEAD_UNITS,
+            activation='relu',
+            kernel_initializer='he_normal',
+            kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None,
+            name='value_head_dense' # NAME HERE
+        )(shared_trunk_output)
+        
+        value_output = layers.Dense(
+            1, 
+            activation='tanh',
+            name='value_output', # NAME HERE (already named)
+            kernel_initializer='he_normal',
+            kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None
+        )(value_head)
+    else:
+        # Enhanced value head with attention (original complex version)  
+        value_head_pre_attention = layers.Dense(
+            AZ_NN_VALUE_HEAD_UNITS,
+            activation='relu',
+            kernel_initializer='he_normal',
+            kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None,
+            name='value_head_dense_pre_attention' # NAME HERE
+        )(shared_trunk_output)
+        
+        value_attention = layers.Dense(
+            AZ_NN_VALUE_HEAD_UNITS,
+            activation='sigmoid',
+            kernel_initializer='he_normal',
+            name='value_attention_weights' # NAME HERE
+        )(shared_trunk_output) # Attention often derived from the same shared trunk
+        
+        value_head_multiplied = layers.Multiply(name='value_head_multiply')([value_head_pre_attention, value_attention]) # NAME HERE
+        
+        value_head_after_attention = layers.Dense(
+            AZ_NN_VALUE_HEAD_UNITS // 2,
+            activation='relu',
+            kernel_initializer='he_normal',
+            kernel_regularizer=l2(AZ_L2_REGULARIZATION) if AZ_L2_REGULARIZATION > 0 else None,
+            name='value_head_dense_after_attention' # NAME HERE
+        )(value_head_multiplied)
+        
+        value_output = layers.Dense(
+            1, 
+            activation='tanh',
+            name='value_output' # NAME HERE (already named)
+        )(value_head_after_attention)
 
-    model = Model(inputs=input_tensor, outputs=[policy_output, value_scaled])
+    model = Model(inputs=input_tensor, outputs=[policy_output, value_output])
 
-    # Use the provided learning rate schedule if available, otherwise use the fixed rate
+    # The incorrect layer naming attempts (e.g., x.node.layer.name = ...) are removed.
+    # Layers are now named directly during their instantiation.
+
+    # Recovery-optimized optimizer with tighter clipping
     current_lr = learning_rate_schedule if learning_rate_schedule is not None else AZ_LEARNING_RATE
+    
+    # Use more conservative optimizer settings for recovery
+    clipnorm_value = getattr(tf.keras.utils, 'AZ_GRADIENT_CLIP_NORM', 0.5)
+    if hasattr(tf.keras.utils, 'get_custom_objects'):
+        clipnorm_value = 0.5  # Force tighter clipping in recovery mode
     
     optimizer = Adam(
         learning_rate=current_lr,
-        clipnorm=1.0,  # Clip gradients to prevent explosion
-        epsilon=1e-7   # Slightly larger epsilon for numerical stability
+        clipnorm=clipnorm_value,   # Tighter gradient clipping for recovery
+        beta_1=0.9,               # Momentum term
+        beta_2=0.999,             # Second moment decay  
+        epsilon=1e-8,             # Standard numerical stability
+        amsgrad=False             # Standard Adam for consistent behavior
     )
 
+    # Use standard loss functions for debugging
     model.compile(
         optimizer=optimizer,
         loss={
-            'policy_output': lambda y_true, y_pred: tf.reduce_mean(
-                tf.keras.losses.categorical_crossentropy(y_true, y_pred)
-            ),
-            'value_output': lambda y_true, y_pred: tf.reduce_mean(tf.square(y_true - y_pred))
+            'policy_output': 'categorical_crossentropy',  # Standard loss
+            'value_output': 'mse'  # Standard MSE loss
         },
         loss_weights={
             'policy_output': AZ_POLICY_LOSS_WEIGHT,
@@ -108,6 +226,117 @@ class AlphaZeroNetwork:
                 print(f"Loaded model from {model_path}")
             except Exception as e:
                 print(f"Could not load model from {model_path}: {e}. Initializing a new model.")
+        
+        # For activation logging
+        self._activation_model = None
+        self._activation_layer_names = [] # Initialize as empty list
+
+    def _get_activation_model(self):
+        if self._activation_model is None:
+            try:
+                layer_outputs = []
+                # Use the centrally defined layer names for activations
+                requested_layer_names = self.get_activation_layer_names()
+                found_layer_names = [] # Store names of layers actually found
+                
+                if not requested_layer_names:
+                    print("Warning: No activation layer names provided by get_activation_layer_names(). Activation logging will be disabled.")
+                    return None
+
+                print(f"[Activation Logging] Attempting to find layers: {requested_layer_names}")
+
+                for layer_name_to_find in requested_layer_names:
+                    try:
+                        layer = self.model.get_layer(name=layer_name_to_find)
+                        layer_outputs.append(layer.output)
+                        found_layer_names.append(layer_name_to_find) # Add the name of the found layer
+                    except ValueError:
+                        print(f"Warning: Layer \'{layer_name_to_find}\' not found in model. Skipping for activation logging.")
+                
+                if not layer_outputs:
+                    print("Warning: No specified activation layers were found in the model. Activation model not created.")
+                    # Print all available layer names for debugging
+                    all_layer_names = [l.name for l in self.model.layers]
+                    print(f"Available layer names in the model: {all_layer_names}")
+                    return None
+
+                # Update self._activation_layer_names to only include layers that were actually found
+                self._activation_layer_names = found_layer_names # Use the list of names that were successfully found
+
+                self._activation_model = Model(inputs=self.model.input, outputs=layer_outputs)
+                print(f"Activation model created with output layers: {self._activation_layer_names}")
+            except Exception as e:
+                print(f"Error creating activation model: {e}")
+                self._activation_model = None # Ensure it's None if creation fails
+        return self._activation_model
+
+    def get_activation_layer_names(self):
+        """Returns a list of layer names whose activations might be interesting to log."""
+        # Check if a specific list is provided in config
+        if hasattr(config, 'AZ_ACTIVATION_LAYER_NAMES_TO_LOG') and config.AZ_ACTIVATION_LAYER_NAMES_TO_LOG:
+            names_to_log = config.AZ_ACTIVATION_LAYER_NAMES_TO_LOG
+        else:
+            # Default list of layers to log activations from
+            # These names should correspond to the 'name' argument in layer constructors
+            names_to_log = [
+                "initial_dense", # The Dense layer itself, its output is input to next or activation
+                # To get ReLU output, the ReLU layer must be named, or this must be post-activation
+                # Assuming initial_dense has activation='relu', its output *is* the ReLU output.
+            ]
+
+            # Add ReLU layers from residual blocks if they exist and are named
+            # The current build_alpha_zero_network names Dense layers, and Add layers.
+            # ReLU activations are part of Dense layers or separate Activation layers.
+            # Let's refine this to target actual named layers or common patterns.
+
+            # Example: If Dense layers have relu activation, their name is enough.
+            # If there are separate ReLU layers, they need names like 'initial_relu'.
+            # For now, let's assume Dense layers with 'relu' activation are targeted by their Dense name.
+
+            for i in range(config.AZ_NN_RESIDUAL_BLOCKS):
+                names_to_log.append(f'res_block_{i}_dense1') # Output of first Dense in res block (is ReLU)
+                names_to_log.append(f'res_block_{i}_dense2') # Output of second Dense in res block (is ReLU)
+                names_to_log.append(f'res_block_{i}_add')    # Output of the Add layer
+
+            names_to_log.append("final_shared_output") # This is an Activation('linear') layer
+
+            if config.AZ_DISABLE_ATTENTION:
+                if hasattr(config, 'AZ_POLICY_HEAD_TYPE') and config.AZ_POLICY_HEAD_TYPE == "default":
+                    names_to_log.append("policy_head_dense") # Output of Dense in policy head (is ReLU)
+                if hasattr(config, 'AZ_VALUE_HEAD_TYPE') and config.AZ_VALUE_HEAD_TYPE == "default":
+                    names_to_log.append("value_head_dense")  # Output of Dense in value head (is ReLU)
+            else:
+                # Add attention-related layers if needed, assuming they are named
+                names_to_log.append('policy_head_dense_pre_attention')
+                names_to_log.append('policy_attention_weights')
+                names_to_log.append('policy_head_dense_after_attention')
+                names_to_log.append('value_head_dense_pre_attention')
+                names_to_log.append('value_attention_weights')
+                names_to_log.append('value_head_dense_after_attention')
+
+            names_to_log.append("policy_logits")
+            names_to_log.append("value_output")
+
+        # Ensure no duplicates and maintain order
+        return list(dict.fromkeys(names_to_log))
+
+    def get_activations(self, state_batch):
+        activation_model = self._get_activation_model()
+        if activation_model is None:
+            return {} # Return empty dict if no model
+
+        if not isinstance(state_batch, tf.Tensor):
+            state_batch = tf.convert_to_tensor(state_batch, dtype=tf.float32)
+        if state_batch.ndim == 1: # Assuming input_shape is (AZ_NN_INPUT_DEPTH,)
+             state_batch = tf.expand_dims(state_batch, axis=0)
+        
+        activations_list = activation_model.predict_on_batch(state_batch)
+        
+        # If only one layer is watched, activations_list might not be a list
+        if len(self._activation_layer_names) == 1 and not isinstance(activations_list, list):
+            activations_list = [activations_list]
+            
+        return dict(zip(self._activation_layer_names, activations_list))
 
     def predict(self, state):
         """Takes a game state, returns policy probabilities and value."""

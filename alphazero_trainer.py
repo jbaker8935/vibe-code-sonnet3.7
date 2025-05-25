@@ -1,44 +1,59 @@
-import numpy as np
 import tensorflow as tf
+import numpy as np
 import collections
-import time
-import os
 import random
-import wandb
-import argparse
-import traceback
+import os
+import time
 from tqdm import tqdm
+import wandb # For experiment tracking
+import pickle # Added for static dataset saving/loading
+import argparse # Added: For command-line arguments
+import psutil   # Added: For memory monitoring
+import gc       # Added: For garbage collection
 
-from game_env import SwitcharooEnv
-from az_network import AlphaZeroNetwork, build_alpha_zero_network
-from mcts import MCTS, MCTSNode  # Your Python MCTS
-from mcts_numba import MCTSNumba  # Your Numba MCTS
+from game_env import SwitcharooEnv, PLAYER_A_ID, PLAYER_B_ID # Keep game_env specific imports
+from env_const import ROWS, COLS, NUM_PIECES, MAX_MOVES_PER_PIECE, NUM_ACTIONS # Import constants from env_const
+from az_network import AlphaZeroNetwork
+from mcts import MCTS, MCTSNode  # Python MCTS
+from mcts_numba import MCTSNumba, NODE_FIELDS # Numba MCTS
 from config import (
     AZ_ITERATIONS, AZ_GAMES_PER_ITERATION, AZ_TRAINING_STEPS_PER_ITERATION,
     AZ_REPLAY_BUFFER_SIZE, AZ_BATCH_SIZE, AZ_EVALUATION_GAMES_COUNT,
     AZ_MODEL_UPDATE_WIN_RATE, AZ_BEST_MODEL_FILE, AZ_CANDIDATE_MODEL_FILE,
-    AZ_CHECKPOINT_FILE_PATTERN, NUM_SIMULATIONS_PER_MOVE,
-    TEMPERATURE_START, TEMPERATURE_END, TEMPERATURE_ANNEAL_STEPS,
-    DIRICHLET_ALPHA, DIRICHLET_EPSILON, C_PUCT_CONSTANT,
-    WANDB_PROJECT, WANDB_ENTITY, MAX_STEPS_PER_EPISODE, AZ_LEARNING_RATE,  # Added AZ_LEARNING_RATE
-    initial_position,  # Added initial_position
-    USE_NUMBA,  # Added USE_NUMBA
-    AZ_POLICY_LOSS_WEIGHT, AZ_VALUE_LOSS_WEIGHT  # Added loss weights
+    AZ_CHECKPOINT_FILE_PATTERN, NUM_SIMULATIONS_PER_MOVE, C_PUCT_CONSTANT,
+    DIRICHLET_ALPHA, DIRICHLET_EPSILON, TEMPERATURE_START, TEMPERATURE_END,
+    TEMPERATURE_ANNEAL_STEPS, AZ_LEARNING_RATE, AZ_L2_REGULARIZATION,
+    AZ_VALUE_LOSS_WEIGHT, AZ_POLICY_LOSS_WEIGHT, WANDB_PROJECT, WANDB_ENTITY,
+    USE_NUMBA, MAX_STEPS_PER_EPISODE, initial_position,
+    AZ_RECOVERY_MODE, AZ_RESET_OPTIMIZER, AZ_CLEAR_REPLAY_BUFFER, AZ_DISABLE_ATTENTION,
+    AZ_OVERFIT_TEST_REQUIRED,
+    AZ_LOG_ACTIVATION_STATS, # Added for Step 1.4
+    # Step 1.3: Static Dataset Config
+    AZ_GENERATE_STATIC_DATASET, AZ_TRAIN_ON_STATIC_DATASET, AZ_STATIC_DATASET_PATH,
+    AZ_STATIC_TRAINING_EPOCHS, AZ_STATIC_DATASET_GAMES
 )
-from env_const import PLAYER_A_ID, PLAYER_B_ID, NUM_ACTIONS
 
-# Helper for temperature annealing
-def get_temperature(game_step, total_anneal_steps=TEMPERATURE_ANNEAL_STEPS, start_temp=TEMPERATURE_START, end_temp=TEMPERATURE_END):
-    if total_anneal_steps == 0: # Avoid division by zero if annealing is instant
-        return end_temp
-    if game_step >= total_anneal_steps:
-        return end_temp
-    return start_temp - (start_temp - end_temp) * (game_step / total_anneal_steps)
+# Helper function for temperature decay
+def get_temperature(total_game_steps):
+    if total_game_steps < TEMPERATURE_ANNEAL_STEPS:
+        return TEMPERATURE_START * (1 - total_game_steps / TEMPERATURE_ANNEAL_STEPS) + \
+               TEMPERATURE_END * (total_game_steps / TEMPERATURE_ANNEAL_STEPS)
+    else:
+        return TEMPERATURE_END
 
 class AlphaZeroTrainer:
     def __init__(self, use_wandb=True):  # Add use_wandb parameter
         print("Initializing AlphaZero Trainer...")
         self.game_env = SwitcharooEnv()
+
+        # --- Step 1.3: Static Dataset Handling ---
+        if AZ_GENERATE_STATIC_DATASET:
+            print(f"--- STATIC DATASET GENERATION MODE ---")
+            print(f"Will generate {AZ_STATIC_DATASET_GAMES} games and save to {AZ_STATIC_DATASET_PATH}")
+        elif AZ_TRAIN_ON_STATIC_DATASET:
+            print(f"--- STATIC DATASET TRAINING MODE ---")
+            print(f"Will load data from {AZ_STATIC_DATASET_PATH} and train for {AZ_STATIC_TRAINING_EPOCHS} epochs.")
+        # --- End Step 1.3 ---
 
         # Cosine decay scheduler with warmup for smoother learning rate transitions
         # First create warmup schedule
@@ -87,6 +102,20 @@ class AlphaZeroTrainer:
         self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) 
         self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
 
+        # Handle recovery mode and model loading
+        if AZ_RECOVERY_MODE:
+            print("=== RECOVERY MODE ACTIVATED ===")
+            print("Using simplified architecture and conservative parameters")
+            
+            # Clear replay buffer if requested
+            if AZ_CLEAR_REPLAY_BUFFER:
+                print("Clearing replay buffer for fresh start")
+                # Buffer will be initialized empty anyway
+                
+            # Reset optimizer if requested
+            if AZ_RESET_OPTIMIZER:
+                print("Optimizer will be reset with new learning rate and clipping")
+
         if os.path.exists(AZ_BEST_MODEL_FILE):
             print(f"Found existing model at {AZ_BEST_MODEL_FILE}, attempting to load...")
             try:
@@ -95,6 +124,15 @@ class AlphaZeroTrainer:
                 self.current_nn.load_model(AZ_BEST_MODEL_FILE)
                 self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
                 self.candidate_nn.load_model(AZ_BEST_MODEL_FILE)
+                
+                # In recovery mode, force optimizer reset
+                if AZ_RECOVERY_MODE and AZ_RESET_OPTIMIZER:
+                    print("Recovery mode: Rebuilding models with fresh optimizers")
+                    self.current_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
+                    self.current_nn.load_model(AZ_BEST_MODEL_FILE)
+                    self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler)
+                    self.candidate_nn.load_model(AZ_BEST_MODEL_FILE)
+                    
                 print("Successfully loaded existing model weights.")
             except ValueError as e:
                 print(f"Error loading model weights: {e}")
@@ -177,13 +215,99 @@ class AlphaZeroTrainer:
         else:
             print("Weights & Biases logging disabled by command-line argument.")
 
-    def _run_self_play_games(self):
-        print(f"\n--- Generating {AZ_GAMES_PER_ITERATION} Self-Play Games ---")
+    def print_sample_predictions(self, n=3):
+        print("\n[Diagnostics] Sample predictions from candidate network:")
+        samples = random.sample(list(self.replay_buffer), min(n, len(self.replay_buffer)))
+        for i, (state, policy_target, value_target) in enumerate(samples):
+            policy_pred, value_pred = self.candidate_nn.predict(state)
+            value_pred_scalar = np.squeeze(value_pred)  # Fix: ensure scalar
+            print(f"Sample {i+1}:")
+            print(f"  True value: {value_target:.2f}, Predicted value: {value_pred_scalar:.2f}")
+            print(f"  True policy (argmax): {np.argmax(policy_target)}, Predicted policy (argmax): {np.argmax(policy_pred)}")
+            print(f"  Predicted policy (top 3): {np.argsort(policy_pred)[-3:][::-1]}")
+            print(f"  Policy entropy: {-(policy_pred * np.log(policy_pred + 1e-8)).sum():.2f}")
+            print(f"  Policy target entropy: {-(policy_target * np.log(policy_target + 1e-8)).sum():.2f}")
+
+    def print_value_head_stats(self, n=100):
+        # Print stats for value head predictions on a sample of the buffer
+        if len(self.replay_buffer) == 0:
+            print("[Diagnostics] Replay buffer empty, skipping value head stats.")
+            return
+        sample = random.sample(list(self.replay_buffer), min(n, len(self.replay_buffer)))
+        states = np.array([s for s, _, _ in sample])
+        targets = np.array([v for _, _, v in sample])
+        preds = np.array([np.squeeze(self.candidate_nn.predict(s)[1]) for s in states])  # Fix: ensure scalar
+        print(f"[Diagnostics] Value head stats on {len(sample)} samples:")
+        print(f"  Target mean: {targets.mean():.3f}, std: {targets.std():.3f}, min: {targets.min():.2f}, max: {targets.max():.2f}")
+        print(f"  Pred mean:   {preds.mean():.3f}, std: {preds.std():.3f}, min: {preds.min():.2f}, max: {preds.max():.2f}")
+        # Optional: confusion matrix for sign of value
+        try:
+            from sklearn.metrics import confusion_matrix
+            t_sign = np.sign(targets).astype(int)
+            p_sign = np.sign(preds).astype(int)
+            cm = confusion_matrix(t_sign, p_sign, labels=[-1,0,1])
+            print("[Diagnostics] Value head sign confusion matrix (rows=true, cols=pred):")
+            print(cm)
+        except Exception as e:
+            print(f"[Diagnostics] Could not compute confusion matrix: {e}")
+
+    def print_policy_entropy_stats(self, n=100):
+        if len(self.replay_buffer) == 0:
+            print("[Diagnostics] Replay buffer empty, skipping policy entropy stats.")
+            return
+        sample = random.sample(list(self.replay_buffer), min(n, len(self.replay_buffer)))
+        states = np.array([s for s, _, _ in sample])
+        entropies = []
+        for s in states:
+            policy_pred, _ = self.candidate_nn.predict(s)
+            entropy = -(policy_pred * np.log(policy_pred + 1e-8)).sum()
+            entropies.append(entropy)
+        print(f"[Diagnostics] Policy entropy: mean={np.mean(entropies):.2f}, std={np.std(entropies):.2f}, min={np.min(entropies):.2f}, max={np.max(entropies):.2f}")
+
+    def print_replay_buffer_targets(self, n=5):
+        print("\n[Diagnostics] Sample replay buffer targets:")
+        samples = random.sample(list(self.replay_buffer), min(n, len(self.replay_buffer)))
+        for i, (state, policy_target, value_target) in enumerate(samples):
+            print(f"Sample {i+1}: value_target={value_target}, policy_target_sum={np.sum(policy_target):.3f}, policy_target_argmax={np.argmax(policy_target)}, policy_target_nonzero={np.count_nonzero(policy_target)}")
+
+    def overfit_on_small_batch(self, steps=500):
+        print("\n[Overfit Test] Training on a single minibatch...")
+        minibatch = random.sample(list(self.replay_buffer), AZ_BATCH_SIZE)
+        batch_states = np.array([data[0] for data in minibatch])
+        batch_policy_targets = np.array([data[1] for data in minibatch])
+        batch_value_targets = np.array([data[2] for data in minibatch]).reshape(-1, 1)
+
+        # --- BEGIN: Step 1.2 Data Inspection ---
+        print("\n[Overfit Test - Data Inspection] First 3 samples from minibatch:")
+        for i in range(min(3, AZ_BATCH_SIZE)):
+            print(f"  Sample {i+1}:")
+            print(f"    State shape: {batch_states[i].shape}, State (first 10 flat): {batch_states[i].flatten()[:10]}")
+            print(f"    Policy Target shape: {batch_policy_targets[i].shape}, Sum: {np.sum(batch_policy_targets[i]):.4f}, Max: {np.max(batch_policy_targets[i]):.4f}, Argmax: {np.argmax(batch_policy_targets[i])}")
+            print(f"    Value Target: {batch_value_targets[i][0]:.4f}")
+        # --- END: Step 1.2 Data Inspection ---
+
+        for i in range(steps):
+            loss_info = self.candidate_nn.model.train_on_batch(
+                batch_states, 
+                {'policy_output': batch_policy_targets, 'value_output': batch_value_targets},
+                return_dict=True
+            )
+            if i % 50 == 0 or i == steps - 1:
+                print(f"Step {i}: loss={loss_info['loss']:.4f}, policy_loss={loss_info['policy_output_loss']:.4f}, value_loss={loss_info['value_output_loss']:.4f}")
+        print("[Overfit Test] After training:")
+        for j in range(3):
+            policy_pred, value_pred = self.candidate_nn.predict(batch_states[j])
+            print(f"Sample {j+1}: True value={batch_value_targets[j][0]}, Pred value={np.squeeze(value_pred):.3f}, True policy argmax={np.argmax(batch_policy_targets[j]),}, Pred policy argmax={np.argmax(policy_pred)}")
+
+    def _run_self_play_games(self, num_games_to_generate=None): # Added num_games_to_generate
+        num_games = num_games_to_generate if num_games_to_generate is not None else AZ_GAMES_PER_ITERATION
+        print(f"\\n--- Generating {num_games} Self-Play Games ---")
         games_played_this_iteration = 0
         new_experiences_count = 0
         iteration_game_outcomes = {"win": 0, "loss": 0, "draw": 0}
+        iteration_game_steps = 0  # Track steps for this iteration only
 
-        for game_num in range(AZ_GAMES_PER_ITERATION):
+        for game_num in tqdm(range(num_games),desc="Self-Play Games"):  # Added tqdm for progress bar
             current_game_experiences = [] 
             # Randomly select a starting position from config.initial_position
             starting_position_str = random.choice(initial_position)
@@ -195,101 +319,163 @@ class AlphaZeroTrainer:
             # Log temperature at the start of the game
             current_temp_at_game_start = get_temperature(self.total_game_steps_for_temp)
 
-            with tqdm(total=MAX_STEPS_PER_EPISODE, desc=f"Game {game_num+1}/{AZ_GAMES_PER_ITERATION} Moves", position=1, leave=False) as move_bar:  # New inner tqdm
-                while not done:
-                    current_player_id = self.game_env.current_player_id
-                    if USE_NUMBA:
-                        # print("Using Numba-optimized MCTS implementation.")
-                        mcts_handler = MCTSNumba(neural_network=self.current_nn, 
-                                                 game_env_class=SwitcharooEnv, 
-                                                 config=self.mcts_config)
-                        mcts_handler.run_mcts_simulations(
-                            NUM_SIMULATIONS_PER_MOVE,
-                            np.copy(self.game_env.board),
-                            current_player_id,
-                            root_node_dummy=None
-                        )
-                        action_probs_from_mcts = mcts_handler.get_action_probabilities(
-                            np.copy(self.game_env.board),
-                            current_player_id,
-                            get_temperature(self.total_game_steps_for_temp),
-                            root_node_dummy=None
-                        )
-                    else:
-                        # print("Using Python MCTS implementation.")
-                        root_node = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id)
-                        mcts_handler = MCTS(neural_network=self.current_nn, 
-                                            game_env_class=SwitcharooEnv, 
-                                            config=self.mcts_config)
-                        mcts_handler.run_mcts_simulations(
-                            root_node,
-                            np.copy(self.game_env.board),
-                            current_player_id
-                        )
-                        action_probs_from_mcts = mcts_handler.get_action_probabilities(
-                            root_node,
-                            get_temperature(self.total_game_steps_for_temp)
-                        )
-                    temp = get_temperature(self.total_game_steps_for_temp)
-                    nn_input_state = self.game_env._get_state() 
-                    current_game_experiences.append({'state': nn_input_state, 
-                                                     'policy_target': action_probs_from_mcts, 
-                                                     'player_at_state': current_player_id})
-                    if np.sum(action_probs_from_mcts) == 0:
-                        print("Warning: MCTS returned all zero probabilities. Choosing random legal action.")
-                        legal_actions = self.game_env.get_legal_action_indices()
-                        if not legal_actions: 
-                            print("Error: No legal actions and MCTS failed to identify terminal state.")
-                            break 
-                        action = random.choice(legal_actions)
-                    else:
-                        action_probs_normalized = action_probs_from_mcts / np.sum(action_probs_from_mcts)
-                        action = np.random.choice(NUM_ACTIONS, p=action_probs_normalized)
+            # Removed tqdm wrapper from here
+            while not done:
+                current_player_id = self.game_env.current_player_id
+                if USE_NUMBA:
+                    # print("Using Numba-optimized MCTS implementation.")
+                    mcts_handler = MCTSNumba(neural_network=self.current_nn, 
+                                             game_env_class=SwitcharooEnv, 
+                                             config=self.mcts_config)
+                    # Ensure board is copied and C-contiguous for Numba
+                    board_copy_for_mcts = np.ascontiguousarray(self.game_env.board)
                     
-                    next_state_repr, reward, done, info = self.game_env.step(action)
-                    game_step_count += 1
-                    self.total_game_steps_for_temp += 1
-                    move_bar.update(1)  # Update inner progress bar
+                    # Get current state representation for NN prediction
+                    current_state_repr = self.game_env._get_state() # Assuming _get_state() is the correct method for NN input
+                    # Predict policy and value for the root node
+                    nn_policy, nn_value = self.current_nn.predict(current_state_repr)
+                    
+                    mcts_handler.run_mcts_simulations(
+                        board_copy_for_mcts, # start_board_state_arr
+                        current_player_id,   # start_player_id
+                        nn_policy,           # nn_policy_values
+                        nn_value,            # nn_value_estimate
+                        NUM_SIMULATIONS_PER_MOVE # num_simulations
+                    )
+                    action_probs_from_mcts = mcts_handler.get_action_probabilities(
+                        board_copy_for_mcts, # Pass the C-contiguous copy
+                        current_player_id,
+                        get_temperature(self.total_game_steps_for_temp),
+                        root_node_dummy=None
+                    )
+                else:
+                    # print("Using Python MCTS implementation.")
+                    root_node = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id)
+                    mcts_handler = MCTS(neural_network=self.current_nn, 
+                                        game_env_class=SwitcharooEnv, 
+                                        config=self.mcts_config)
+                    mcts_handler.run_mcts_simulations(
+                        root_node,
+                        np.copy(self.game_env.board),
+                        current_player_id
+                    )
+                    action_probs_from_mcts = mcts_handler.get_action_probabilities(
+                        root_node,
+                        get_temperature(self.total_game_steps_for_temp)
+                    )
+                temp = get_temperature(self.total_game_steps_for_temp)
+                nn_input_state = self.game_env._get_state() 
+                current_game_experiences.append({'state': nn_input_state, 
+                                                 'policy_target': action_probs_from_mcts, 
+                                                 'player_at_state': current_player_id})
 
-                    # Ensure game terminates if it hits max steps
+                # --- BEGIN: MCTS Target Logging ---
+                if game_step_count < 5 and game_num < 2: # Log for first 5 steps of first 2 games
+                    print(f"  [MCTS Target Log] Game: {game_num+1}, Step: {game_step_count+1}, Player: {current_player_id}, Temp: {temp:.3f}")
+                    print(f"    Policy Target (sum={np.sum(action_probs_from_mcts):.3f}, max={np.max(action_probs_from_mcts):.3f}, argmax={np.argmax(action_probs_from_mcts)}, non-zero={np.count_nonzero(action_probs_from_mcts)}):")
+                    top_k_indices = np.argsort(action_probs_from_mcts)[-5:][::-1] # Top 5 actions
+                    top_k_probs = action_probs_from_mcts[top_k_indices]
+                    for k_idx, k_prob in zip(top_k_indices, top_k_probs):
+                        if k_prob > 0: # Only print non-zero probabilities
+                            print(f"      Action {k_idx}: {k_prob:.4f}")
+                    # Log raw visit counts if available (Python MCTS)
+                    if not USE_NUMBA and hasattr(root_node, 'children') and root_node.children:
+                        print(f"    MCTS Visit Counts (Top 5):")
+                        child_visits = {action: child.N for action, child in root_node.children.items()}
+                        sorted_visits = sorted(child_visits.items(), key=lambda item: item[1], reverse=True)[:5]
+                        for action_idx, visit_count in sorted_visits:
+                             print(f"      Action {action_idx}: {visit_count} visits")
+                    # --- BEGIN: MCTS Root Node Stats Logging ---
+                    if USE_NUMBA:
+                        try:
+                            legal_actions_for_log = self.game_env.get_legal_action_indices()
+                            root_stats = mcts_handler.get_root_node_stats(np.array(legal_actions_for_log, dtype=np.int32)) # Ensure legal_actions is a NumPy array for Numba
+                            print(f"    MCTS Root Node Stats (Top 5 by N, C_PUCT={self.mcts_config.C_PUCT_CONSTANT:.2f}):")
+                            # Sort stats by N (visit count) in descending order and take top 5
+                            # root_stats is a dict {action: (N, Q)}. We sort its items.
+                            sorted_root_stats_items = sorted(root_stats.items(), key=lambda item: item[1][0], reverse=True)[:5]
+                            for action, (n_val, q_val) in sorted_root_stats_items:
+                                # P and U are not directly in root_stats from get_root_node_stats
+                                # P would be edges[0, action, 3]
+                                # U would be c_puct * P * (sqrt(sum_N_root) / (1 + N))
+                                prior_p = mcts_handler.edges[0, action, 3] if mcts_handler.edges.shape[1] > action else 0.0
+                                root_total_visits = mcts_handler.nodes[0 * NODE_FIELDS + 0] # N_s for root
+                                u_val = 0.0
+                                if (1 + n_val) > 1e-8 and root_total_visits > 0: # Avoid division by zero
+                                    u_val = self.mcts_config.C_PUCT_CONSTANT * prior_p * (np.sqrt(root_total_visits) / (1 + n_val))
+
+                                print(f"      Action {action}: N={n_val:.1f}, Q={q_val:.3f}, P={prior_p:.3f}, U={u_val:.3f}")
+                        except Exception as e_log:
+                            print(f"      Error logging MCTS root stats: {e_log}")
+                    # --- END: MCTS Root Node Stats Logging ---
+                # --- END: MCTS Target Logging ---
+
+                if np.sum(action_probs_from_mcts) == 0:
+                    print("Warning: MCTS returned all zero probabilities. Choosing random legal action.")
+                    legal_actions = self.game_env.get_legal_action_indices()
+                    if not legal_actions: 
+                        print("Error: No legal actions and MCTS failed to identify terminal state.")
+                        break 
+                    action = random.choice(legal_actions)
+                else:
+                    action_probs_normalized = action_probs_from_mcts / np.sum(action_probs_from_mcts)
+                    action = np.random.choice(NUM_ACTIONS, p=action_probs_normalized)
+                
+                next_state_repr, reward, done, info = self.game_env.step(action)
+                game_step_count += 1
+                self.total_game_steps_for_temp += 1
+                iteration_game_steps += 1  # Track steps for this iteration
+                # Removed move_bar.update(1)
+
+                # Ensure game terminates if it hits max steps
+                if game_step_count >= MAX_STEPS_PER_EPISODE:
+                    if not done:  # Only print warning if game wasn't already done for other reasons
+                        print(f"Warning: Game {game_num+1} reached MAX_STEPS_PER_EPISODE ({MAX_STEPS_PER_EPISODE}). Ending game.")
+                    done = True 
+                
+                if done:
+                    # Removed move_bar.n and move_bar.refresh()
+                    # Add detailed logging for game end reason
+                    winner_id_for_log = self.game_env.winner_id
+                    reason_for_done_log = "Unknown"
                     if game_step_count >= MAX_STEPS_PER_EPISODE:
-                        if not done:  # Only print warning if game wasn't already done for other reasons
-                            print(f"Warning: Game {game_num+1} reached MAX_STEPS_PER_EPISODE ({MAX_STEPS_PER_EPISODE}). Ending game.")
-                        done = True 
-                    
-                    if done:
-                        move_bar.n = game_step_count  # Set final count for the progress bar to actual steps
-                        move_bar.refresh()  # Refresh to show final count correctly
-                        # Add detailed logging for game end reason
-                        winner_id_for_log = self.game_env.winner_id
-                        reason_for_done_log = "Unknown"
-                        if game_step_count >= MAX_STEPS_PER_EPISODE:
-                            reason_for_done_log = "Max Steps Reached"
-                        elif winner_id_for_log == PLAYER_A_ID or winner_id_for_log == PLAYER_B_ID:
-                            reason_for_done_log = f"Player {winner_id_for_log} won"
-                        elif winner_id_for_log == 3: # Draw
-                            reason_for_done_log = "Draw (Stalemate)"
-                        else: # If done is true but no specific win/draw/max_steps, could be an issue
-                            reason_for_done_log = "Done (Other/Unexpected)"
-                        break
+                        reason_for_done_log = "Max Steps Reached"
+                    elif winner_id_for_log == PLAYER_A_ID or winner_id_for_log == PLAYER_B_ID:
+                        reason_for_done_log = f"Player {winner_id_for_log} won"
+                    elif winner_id_for_log == 3: # Draw
+                        reason_for_done_log = "Draw (Stalemate)"
+                    else: # If done is true but no specific win/draw/max_steps, could be an issue
+                        reason_for_done_log = "Done (Other/Unexpected)"
+                    break
             
             winner = self.game_env.winner_id # Get final winner status
             if winner == first_player_of_game:
                 iteration_game_outcomes["win"] += 1
             elif winner == 0 or winner == 3: # 0 for no winner yet (should not happen if done), 3 for draw
                 iteration_game_outcomes["draw"] += 1
-            else: # Loss for the first player
+            else:
                 iteration_game_outcomes["loss"] += 1
             
-            for exp in current_game_experiences:
+            # --- BEGIN: Value Target Logging ---
+            if game_num < 2: # Log for the first 2 games
+                print(f"  [Value Target Log] Game: {game_num+1} ended. Winner: {winner}. First player was: {first_player_of_game}")
+            # --- END: Value Target Logging ---
+
+            for exp_idx, exp in enumerate(current_game_experiences):
                 player_at_state = exp['player_at_state']
                 value_target = 0.0
                 if winner == player_at_state:
                     value_target = 1.0
-                elif winner == 0 or winner == 3:
-                    value_target = 0.0
+                elif winner == 0 or winner == 3: # Draw or ongoing (should be resolved by now)
+                    value_target = 0.0 
                 else: 
                     value_target = -1.0
+                
+                # --- BEGIN: Value Target Assignment Logging ---
+                if game_num < 2 and exp_idx < 5 : # Log for first 5 experiences of first 2 games
+                    print(f"    [Value Target Assign Log] Game: {game_num+1}, Exp: {exp_idx}, Player at state: {player_at_state}, Assigned Value: {value_target:.1f}")
+                # --- END: Value Target Assignment Logging ---
+                
                 self.replay_buffer.append((exp['state'], exp['policy_target'], value_target))
                 new_experiences_count +=1
 
@@ -304,7 +490,7 @@ class AlphaZeroTrainer:
                 "self_play/wins_first_player": iteration_game_outcomes["win"],
                 "self_play/losses_first_player": iteration_game_outcomes["loss"],
                 "self_play/draws": iteration_game_outcomes["draw"],
-                "self_play/avg_game_steps": self.total_game_steps_for_temp / games_played_this_iteration if games_played_this_iteration > 0 else 0,
+                "self_play/avg_game_steps": iteration_game_steps / games_played_this_iteration if games_played_this_iteration > 0 else 0,
                 "self_play/current_temperature": get_temperature(self.total_game_steps_for_temp) 
             })
 
@@ -333,6 +519,64 @@ class AlphaZeroTrainer:
         return gradients, grad_norm, total_loss, policy_loss, value_loss
 
     def _train_network(self):
+        if AZ_TRAIN_ON_STATIC_DATASET: # Step 1.3: Load static dataset if enabled
+            if not os.path.exists(AZ_STATIC_DATASET_PATH):
+                print(f"ERROR: Static dataset not found at {AZ_STATIC_DATASET_PATH}. Cannot train.")
+                print("Please generate it first by setting AZ_GENERATE_STATIC_DATASET=True in config.py")
+                return
+            print(f"Loading static dataset from {AZ_STATIC_DATASET_PATH}...")
+            with open(AZ_STATIC_DATASET_PATH, 'rb') as f:
+                static_dataset = pickle.load(f)
+            
+            print(f"Loaded {len(static_dataset)} samples. Training for {AZ_STATIC_TRAINING_EPOCHS} epochs.")
+            
+            # Shuffle the loaded dataset
+            random.shuffle(static_dataset)
+
+            all_states = np.array([data[0] for data in static_dataset])
+            all_policy_targets = np.array([data[1] for data in static_dataset])
+            all_value_targets = np.array([data[2] for data in static_dataset]).reshape(-1, 1)
+
+            # --- BEGIN: Step 1.2 Data Inspection (for static data) ---
+            print("\\n[Static Dataset - Data Inspection] First 3 samples from loaded dataset:")
+            for i in range(min(3, len(static_dataset))):
+                print(f"  Sample {i+1}:")
+                print(f"    State shape: {all_states[i].shape}, State (first 10 flat): {all_states[i].flatten()[:10]}")
+                print(f"    Policy Target shape: {all_policy_targets[i].shape}, Sum: {np.sum(all_policy_targets[i]):.4f}, Max: {np.max(all_policy_targets[i]):.4f}, Argmax: {np.argmax(all_policy_targets[i])}")
+                print(f"    Value Target: {all_value_targets[i][0]:.4f}")
+            # --- END: Step 1.2 Data Inspection ---
+
+            for epoch in range(AZ_STATIC_TRAINING_EPOCHS):
+                history = self.candidate_nn.model.fit(
+                    all_states,
+                    {'policy_output': all_policy_targets, 'value_output': all_value_targets},
+                    batch_size=AZ_BATCH_SIZE,
+                    epochs=1, # Train one epoch at a time to log
+                    shuffle=True, # Shuffle data at each epoch
+                    verbose=0 # Suppress Keras's own progress bar
+                )
+                loss_info = history.history
+                avg_loss = np.mean(loss_info['loss'])
+                avg_policy_loss = np.mean(loss_info['policy_output_loss'])
+                avg_value_loss = np.mean(loss_info['value_output_loss'])
+                print(f"Epoch {epoch+1}/{AZ_STATIC_TRAINING_EPOCHS}: loss={avg_loss:.4f}, policy_loss={avg_policy_loss:.4f}, value_loss={avg_value_loss:.4f}")
+                if self.wandb_enabled:
+                    wandb.log({
+                        "static_train/epoch": epoch + 1,
+                        "static_train/total_loss": avg_loss,
+                        "static_train/policy_loss": avg_policy_loss,
+                        "static_train/value_loss": avg_value_loss,
+                        # Correctly access the learning rate
+                        "static_train/learning_rate": self.candidate_nn.model.optimizer.learning_rate.numpy() if hasattr(self.candidate_nn.model.optimizer.learning_rate, 'numpy') else self.candidate_nn.model.optimizer.learning_rate
+                    })
+
+            print("Static dataset training finished.")
+            # Save the model trained on static data
+            static_trained_model_path = "switcharoo_az_static_trained.weights.h5"
+            self.candidate_nn.save_model(static_trained_model_path)
+            print(f"Model trained on static data saved to {static_trained_model_path}")
+            return # End training after static training
+
         if len(self.replay_buffer) < AZ_BATCH_SIZE:
             print("Replay buffer too small to train. Skipping training phase.")
             if self.wandb_enabled:
@@ -357,8 +601,25 @@ class AlphaZeroTrainer:
         # Track gradient norms for debugging
         gradient_norms = []
         nan_loss_count = 0
+        # Step 1.4: Track activation statistics
+        activation_stats = {layer_name: [] for layer_name in self.candidate_nn.get_activation_layer_names()}
 
-        for train_step in tqdm(range(AZ_TRAINING_STEPS_PER_ITERATION), desc="Training Steps"):  # Added tqdm
+
+        # Diagnostics: before training
+        print("\n[Diagnostics] Before training:")
+        self.print_sample_predictions(n=2)
+        self.print_value_head_stats(n=20)
+        self.print_policy_entropy_stats(n=20)
+        self.print_replay_buffer_targets(n=5)
+        
+        # CRUCIAL: Test if model can overfit on a single batch
+        if AZ_OVERFIT_TEST_REQUIRED: # Check flag before running
+            print("\n[OVERFIT TEST] Testing model's ability to learn...")
+            self.overfit_on_small_batch(steps=100) # Reduced steps for quicker check
+        else:
+            print("\n[OVERFIT TEST] Skipped as per AZ_OVERFIT_TEST_REQUIRED=False.")
+
+        for train_step in tqdm(range(AZ_TRAINING_STEPS_PER_ITERATION), desc="Training Steps"):
             if len(self.replay_buffer) < AZ_BATCH_SIZE:
                 print("\nBuffer too small, breaking training early.")  # Added a print for early break
                 break 
@@ -402,6 +663,18 @@ class AlphaZeroTrainer:
                     # Get gradients and norm
                     gradients, grad_norm, _, _, _ = self.get_gradients_and_norm(state_tensor, policy_tensor, value_tensor)
                     gradient_norms.append(grad_norm.numpy())
+
+                    # Step 1.4: Log activation statistics
+                    if AZ_LOG_ACTIVATION_STATS:
+                        activations = self.candidate_nn.get_activations(state_tensor)
+                        for layer_name, activation_value in activations.items():
+                            activation_stats[layer_name].append({
+                                'mean': tf.reduce_mean(activation_value).numpy(),
+                                'std': tf.math.reduce_std(activation_value).numpy(),
+                                'min': tf.reduce_min(activation_value).numpy(),
+                                'max': tf.reduce_max(activation_value).numpy(),
+                                'abs_mean': tf.reduce_mean(tf.abs(activation_value)).numpy()
+                            })
                 except TypeError as te:
                     print(f"Error calculating gradient norm: {te}")
                     # Optionally, log the traceback for more details
@@ -481,20 +754,36 @@ class AlphaZeroTrainer:
 
         print(f"Network training finished. Avg Total Loss: {avg_total_loss:.4f} (P: {avg_policy_loss:.4f}, V: {avg_value_loss:.4f}, P_Acc: {avg_policy_accuracy:.4f}, V_MAE: {avg_value_mae:.4f}), LR: {current_lr_val:.2e}")
 
+        # Diagnostics: after training
+        print("\n[Diagnostics] After training:")
+        self.print_sample_predictions(n=2)
+        self.print_value_head_stats(n=20)
+        self.print_policy_entropy_stats(n=20)
+
         if self.wandb_enabled:
-            wandb_logs = {
-                "training/total_loss": avg_total_loss,
-                "training/policy_loss": avg_policy_loss,
-                "training/value_loss": avg_value_loss,
-                "training/policy_accuracy": avg_policy_accuracy,
-                "training/value_mae": avg_value_mae,
-                "training/learning_rate": current_lr_val,
-                "training/skipped": False, # Reaching here means training wasn't fully skipped initially
-                "training/nan_loss_count": nan_loss_count
-            }
-            if gradient_norms: 
-                wandb_logs["training/avg_gradient_norm"] = np.mean(gradient_norms)
-            wandb.log(wandb_logs)
+            wandb.log({
+                "train/total_loss": total_loss_this_iteration / AZ_TRAINING_STEPS_PER_ITERATION,
+                "train/policy_loss": policy_loss_this_iteration / AZ_TRAINING_STEPS_PER_ITERATION,
+                "train/value_loss": value_loss_this_iteration / AZ_TRAINING_STEPS_PER_ITERATION,
+                "train/policy_accuracy": policy_accuracy_this_iteration / AZ_TRAINING_STEPS_PER_ITERATION,
+                "train/value_mae": value_mae_this_iteration / AZ_TRAINING_STEPS_PER_ITERATION,
+                "train/learning_rate": current_lr_val, # Log current LR
+                "train/gradient_norm_avg": np.mean(gradient_norms) if gradient_norms else 0,
+                "train/gradient_norm_max": np.max(gradient_norms) if gradient_norms else 0,
+                "train/gradient_norm_min": np.min(gradient_norms) if gradient_norms else 0,
+                "train/nan_loss_count": nan_loss_count
+            })
+            # Step 1.4: Log aggregated activation statistics to WandB
+            if AZ_LOG_ACTIVATION_STATS:
+                for layer_name, stats_list in activation_stats.items():
+                    if stats_list: # Only log if we collected stats
+                        wandb.log({
+                            f"activations/{layer_name}/mean_avg": np.mean([s['mean'] for s in stats_list]),
+                            f"activations/{layer_name}/std_avg": np.mean([s['std'] for s in stats_list]),
+                            f"activations/{layer_name}/min_avg": np.mean([s['min'] for s in stats_list]),
+                            f"activations/{layer_name}/max_avg": np.mean([s['max'] for s in stats_list]),
+                            f"activations/{layer_name}/abs_mean_avg": np.mean([s['abs_mean'] for s in stats_list]),
+                        })
 
     def _evaluate_and_update_model(self, iteration_num):
         if iteration_num == 0: 
@@ -511,6 +800,10 @@ class AlphaZeroTrainer:
         print(f"\n--- Evaluating Candidate Model (Iteration {iteration_num}) ---")
         self.candidate_nn.save_model(AZ_CANDIDATE_MODEL_FILE)
         
+        # --- Add RAM usage logging before evaluation ---
+        process = psutil.Process(os.getpid())
+        print(f"[Eval] RAM before evaluation: {process.memory_info().rss / (1024**3):.2f} GB")
+
         eval_candidate_nn = AlphaZeroNetwork(learning_rate_schedule=self.lr_scheduler) # Pass scheduler
         eval_candidate_nn.load_model(AZ_CANDIDATE_MODEL_FILE)
         
@@ -643,6 +936,16 @@ class AlphaZeroTrainer:
         print(f"Evaluation Results: Candidate Wins: {candidate_wins}, Best Wins: {best_wins}, Draws: {draws}")
         print(f"Candidate Win Rate (vs Best, excluding draws): {win_rate:.2%}")
         
+        # --- Add RAM usage logging after evaluation ---
+        print(f"[Eval] RAM after evaluation: {process.memory_info().rss / (1024**3):.2f} GB")
+
+        # --- Explicitly delete evaluation models and run garbage collection ---
+        del eval_candidate_nn
+        del eval_best_nn
+        gc.collect()
+        tf.keras.backend.clear_session()
+        print("[Eval] Cleared eval models and ran garbage collection.")
+
         best_model_updated = False
         if win_rate > AZ_MODEL_UPDATE_WIN_RATE:
             print(f"Candidate model is better (Win Rate {win_rate:.2%} > {AZ_MODEL_UPDATE_WIN_RATE:.2%}). Updating best model.")
@@ -666,11 +969,27 @@ class AlphaZeroTrainer:
 
     def train(self):
         print("Starting AlphaZero Training Process...")
-        if self.wandb_enabled:
-            pass
 
-        for iteration in range(AZ_ITERATIONS):
-            print(f"\n===== Iteration {iteration+1}/{AZ_ITERATIONS} =====")
+        # --- Step 1.3: Static Dataset Generation / Training ---
+        if AZ_GENERATE_STATIC_DATASET:
+            print(f"Generating static dataset with {AZ_STATIC_DATASET_GAMES} games...")
+            self._run_self_play_games(num_games_to_generate=AZ_STATIC_DATASET_GAMES) 
+            
+            static_dataset_to_save = list(self.replay_buffer) 
+            with open(AZ_STATIC_DATASET_PATH, 'wb') as f:
+                pickle.dump(static_dataset_to_save, f)
+            print(f"Static dataset with {len(static_dataset_to_save)} samples saved to {AZ_STATIC_DATASET_PATH}")
+            print("Exiting after dataset generation.")
+            return 
+        
+        if AZ_TRAIN_ON_STATIC_DATASET:
+            self._train_network() 
+            print("Exiting after training on static dataset.")
+            return
+        # --- End Step 1.3 ---
+
+        for iteration in range(1, AZ_ITERATIONS + 1):
+            print(f"\n===== Iteration {iteration}/{AZ_ITERATIONS} =====")
             start_time_iter = time.time()
             # Log GPU memory usage if available
             try:
@@ -705,9 +1024,9 @@ class AlphaZeroTrainer:
                 print(f"Skipping checkpoint save for iteration {iteration + 1} (using progressive saving strategy)")
             end_time_iter = time.time()
             iter_duration = end_time_iter - start_time_iter
-            print(f"Iteration {iteration+1} completed in {iter_duration:.2f} seconds.")
+            print(f"Iteration {iteration} completed in {iter_duration:.2f} seconds.")
             if self.wandb_enabled:
-                wandb.log({"iteration": iteration + 1, "iteration_duration_sec": iter_duration})
+                wandb.log({"iteration": iteration, "iteration_duration_sec": iter_duration})
 
         print("\nAlphaZero Training Finished.")
         if self.wandb_enabled:
@@ -719,28 +1038,30 @@ if __name__ == '__main__':
     parser.add_argument('--debug-run', action='store_true', help="Run a short debug training session")
     parser.add_argument('--reduce-lr', type=float, help="Override learning rate with a lower value")
     parser.add_argument('--disable-xla', action='store_true', help="Disable XLA JIT compilation")
+    parser.add_argument('--diagnostics', action='store_true', help="Enable extra diagnostics and debugging output.")
     args = parser.parse_args()
 
     # Enable TensorFlow debug logging for numerical issues
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'  # Show warnings
 
-    # Disable XLA JIT compilation for now due to slow compilation and potential memory issues
-    # if not args.disable_xla:
-    #     tf.config.optimizer.set_jit(True)
-    # else:
-    #     tf.config.optimizer.set_jit(False) # Ensure it's off if arg is present
+    # --- Force XLA off via environment variable as well as tf.config ---
+    os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices=false"
     tf.config.optimizer.set_jit(False)
     print("XLA JIT compilation explicitly disabled to prevent slow compilation and potential OOM issues.")
     
     # Set shorter training parameters for debug runs
     if args.debug_run:
-        AZ_ITERATIONS = 2
-        AZ_GAMES_PER_ITERATION = 5
-        AZ_TRAINING_STEPS_PER_ITERATION = 50
+        AZ_ITERATIONS = 4
+        AZ_GAMES_PER_ITERATION = 10
+        AZ_TRAINING_STEPS_PER_ITERATION = 10
+        AZ_EVALUATION_GAMES_COUNT = 10
+        AZ_LEARNING_RATE = 1e-3  # <--- Add this line for debug runs
         print(f"Running in debug mode with reduced parameters:"
               f"\n- AZ_ITERATIONS: {AZ_ITERATIONS}"
               f"\n- AZ_GAMES_PER_ITERATION: {AZ_GAMES_PER_ITERATION}"
-              f"\n- AZ_TRAINING_STEPS_PER_ITERATION: {AZ_TRAINING_STEPS_PER_ITERATION}")
+              f"\n- AZ_TRAINING_STEPS_PER_ITERATION: {AZ_TRAINING_STEPS_PER_ITERATION}"
+              f"\n- AZ_EVALUATION_GAMES_COUNT: {AZ_EVALUATION_GAMES_COUNT}"
+              f"\n- AZ_LEARNING_RATE: {AZ_LEARNING_RATE}")
     
     # Override learning rate if specified (useful for handling NaN losses)
     if args.reduce_lr is not None and args.reduce_lr > 0:
@@ -769,4 +1090,23 @@ if __name__ == '__main__':
         print("Running on CPU")
 
     trainer = AlphaZeroTrainer(use_wandb=not args.no_wandb)  # Pass the flag to the constructor
+
+    # Fill replay buffer before overfit test, then proceed to main training loop
+    if args.debug_run and args.diagnostics:
+        import config as az_config  # Import config to access and modify AZ_BATCH_SIZE and AZ_LEARNING_RATE
+        orig_batch_size = az_config.AZ_BATCH_SIZE
+        orig_lr = az_config.AZ_LEARNING_RATE
+        az_config.AZ_BATCH_SIZE = 4
+        az_config.AZ_LEARNING_RATE = 0.01
+        print(f"[Overfit Test] Temporarily set AZ_BATCH_SIZE=4 and AZ_LEARNING_RATE=0.01 for overfit test.")
+        trainer._run_self_play_games()
+        if len(trainer.replay_buffer) >= az_config.AZ_BATCH_SIZE:
+            trainer.overfit_on_small_batch(steps=500)
+        else:
+            print("[Overfit Test] Not enough samples in replay buffer to run overfit test.")
+        az_config.AZ_BATCH_SIZE = orig_batch_size
+        az_config.AZ_LEARNING_RATE = orig_lr
+        print(f"[Overfit Test] Restored AZ_BATCH_SIZE and AZ_LEARNING_RATE to original values.")
+
+    # Now run the main training loop (which will fill the buffer again as needed)
     trainer.train()
