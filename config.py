@@ -4,7 +4,7 @@ import os
 # Training Phases Configuration
 PHASE1_EPISODES = 50000      # Episodes for Phase 1 (random opponent)
 PHASE2_EPISODES = 50000     # Episodes for Phase 2 (self-play)
-MAX_STEPS_PER_EPISODE = 1000  # Maximum steps per episode
+MAX_STEPS_PER_EPISODE = 250  # Maximum steps per episode (Reduced from 1000)
 REPLAY_FREQUENCY = 2         # Frequency of replay buffer sampling
 
 # Learning rate decay and opponent epsilon cap configuration
@@ -46,7 +46,7 @@ initial_position = initial_position_base
 
 # --- AlphaZero MCTS Configuration ---
 # MCTS Parameters - BALANCED FOR LONG TRAINING
-NUM_SIMULATIONS_PER_MOVE = 40   # Increased from 40. Slightly reduced for speed over 12 hours
+NUM_SIMULATIONS_PER_MOVE = 200   # Increased from 40. Slightly reduced for speed over 12 hours
 C_PUCT_CONSTANT = 0.25           # Balanced exploration/exploitation for long runs
 
 # Temperature schedule - PROGRESSIVE LEARNING FOR 12-HOUR TRAINING

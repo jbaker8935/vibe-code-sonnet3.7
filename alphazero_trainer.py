@@ -345,8 +345,7 @@ class AlphaZeroTrainer:
                     action_probs_from_mcts = mcts_handler.get_action_probabilities(
                         board_copy_for_mcts, # Pass the C-contiguous copy
                         current_player_id,
-                        get_temperature(self.total_game_steps_for_temp),
-                        root_node_dummy=None
+                        get_temperature(self.total_game_steps_for_temp)
                     )
                 else:
                     # print("Using Python MCTS implementation.")
@@ -385,29 +384,29 @@ class AlphaZeroTrainer:
                         sorted_visits = sorted(child_visits.items(), key=lambda item: item[1], reverse=True)[:5]
                         for action_idx, visit_count in sorted_visits:
                              print(f"      Action {action_idx}: {visit_count} visits")
-                    # --- BEGIN: MCTS Root Node Stats Logging ---
-                    if USE_NUMBA:
-                        try:
-                            legal_actions_for_log = self.game_env.get_legal_action_indices()
-                            root_stats = mcts_handler.get_root_node_stats(np.array(legal_actions_for_log, dtype=np.int32)) # Ensure legal_actions is a NumPy array for Numba
-                            print(f"    MCTS Root Node Stats (Top 5 by N, C_PUCT={self.mcts_config.C_PUCT_CONSTANT:.2f}):")
-                            # Sort stats by N (visit count) in descending order and take top 5
-                            # root_stats is a dict {action: (N, Q)}. We sort its items.
-                            sorted_root_stats_items = sorted(root_stats.items(), key=lambda item: item[1][0], reverse=True)[:5]
-                            for action, (n_val, q_val) in sorted_root_stats_items:
-                                # P and U are not directly in root_stats from get_root_node_stats
-                                # P would be edges[0, action, 3]
-                                # U would be c_puct * P * (sqrt(sum_N_root) / (1 + N))
-                                prior_p = mcts_handler.edges[0, action, 3] if mcts_handler.edges.shape[1] > action else 0.0
-                                root_total_visits = mcts_handler.nodes[0 * NODE_FIELDS + 0] # N_s for root
-                                u_val = 0.0
-                                if (1 + n_val) > 1e-8 and root_total_visits > 0: # Avoid division by zero
-                                    u_val = self.mcts_config.C_PUCT_CONSTANT * prior_p * (np.sqrt(root_total_visits) / (1 + n_val))
+                    # # --- BEGIN: MCTS Root Node Stats Logging ---
+                    # if USE_NUMBA:
+                    #     try:
+                    #         legal_actions_for_log = self.game_env.get_legal_action_indices()
+                    #         root_stats = mcts_handler.get_root_node_stats(np.array(legal_actions_for_log, dtype=np.int32)) # Ensure legal_actions is a NumPy array for Numba
+                    #         print(f"    MCTS Root Node Stats (Top 5 by N, C_PUCT={self.mcts_config.C_PUCT_CONSTANT:.2f}):")
+                    #         # Sort stats by N (visit count) in descending order and take top 5
+                    #         # root_stats is a dict {action: (N, Q)}. We sort its items.
+                    #         sorted_root_stats_items = sorted(root_stats.items(), key=lambda item: item[1][0], reverse=True)[:5]
+                    #         for action, (n_val, q_val) in sorted_root_stats_items:
+                    #             # P and U are not directly in root_stats from get_root_node_stats
+                    #             # P would be edges[0, action, 3]
+                    #             # U would be c_puct * P * (sqrt(sum_N_root) / (1 + N))
+                    #             prior_p = mcts_handler.edges[0, action, 3] if mcts_handler.edges.shape[1] > action else 0.0
+                    #             root_total_visits = mcts_handler.nodes[0 * NODE_FIELDS + 0] # N_s for root
+                    #             u_val = 0.0
+                    #             if (1 + n_val) > 1e-8 and root_total_visits > 0: # Avoid division by zero
+                    #                 u_val = self.mcts_config.C_PUCT_CONSTANT * prior_p * (np.sqrt(root_total_visits) / (1 + n_val))
 
-                                print(f"      Action {action}: N={n_val:.1f}, Q={q_val:.3f}, P={prior_p:.3f}, U={u_val:.3f}")
-                        except Exception as e_log:
-                            print(f"      Error logging MCTS root stats: {e_log}")
-                    # --- END: MCTS Root Node Stats Logging ---
+                    #             print(f"      Action {action}: N={n_val:.1f}, Q={q_val:.3f}, P={prior_p:.3f}, U={u_val:.3f}")
+                    #     except Exception as e_log:
+                    #         print(f"      Error logging MCTS root stats: {e_log}")
+                    # # --- END: MCTS Root Node Stats Logging ---
                 # --- END: MCTS Target Logging ---
 
                 if np.sum(action_probs_from_mcts) == 0:
@@ -860,17 +859,22 @@ class AlphaZeroTrainer:
                         game_env_class=SwitcharooEnv,
                         config=self.mcts_config
                     )
+                    # Get current state representation for NN prediction
+                    current_state_repr_eval = eval_env._get_state() # Assuming _get_state() is the correct method for NN input
+                    # Predict policy and value for the root node
+                    nn_policy_eval, nn_value_eval = active_model.predict(current_state_repr_eval)
+                    
                     mcts_eval.run_mcts_simulations(
-                        NUM_SIMULATIONS_PER_MOVE,
-                        np.copy(eval_env.board),
-                        current_player_id_eval,
-                        root_node_dummy=None
+                        np.ascontiguousarray(eval_env.board), # start_board_state_arr
+                        current_player_id_eval,   # start_player_id
+                        nn_policy_eval,           # nn_policy_values
+                        nn_value_eval,            # nn_value_estimate
+                        NUM_SIMULATIONS_PER_MOVE # num_simulations
                     )
                     action_probs_eval = mcts_eval.get_action_probabilities(
-                        np.copy(eval_env.board),
+                        np.ascontiguousarray(eval_env.board),
                         current_player_id_eval,
-                        eval_temperature,
-                        root_node_dummy=None
+                        eval_temperature
                     )
                 else:
                     # print("Using Python MCTS implementation.")

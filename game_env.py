@@ -214,20 +214,31 @@ class SwitcharooEnv:
         reward = 0.0
         
         self.step_count += 1  # Increment step counter
-        move = self._action_index_to_move(action_index)
+        # move = self._action_index_to_move(action_index) # Deferred
         current_player_id = self.current_player_id # Store before potential switch
 
-        # Check move legality (using JIT function indirectly)
-        # This check is somewhat redundant if agent always chooses from legal actions,
-        # but good for safety. Comparing tuples can be slow.
-        # A faster check might be to verify the action_index is in get_legal_action_indices()
-        legal_moves_tuples = self.get_legal_moves() # List of tuples
-        is_legal = move is not None and move in legal_moves_tuples
+        # Optimized move legality check:
+        # Use get_legal_action_indices() which should return a list/array of integers.
+        # Checking for an integer in a list/array of integers is generally faster
+        # than checking for a tuple in a list of tuples.
+        legal_action_indices = self.get_legal_action_indices()
+        is_legal = action_index in legal_action_indices
 
         if not is_legal:
-            # print(f"Warning: Illegal move {move} attempted by Player {ID_PLAYER_MAP[current_player_id]}. Action index: {action_index}")
-            # print(f"Legal moves: {legal_moves_tuples}")
+            # print(f"Warning: Illegal move attempted with action index: {action_index} by Player {ID_PLAYER_MAP[current_player_id]}.")
+            # print(f"Legal action indices: {legal_action_indices}")
             return self._get_state(), -10.0, False, {'error': 'Illegal move', 'winner': None}
+
+        # If the action_index is legal, now convert it to move coordinates.
+        # This work is now only done for legal moves.
+        move = self._action_index_to_move(action_index)
+
+        # Robustness check: If action_index was in legal_action_indices,
+        # _action_index_to_move should always return a valid move.
+        if move is None:
+            print(f"CRITICAL INCONSISTENCY: Action index {action_index} was in legal_action_indices but _action_index_to_move returned None.")
+            # This indicates a potential bug or inconsistency between get_legal_action_indices and _action_index_to_move.
+            return self._get_state(), -100.0, True, {'error': 'Internal move consistency error', 'winner': None}
 
         current_score = _evaluate_board_jit(self.board, current_player_id)
 
