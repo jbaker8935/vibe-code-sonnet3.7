@@ -41,6 +41,10 @@ ID_PLAYER_MAP = {v: k for k, v in PLAYER_ID_MAP.items()}
 # Directions: 0: (-1,-1), 1: (-1,0), 2: (-1,1), 3: (0,-1), 4: (0,1), 5: (1,-1), 6: (1,0), 7: (1,1)
 DIRECTIONS = np.array([(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)], dtype=np.int8)
 NUM_DIRECTIONS = len(DIRECTIONS)
+
+# Numba-compatible version of DIRECTIONS
+DIRECTIONS_TUPLE = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
+
 NUM_CELLS = ROWS * COLS
 NUM_ACTIONS = NUM_CELLS * NUM_DIRECTIONS # 32 * 8 = 256
 

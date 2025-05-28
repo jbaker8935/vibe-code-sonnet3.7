@@ -86,9 +86,6 @@ class SwitcharooEnv:
         self.current_player_id = PLAYER_A_ID if specific_player_to_start is None else specific_player_to_start
         self.winner_id = 0
         self.step_count = 0  # Reset step counter
-        self._early_game_move_counts = {PLAYER_A_ID: 0, PLAYER_B_ID: 0}
-        if hasattr(self, '_last_starting_row_counts'):
-            del self._last_starting_row_counts # Ensure this is reset
 
         # Support both string position and direct board array initialization
         if board_state_array is not None:
@@ -248,32 +245,6 @@ class SwitcharooEnv:
         move_type_code = _apply_move_jit(self.board, start_r, start_c, end_r, end_c)
         move_type = 'empty' if move_type_code == 1 else 'swap'
 
-        # --- EARLY GAME HEURISTIC REWARD ---
-        # Track early game move counts
-        self._early_game_move_counts[current_player_id] = self._early_game_move_counts.get(current_player_id, 0) + 1
-        # Only apply in first 12 moves by this player, and only if initial row had >=4 pieces
-        early_game_moves = self._early_game_move_counts[current_player_id]
-        if early_game_moves <= 12 and self._initial_starting_rows and self._initial_starting_rows[current_player_id] >= 4:
-            # For Player A: rows 6,7; for Player B: rows 0,1
-            if current_player_id == PLAYER_A_ID:
-                rows = self.board[6:8, :]
-                piece_types = (A_NORMAL, A_SWAPPED)
-            else:
-                rows = self.board[0:2, :]
-                piece_types = (B_NORMAL, B_SWAPPED)
-            # Count pieces in starting rows after move
-            pieces_in_rows = np.sum((rows == piece_types[0]) | (rows == piece_types[1]))
-            # Only apply if more than one piece remains in those rows
-            if pieces_in_rows > 1:
-                # Compare to previous count (before move)
-                if not hasattr(self, '_last_starting_row_counts'):
-                    self._last_starting_row_counts = {PLAYER_A_ID: self._initial_starting_rows[PLAYER_A_ID], PLAYER_B_ID: self._initial_starting_rows[PLAYER_B_ID]}
-                prev_count = self._last_starting_row_counts[current_player_id]
-                if pieces_in_rows < prev_count:
-                    # Give a bonus for moving a piece out
-                    reward += 2.0  # Reduced heuristic bonus
-                self._last_starting_row_counts[current_player_id] = pieces_in_rows
-
         # Check for win condition for the current player (using JIT with path finding)
         has_won, win_path = self.check_win_condition(ID_PLAYER_MAP[current_player_id])
         if has_won:
@@ -294,7 +265,7 @@ class SwitcharooEnv:
                 # It's a draw/stalemate if the opponent has no moves
                 self.winner_id = 3 # Draw
                 reward = -10.0 # Penalize draws more heavily
-                done = True
+                done = True  # <-- Ensure done is set to True for draw
             else:
                 # Game continues - Modified reward structure
                 reward = 0.0  # Base reward
@@ -311,12 +282,8 @@ class SwitcharooEnv:
         next_state = self._get_state()
         winner_player = ID_PLAYER_MAP.get(self.winner_id, None if self.winner_id != 3 else 'DRAW')
         info = {'winner': winner_player, 'move_type': move_type}
-
-        # If the game ended because the *other* player won (we lost)
-        # This condition needs careful checking after player switch
-        if done and self.winner_id != 0 and self.winner_id != 3 and self.winner_id != current_player_id:
-             reward = -15.0 # Further reduced loss reward for balance
-
+        if not is_legal:
+            info['error'] = 'Illegal move'
         return next_state, reward, done, info
 
     @property

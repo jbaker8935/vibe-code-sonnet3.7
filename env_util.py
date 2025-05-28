@@ -4,6 +4,9 @@ from env_const import (ROWS, COLS, EMPTY_CELL, PLAYER_A_ID, PLAYER_B_ID, A_NORMA
 import numpy as np
 import numba
 from numba import njit
+from numba.typed import List
+from numba import types
+LEGAL_MOVE_TYPE = types.UniTuple(types.int8, 4)
 
 
 
@@ -43,11 +46,11 @@ def _unmark_all_swapped(board):
     rows, cols = board.shape
     for r in range(rows):
         for c in range(cols):
-            piece = board[r, c]
+            piece = board[np.intp(r), np.intp(c)]
             if piece == A_SWAPPED:
-                board[r, c] = A_NORMAL
+                board[np.intp(r), np.intp(c)] = np.int8(A_NORMAL)
             elif piece == B_SWAPPED:
-                board[r, c] = B_NORMAL
+                board[np.intp(r), np.intp(c)] = np.int8(B_NORMAL)
     # No return needed, modifies board in place
 
 @njit(cache=True)
@@ -56,19 +59,17 @@ def _unmark_swapped_jit(board):
     rows, cols = board.shape
     for r in range(rows):
         for c in range(cols):
-            piece = board[r, c]
+            piece = board[np.intp(r), np.intp(c)]
             if (piece == A_SWAPPED):
-                board[r, c] = A_NORMAL
+                board[np.intp(r), np.intp(c)] = np.int8(A_NORMAL)
             elif (piece == B_SWAPPED):
-                board[r, c] = B_NORMAL
+                board[np.intp(r), np.intp(c)] = np.int8(B_NORMAL)
 
 @njit(cache=True)
 def _get_legal_moves_jit(board, player_id):
-    """Calculates all legal moves for the given player_id. Returns list of (start_r, start_c, end_r, end_c)."""
     rows, cols = board.shape
     opponent_id = PLAYER_B_ID if player_id == PLAYER_A_ID else PLAYER_A_ID
-    legal_moves = [] # Numba supports lists of simple types like tuples
-
+    legal_moves = List.empty_list(LEGAL_MOVE_TYPE)
     for r in range(rows):
         for c in range(cols):
             piece = board[r, c]
@@ -79,39 +80,30 @@ def _get_legal_moves_jit(board, player_id):
                     if _is_valid(nr, nc, rows, cols):
                         target_cell = board[nr, nc]
                         if target_cell == EMPTY_CELL:
-                            # Move to empty cell
-                            legal_moves.append((r, c, nr, nc))
+                            legal_moves.append((np.int8(r), np.int8(c), np.int8(nr), np.int8(nc)))
                         elif _get_piece_player_id(target_cell) == opponent_id and _is_piece_normal(target_cell):
-                            # Swap with opponent's NORMAL piece
-                            legal_moves.append((r, c, nr, nc))
+                            legal_moves.append((np.int8(r), np.int8(c), np.int8(nr), np.int8(nc)))
     return legal_moves
 
 @njit(cache=True)
 def _apply_move_jit(board, start_r, start_c, end_r, end_c):
     """Applies the move on the numerical board. Returns move_type_code (1=empty, 2=swap)."""
-    moving_piece = board[start_r, start_c]
-    target_piece = board[end_r, end_c]
+    moving_piece = board[np.intp(start_r), np.intp(start_c)]
+    target_piece = board[np.intp(end_r), np.intp(end_c)]
     move_type_code = 0
     moving_player_id = _get_piece_player_id(moving_piece)
 
     if target_piece == EMPTY_CELL:
-        # Move to empty cell
-        board[end_r, end_c] = moving_piece
-        board[start_r, start_c] = EMPTY_CELL
-        # unmark swapped pieces
+        board[np.intp(end_r), np.intp(end_c)] = np.int8(moving_piece)
+        board[np.intp(start_r), np.intp(start_c)] = np.int8(EMPTY_CELL)
         _unmark_swapped_jit(board)
         move_type_code = 1 # 'empty'
     else:
-        # Swap move (legality check happens before calling this)
-        # Determine swapped state for moving piece
-        swapped_moving_piece = A_SWAPPED if moving_player_id == PLAYER_A_ID else B_SWAPPED
-        # Determine swapped state for target piece
-        swapped_target_piece = A_SWAPPED if _get_piece_player_id(target_piece) == PLAYER_A_ID else B_SWAPPED
-
-        board[end_r, end_c] = swapped_moving_piece
-        board[start_r, start_c] = swapped_target_piece
+        swapped_moving_piece = np.int8(A_SWAPPED) if moving_player_id == PLAYER_A_ID else np.int8(B_SWAPPED)
+        swapped_target_piece = np.int8(A_SWAPPED) if _get_piece_player_id(target_piece) == PLAYER_A_ID else np.int8(B_SWAPPED)
+        board[np.intp(end_r), np.intp(end_c)] = swapped_moving_piece
+        board[np.intp(start_r), np.intp(start_c)] = swapped_target_piece
         move_type_code = 2 # 'swap'
-
     return move_type_code
 
 @njit(cache=True)
@@ -394,23 +386,21 @@ def board_to_binary_batch(boards):
 def _calculate_action_indices_jit(legal_moves, directions):
     """JIT-compiled function to convert moves to action indices."""
     legal_indices = []
-    
     for start_r, start_c, end_r, end_c in legal_moves:
-        dr, dc = end_r - start_r, end_c - start_c
-        
+        dr = np.int32(end_r - start_r)
+        dc = np.int32(end_c - start_c)
         # Find direction index
         direction_index = -1
         for i in range(len(directions)):
             if directions[i, 0] == dr and directions[i, 1] == dc:
-                direction_index = i
+                direction_index = np.int32(i)
                 break
-                
         if direction_index != -1:
-            start_cell_index = start_r * 4 + start_c  # Using COLS=4 directly for JIT
+            start_cell_index = np.int32(start_r) * 4 + np.int32(start_c)  # Using COLS=4 directly for JIT
             action_index = start_cell_index * 8 + direction_index  # Using NUM_DIRECTIONS=8 directly
-            legal_indices.append(action_index)
-    
-    return legal_indices
+            legal_indices.append(np.int32(action_index))
+    # Return as np.array with explicit dtype to avoid unsafe cast warnings
+    return np.array(legal_indices, dtype=np.int32)
 
 @njit(cache=True)
 def _calculate_progress_reward(board, player_id):

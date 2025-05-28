@@ -30,21 +30,155 @@ from config import (
     AZ_LOG_ACTIVATION_STATS, # Added for Step 1.4
     # Step 1.3: Static Dataset Config
     AZ_GENERATE_STATIC_DATASET, AZ_TRAIN_ON_STATIC_DATASET, AZ_STATIC_DATASET_PATH,
-    AZ_STATIC_TRAINING_EPOCHS, AZ_STATIC_DATASET_GAMES
+    AZ_STATIC_TRAINING_EPOCHS, AZ_STATIC_DATASET_GAMES,
+    # Progressive Curriculum Config
+    AZ_PROGRESSIVE_CURRICULUM, AZ_CURRICULUM_SCHEDULE, AZ_POSITION_WEIGHTS,
+    AZ_CURRICULUM_LOGGING, AZ_POSITION_SPECIFIC_METRICS
 )
 
 # Helper function for temperature decay
 def get_temperature(total_game_steps):
+    """
+    Calculate temperature for MCTS action selection based on total game steps.
+    
+    Temperature controls exploration vs exploitation:
+    - High temperature (TEMPERATURE_START) = more exploration, stochastic moves
+    - Low temperature (TEMPERATURE_END) = more exploitation, deterministic moves
+    
+    Args:
+        total_game_steps: Total number of individual game moves across all iterations
+        
+    Returns:
+        float: Temperature value between TEMPERATURE_START and TEMPERATURE_END
+    """
     if total_game_steps < TEMPERATURE_ANNEAL_STEPS:
         return TEMPERATURE_START * (1 - total_game_steps / TEMPERATURE_ANNEAL_STEPS) + \
                TEMPERATURE_END * (total_game_steps / TEMPERATURE_ANNEAL_STEPS)
     else:
         return TEMPERATURE_END
 
+def get_curriculum_aware_temperature(total_game_steps, iteration):
+    """
+    Calculate temperature with curriculum phase awareness.
+    
+    This function maintains higher exploration when new curriculum phases
+    introduce additional starting positions, then gradually anneals within
+    each phase. This addresses the critical issue where temperature reaches
+    minimum (0.02) by iteration 8, leaving phases 2 and 3 with no exploration.
+    
+    Args:
+        total_game_steps: Total number of individual game moves across all iterations
+        iteration: Current training iteration (1-based)
+        
+    Returns:
+        float: Temperature value optimized for current curriculum phase
+    """
+    
+    # Base temperature from original schedule
+    base_temp = get_temperature(total_game_steps)
+    
+    # If curriculum is disabled, use base temperature
+    if not AZ_PROGRESSIVE_CURRICULUM:
+        return base_temp
+    
+    # Get current curriculum phase
+    current_phase_name = None
+    current_phase_config = None
+    
+    for phase_name, phase_config in AZ_CURRICULUM_SCHEDULE.items():
+        start_iter, end_iter = phase_config['iterations']
+        if start_iter <= iteration <= end_iter:
+            current_phase_name = phase_name
+            current_phase_config = phase_config
+            break
+    
+    if not current_phase_config:
+        return base_temp
+    
+    # Phase-specific temperature adjustments
+    phase_start, phase_end = current_phase_config['iterations']
+    phase_length = phase_end - phase_start + 1
+    phase_progress = (iteration - phase_start) / phase_length  # 0.0 to 1.0
+    
+    if current_phase_name == 'phase_1':
+        # Phase 1: Standard annealing (single position) with exploration floor
+        return max(base_temp, 0.05)  # Minimum floor for basic exploration
+        
+    elif current_phase_name == 'phase_2':
+        # Phase 2: Boost for 2 positions, gradual annealing within phase
+        phase_min_temp = 0.15  # Higher minimum for 2-position exploration
+        phase_max_temp = 0.6   # Reset exploration at phase start
+        
+        # Anneal within the phase
+        phase_temp = phase_max_temp * (1 - phase_progress) + phase_min_temp * phase_progress
+        return max(base_temp, phase_temp)
+        
+    elif current_phase_name == 'phase_3':
+        # Phase 3: Higher boost for 4 positions, extended annealing
+        phase_min_temp = 0.25  # Even higher minimum for 4-position exploration  
+        phase_max_temp = 0.8   # Strong reset for maximum exploration
+        
+        # Slower annealing within the phase for complex positions
+        phase_temp = phase_max_temp * (1 - phase_progress**0.7) + phase_min_temp * (phase_progress**0.7)
+        return max(base_temp, phase_temp)
+    
+    return base_temp
+
+# Progressive Curriculum Helper Functions
+def get_current_curriculum_phase(iteration):
+    """Determine which curriculum phase we're in based on iteration number."""
+    if not AZ_PROGRESSIVE_CURRICULUM:
+        return None
+    
+    for phase_name, phase_config in AZ_CURRICULUM_SCHEDULE.items():
+        start_iter, end_iter = phase_config['iterations']
+        if start_iter <= iteration <= end_iter:
+            return phase_name, phase_config
+    
+    # If beyond all phases, use the last phase
+    last_phase = list(AZ_CURRICULUM_SCHEDULE.items())[-1]
+    return last_phase[0], last_phase[1]
+
+def get_curriculum_positions(iteration):
+    """Get the list of starting positions for the current iteration."""
+    if not AZ_PROGRESSIVE_CURRICULUM:
+        return initial_position  # Fall back to original behavior
+    
+    phase_name, phase_config = get_current_curriculum_phase(iteration)
+    if phase_config is None:
+        return initial_position
+    
+    return phase_config['positions']
+
+def select_weighted_position(positions, iteration=None):
+    """Select a position using curriculum weights if available."""
+    if not AZ_PROGRESSIVE_CURRICULUM or not AZ_POSITION_WEIGHTS:
+        return random.choice(positions)
+    
+    # Get weights for the available positions
+    weights = []
+    for pos in positions:
+        weight = AZ_POSITION_WEIGHTS.get(pos, 1.0)  # Default weight 1.0
+        weights.append(weight)
+    
+    # Normalize weights
+    total_weight = sum(weights)
+    if total_weight <= 0:
+        return random.choice(positions)
+    
+    probabilities = [w / total_weight for w in weights]
+    
+    # Select position based on weights
+    return np.random.choice(positions, p=probabilities)
+
 class AlphaZeroTrainer:
-    def __init__(self, use_wandb=True):  # Add use_wandb parameter
+    def __init__(self, use_wandb=True, use_jit_env=False):  # Add use_jit_env parameter
         print("Initializing AlphaZero Trainer...")
-        self.game_env = SwitcharooEnv()
+        if use_jit_env:
+            from game_env_jit import SwitcharooEnvJitWrapper
+            self.game_env = SwitcharooEnvJitWrapper()
+        else:
+            self.game_env = SwitcharooEnv()
 
         # --- Step 1.3: Static Dataset Handling ---
         if AZ_GENERATE_STATIC_DATASET:
@@ -170,6 +304,9 @@ class AlphaZeroTrainer:
         
         self.mcts_config = MCTSConfig()
         self.total_game_steps_for_temp = 0
+        
+        # Track current iteration for curriculum learning
+        self.current_iteration = 0
 
         # Initialize WandB
         self.wandb_enabled = False  # Default to False
@@ -307,17 +444,34 @@ class AlphaZeroTrainer:
         iteration_game_outcomes = {"win": 0, "loss": 0, "draw": 0}
         iteration_game_steps = 0  # Track steps for this iteration only
 
+        # Progressive curriculum logging
+        if AZ_PROGRESSIVE_CURRICULUM and AZ_CURRICULUM_LOGGING:
+            phase_name, phase_config = get_current_curriculum_phase(self.current_iteration)
+            if phase_config:
+                print(f"Curriculum Phase: {phase_name} - {phase_config['description']}")
+                print(f"Available positions: {len(phase_config['positions'])}")
+
         for game_num in tqdm(range(num_games),desc="Self-Play Games"):  # Added tqdm for progress bar
             current_game_experiences = [] 
-            # Randomly select a starting position from config.initial_position
-            starting_position_str = random.choice(initial_position)
+            
+            # Use curriculum-based position selection
+            if AZ_PROGRESSIVE_CURRICULUM:
+                curriculum_positions = get_curriculum_positions(self.current_iteration)
+                starting_position_str = select_weighted_position(curriculum_positions, self.current_iteration)
+                
+                if AZ_CURRICULUM_LOGGING and game_num < 3:  # Log first few games
+                    print(f"  Game {game_num+1}: Selected position from curriculum (Phase: {get_current_curriculum_phase(self.current_iteration)[0]})")
+            else:
+                # Original random selection
+                starting_position_str = random.choice(initial_position)
+            
             current_board_state_arr = self.game_env.reset(starting_position=starting_position_str)
             done = False
             game_step_count = 0
             first_player_of_game = self.game_env.current_player_id
 
             # Log temperature at the start of the game
-            current_temp_at_game_start = get_temperature(self.total_game_steps_for_temp)
+            current_temp_at_game_start = get_curriculum_aware_temperature(self.total_game_steps_for_temp, self.current_iteration)
 
             # Removed tqdm wrapper from here
             while not done:
@@ -345,7 +499,7 @@ class AlphaZeroTrainer:
                     action_probs_from_mcts = mcts_handler.get_action_probabilities(
                         board_copy_for_mcts, # Pass the C-contiguous copy
                         current_player_id,
-                        get_temperature(self.total_game_steps_for_temp)
+                        get_curriculum_aware_temperature(self.total_game_steps_for_temp, self.current_iteration)
                     )
                 else:
                     # print("Using Python MCTS implementation.")
@@ -360,9 +514,9 @@ class AlphaZeroTrainer:
                     )
                     action_probs_from_mcts = mcts_handler.get_action_probabilities(
                         root_node,
-                        get_temperature(self.total_game_steps_for_temp)
+                        get_curriculum_aware_temperature(self.total_game_steps_for_temp, self.current_iteration)
                     )
-                temp = get_temperature(self.total_game_steps_for_temp)
+                temp = get_curriculum_aware_temperature(self.total_game_steps_for_temp, self.current_iteration)
                 nn_input_state = self.game_env._get_state() 
                 current_game_experiences.append({'state': nn_input_state, 
                                                  'policy_target': action_probs_from_mcts, 
@@ -384,29 +538,6 @@ class AlphaZeroTrainer:
                         sorted_visits = sorted(child_visits.items(), key=lambda item: item[1], reverse=True)[:5]
                         for action_idx, visit_count in sorted_visits:
                              print(f"      Action {action_idx}: {visit_count} visits")
-                    # # --- BEGIN: MCTS Root Node Stats Logging ---
-                    # if USE_NUMBA:
-                    #     try:
-                    #         legal_actions_for_log = self.game_env.get_legal_action_indices()
-                    #         root_stats = mcts_handler.get_root_node_stats(np.array(legal_actions_for_log, dtype=np.int32)) # Ensure legal_actions is a NumPy array for Numba
-                    #         print(f"    MCTS Root Node Stats (Top 5 by N, C_PUCT={self.mcts_config.C_PUCT_CONSTANT:.2f}):")
-                    #         # Sort stats by N (visit count) in descending order and take top 5
-                    #         # root_stats is a dict {action: (N, Q)}. We sort its items.
-                    #         sorted_root_stats_items = sorted(root_stats.items(), key=lambda item: item[1][0], reverse=True)[:5]
-                    #         for action, (n_val, q_val) in sorted_root_stats_items:
-                    #             # P and U are not directly in root_stats from get_root_node_stats
-                    #             # P would be edges[0, action, 3]
-                    #             # U would be c_puct * P * (sqrt(sum_N_root) / (1 + N))
-                    #             prior_p = mcts_handler.edges[0, action, 3] if mcts_handler.edges.shape[1] > action else 0.0
-                    #             root_total_visits = mcts_handler.nodes[0 * NODE_FIELDS + 0] # N_s for root
-                    #             u_val = 0.0
-                    #             if (1 + n_val) > 1e-8 and root_total_visits > 0: # Avoid division by zero
-                    #                 u_val = self.mcts_config.C_PUCT_CONSTANT * prior_p * (np.sqrt(root_total_visits) / (1 + n_val))
-
-                    #             print(f"      Action {action}: N={n_val:.1f}, Q={q_val:.3f}, P={prior_p:.3f}, U={u_val:.3f}")
-                    #     except Exception as e_log:
-                    #         print(f"      Error logging MCTS root stats: {e_log}")
-                    # # --- END: MCTS Root Node Stats Logging ---
                 # --- END: MCTS Target Logging ---
 
                 if np.sum(action_probs_from_mcts) == 0:
@@ -490,7 +621,9 @@ class AlphaZeroTrainer:
                 "self_play/losses_first_player": iteration_game_outcomes["loss"],
                 "self_play/draws": iteration_game_outcomes["draw"],
                 "self_play/avg_game_steps": iteration_game_steps / games_played_this_iteration if games_played_this_iteration > 0 else 0,
-                "self_play/current_temperature": get_temperature(self.total_game_steps_for_temp) 
+                "self_play/current_temperature": get_curriculum_aware_temperature(self.total_game_steps_for_temp, self.current_iteration),
+                "self_play/base_temperature": get_temperature(self.total_game_steps_for_temp),
+                "curriculum/current_phase": get_current_curriculum_phase(self.current_iteration)[0] if get_current_curriculum_phase(self.current_iteration)[0] else "none"
             })
 
     @tf.function
@@ -835,8 +968,15 @@ class AlphaZeroTrainer:
 
         for game_idx in tqdm(range(AZ_EVALUATION_GAMES_COUNT), desc="Evaluation Games"):  # Added tqdm
             eval_env = SwitcharooEnv()
-            # Randomly select a starting position from config.initial_position
-            starting_position_str = random.choice(initial_position)
+            
+            # Use curriculum-based position selection for evaluation
+            if AZ_PROGRESSIVE_CURRICULUM:
+                curriculum_positions = get_curriculum_positions(self.current_iteration)
+                starting_position_str = select_weighted_position(curriculum_positions, self.current_iteration)
+            else:
+                # Original random selection
+                starting_position_str = random.choice(initial_position)
+            
             eval_env.reset(starting_position=starting_position_str)
             done = False
             game_step_count_eval = 0  # Initialize step counter for evaluation game
@@ -993,7 +1133,20 @@ class AlphaZeroTrainer:
         # --- End Step 1.3 ---
 
         for iteration in range(1, AZ_ITERATIONS + 1):
+            # Update current iteration for curriculum tracking
+            self.current_iteration = iteration
+            
             print(f"\n===== Iteration {iteration}/{AZ_ITERATIONS} =====")
+            
+            # Log curriculum phase information
+            if AZ_PROGRESSIVE_CURRICULUM and AZ_CURRICULUM_LOGGING:
+                phase_name, phase_config = get_current_curriculum_phase(iteration)
+                if phase_config:
+                    print(f"🎯 Curriculum Phase: {phase_name}")
+                    print(f"   Description: {phase_config['description']}")
+                    print(f"   Target Policy Accuracy: {phase_config['target_policy_accuracy']:.1%}")
+                    print(f"   Available Positions: {len(phase_config['positions'])}")
+            
             start_time_iter = time.time()
             # Log GPU memory usage if available
             try:
@@ -1093,7 +1246,7 @@ if __name__ == '__main__':
     else:
         print("Running on CPU")
 
-    trainer = AlphaZeroTrainer(use_wandb=not args.no_wandb)  # Pass the flag to the constructor
+    trainer = AlphaZeroTrainer(use_wandb=not args.no_wandb, use_jit_env=True)  # Pass the flag to the constructor
 
     # Fill replay buffer before overfit test, then proceed to main training loop
     if args.debug_run and args.diagnostics:

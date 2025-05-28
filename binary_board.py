@@ -42,14 +42,14 @@ def binary_to_board(binary_board):
             pos = r * 4 + c
             
             if binary_board[0] & (1 << pos):  # Empty
-                board[r, c] = 0
+                board[r, c] = np.int8(0)
             elif binary_board[1] & (1 << pos):  # Player A normal
-                board[r, c] = 1
+                board[r, c] = np.int8(1)
             elif binary_board[2] & (1 << pos):  # Player A swapped
-                board[r, c] = 2
+                board[r, c] = np.int8(2)
             elif binary_board[3] & (1 << pos):  # Player B normal
-                board[r, c] = 3
+                board[r, c] = np.int8(3)
             elif binary_board[4] & (1 << pos):  # Player B swapped
-                board[r, c] = 4
+                board[r, c] = np.int8(4)
                 
     return board
