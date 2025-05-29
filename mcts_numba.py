@@ -1,5 +1,7 @@
 import math
 import numpy as np
+import numpy as np
+import math
 from numba import njit, int32, float32, void
 
 from game_env import SwitcharooEnv # For type hinting and environment interaction
@@ -454,8 +456,7 @@ class MCTSNumba:
                 _backpropagate_stats(self.nodes, self.edges, path_nodes, path_actions, value_at_leaf)
 
         # Log the sum of visit counts (N) for all actions at the root node
-        total_root_visits = np.sum(self.edges[0, :, 0])
-        print(f"[MCTS Root Stats] Total N at root: {total_root_visits:.1f} (Simulations: {num_simulations})")
+        # print(f"[MCTS Root Stats] Total N at root: {total_root_visits:.1f} (Simulations: {num_simulations})")
 
     def get_action_probabilities(self, board_state_arr, player_id, temp=1.0, root_node_dummy=None):
         """
@@ -483,7 +484,7 @@ class MCTSNumba:
         legal_actions = self.sim_env_for_mcts.get_legal_action_indices()
         
         # If no legal actions, return zeros. The Numba helper also handles empty legal_actions_np.
-        if not legal_actions:
+        if len(legal_actions) == 0:
             return np.zeros(NUM_ACTIONS, dtype=np.float32)
 
         # Convert legal_actions to NumPy array for Numba helper

@@ -101,13 +101,29 @@ AZ_CURRICULUM_SCHEDULE = {
         'target_policy_accuracy': 0.50,
         'description': 'Dual position learning'
     },
-    # Phase 3: Full curriculum (iterations 81-120)
+    # Phase 3: Full curriculum (iterations 81-140)
     'phase_3': {
-        'iterations': (81, 120),
+        'iterations': (81, 140),
         'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
                      POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
         'target_policy_accuracy': 0.45,
         'description': 'Complete strategic mastery'
+    },
+    # Phase 4: Advanced strategic refinement (iterations 141-180)
+    'phase_4': {
+        'iterations': (141, 180),
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
+                     POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
+        'target_policy_accuracy': 0.50,
+        'description': 'Advanced strategic refinement and mastery'
+    },
+    # Phase 5: Ultra-precision mastery (iterations 181-220)
+    'phase_5': {
+        'iterations': (181, 220),
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
+                     POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
+        'target_policy_accuracy': 0.55,
+        'description': 'Ultra-precision mastery with minimal exploration'
     }
 }
 
@@ -139,9 +155,9 @@ TEMPERATURE_ANNEAL_STEPS = 5000 # Extended for gradual mastery development over 
 DIRICHLET_ALPHA = 0.7          # Increased for maximum opening diversity
 DIRICHLET_EPSILON = 0.20        # Enhanced exploration for breakthrough strategies
 
-# AlphaZero Training Loop Parameters - PHASE 3 STRATEGIC MASTERY (JIT-OPTIMIZED)
-# With 4.3x MCTS performance improvement, we can maintain quality while improving training efficiency
-AZ_ITERATIONS = 120              # INCREASED: More iterations leveraging JIT speed improvements  
+# AlphaZero Training Loop Parameters - EXTENDED STRATEGIC MASTERY (JIT-OPTIMIZED)
+# Extended for deeper strategic learning and mastery refinement
+AZ_ITERATIONS = 220              # EXTENDED: Additional 40 iterations for Phase 5 ultra-mastery  
 AZ_GAMES_PER_ITERATION = 30      # INCREASED: Higher game count with maintained speed
 AZ_TRAINING_STEPS_PER_ITERATION = 300   # INCREASED: More training steps for comprehensive learning
 AZ_REPLAY_BUFFER_SIZE = 10000    # EXPANDED: Larger buffer for richer experience diversity

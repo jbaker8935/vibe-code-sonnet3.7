@@ -121,6 +121,24 @@ def get_curriculum_aware_temperature(total_game_steps, iteration):
         # Slower annealing within the phase for complex positions
         phase_temp = phase_max_temp * (1 - phase_progress**0.7) + phase_min_temp * (phase_progress**0.7)
         return max(base_temp, phase_temp)
+        
+    elif current_phase_name == 'phase_4':
+        # Phase 4: Refinement phase with moderate exploration for polishing
+        phase_min_temp = 0.08  # Lower minimum for precise strategic play
+        phase_max_temp = 0.4   # Moderate reset for refinement
+        
+        # Conservative annealing for strategic refinement
+        phase_temp = phase_max_temp * (1 - phase_progress**0.5) + phase_min_temp * (phase_progress**0.5)
+        return max(base_temp, phase_temp)
+        
+    elif current_phase_name == 'phase_5':
+        # Phase 5: Ultra-precision mastery with minimal exploration
+        phase_min_temp = 0.05  # Very low minimum for ultra-precise play
+        phase_max_temp = 0.25  # Minimal reset for final mastery
+        
+        # Very conservative annealing for ultra-precision
+        phase_temp = phase_max_temp * (1 - phase_progress**0.3) + phase_min_temp * (phase_progress**0.3)
+        return max(base_temp, phase_temp)
     
     return base_temp
 

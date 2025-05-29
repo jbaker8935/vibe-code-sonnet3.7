@@ -8,4 +8,4 @@ you are a game developer that is prototyping a two player game for a vibe coding
 7. if a target cell is occupied by an opponent's piece then a player's piece may swap positions with the adjacent opponent's piece.  both pieces are marked to indicate they have been swapped.
 8. while a piece is marked swapped it cannot be the target of a swap moves.  however, a swapped piece can swap positions with an opponent's adjacent normal piece.
 9. when either player moves a piece to an empty cell, then all swapped pieces are unmarked and can be a target of a swap on a subsequent move.
-10. the game ends when either player has created a connected path of pieces between rows 2 and 7. 
+10. the game ends when either player has created a connected path of pieces between rows 1 and 6 (note: 0 based row numbering). 

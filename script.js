@@ -760,47 +760,65 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         const actionIndex = startCellIndex * NUM_DIRECTIONS + directionIndex;
         if (DEBUG) console.log(`moveToActionIndex: move: ${JSON.stringify(move)}, startCellIndex: ${startCellIndex}, directionIndex: ${directionIndex}, actionIndex: ${actionIndex}`); // Log details
         return actionIndex;
-    }
-
-    // Function to convert board state to neural network input
+    }    // Function to convert board state to neural network input
+    // This function replicates the Python _get_state() method from game_env.py
+    // Returns a 6-channel representation: each channel is a flattened ROWS x COLS board (32 elements each)
+    // Total: 6 * 32 = 192 elements to match AZ_NN_INPUT_DEPTH
     function boardToNNInput(boardState) {
         if (DEBUG) console.log("boardToNNInput: input boardState (first row):", JSON.stringify(boardState[0])); // Log part of input board
-        const binaryBoard = [0, 0, 0, 0, 0]; 
-
+        
+        const flatBoardSize = ROWS * COLS; // 8 * 4 = 32
+        const totalSize = 6 * flatBoardSize; // 6 * 32 = 192
+        const nnInput = new Float32Array(totalSize);
+        
+        // Initialize all channels to 0
+        for (let i = 0; i < totalSize; i++) {
+            nnInput[i] = 0.0;
+        }
+        
+        // Process each cell of the board
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
-                const pos = r * COLS + c;
+                const pos = r * COLS + c; // Position in flattened board (0-31)
                 const pieceData = boardState[r][c];
-                let pieceVal = 0; 
-
+                
                 if (pieceData) {
                     if (pieceData.player === PLAYER_A) {
-                        pieceVal = (pieceData.state === NORMAL) ? 1 : 2;
-                    } else { 
-                        pieceVal = (pieceData.state === NORMAL) ? 3 : 4;
+                        if (pieceData.state === NORMAL) {
+                            // Channel 0: Player A Normal pieces
+                            nnInput[pos] = 1.0;
+                        } else { // SWAPPED
+                            // Channel 1: Player A Swapped pieces  
+                            nnInput[flatBoardSize + pos] = 1.0;
+                        }
+                    } else { // PLAYER_B
+                        if (pieceData.state === NORMAL) {
+                            // Channel 2: Player B Normal pieces
+                            nnInput[2 * flatBoardSize + pos] = 1.0;
+                        } else { // SWAPPED
+                            // Channel 3: Player B Swapped pieces
+                            nnInput[3 * flatBoardSize + pos] = 1.0;
+                        }
                     }
-                }
-                
-                if (pieceVal === 0) {  
-                    binaryBoard[0] |= (1 << pos);
-                } else if (pieceVal === 1) { 
-                    binaryBoard[1] |= (1 << pos);
-                } else if (pieceVal === 2) { 
-                    binaryBoard[2] |= (1 << pos);
-                } else if (pieceVal === 3) { 
-                    binaryBoard[3] |= (1 << pos);
-                } else if (pieceVal === 4) { 
-                    binaryBoard[4] |= (1 << pos);
+                } else {
+                    // Channel 4: Empty cells
+                    nnInput[4 * flatBoardSize + pos] = 1.0;
                 }
             }
         }
-
-        const nnInput = new Float32Array(6);
-        for(let i=0; i<5; i++) {
-            nnInput[i] = binaryBoard[i]; 
+        
+        // Channel 5: Current player (all positions)
+        // Fill all positions in channel 5 with 0.0 for Player A, 1.0 for Player B
+        const playerValue = (currentPlayer === PLAYER_A) ? 0.0 : 1.0;
+        for (let pos = 0; pos < flatBoardSize; pos++) {
+            nnInput[5 * flatBoardSize + pos] = playerValue;
         }
-        nnInput[5] = (currentPlayer === PLAYER_A) ? 0.0 : 1.0;
-        if (DEBUG) console.log("boardToNNInput: output nnInput:", nnInput); // Log output
+        
+        if (DEBUG) {
+            console.log("boardToNNInput: output nnInput length:", nnInput.length);
+            console.log("boardToNNInput: first 10 values:", Array.from(nnInput.slice(0, 10)));
+            console.log("boardToNNInput: last 10 values:", Array.from(nnInput.slice(-10)));
+        }
         return nnInput;
     }
 
@@ -963,13 +981,11 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             console.log("Using neural network for move selection");
             let bestScore = -Infinity;
             let scoredMoves = [];
-            let topMoves = []; // Initialize topMoves
-
-            // Get the neural network input from the CURRENT board state
+            let topMoves = []; // Initialize topMoves            // Get the neural network input from the CURRENT board state
             const currentNNInput = boardToNNInput(boardState); // boardState is the current game board
 
-            if (!currentNNInput || currentNNInput.length !== 6) {
-                console.error("Failed to generate valid NN input from current board state. Falling back.", currentNNInput);
+            if (!currentNNInput || currentNNInput.length !== 192) {
+                console.error("Failed to generate valid NN input from current board state. Expected 192 elements but got:", currentNNInput?.length, "Falling back.");
                 // Fallback to heuristic AI if NN input generation fails
                 AI_DIFFICULTY = 'hard1'; // Temporarily change difficulty
                 const fallbackMove = await findBestAIMove(boardState); // Recurse with heuristic
@@ -981,9 +997,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             let outputTensors;
             let policyQValues;
 
-            try {
-                // Create a single tensor for the current board state input
-                // Reshape to [1, 6] as the model expects a batch dimension
+            try {                // Create a single tensor for the current board state input
+                // Reshape to [1, 192] as the model expects a batch dimension
                 inputTensor = tf.tensor2d([currentNNInput]); 
 
                 if (ANALYSIS_MODE) console.log("NN Input Tensor Shape:", inputTensor.shape);
@@ -1820,39 +1835,13 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         return (typeof structuredClone === 'function') ? 
                structuredClone(boardState) :
                JSON.parse(JSON.stringify(boardState));
-    }
-
-    function boardToKey(boardState) {
+    }    function boardToKey(boardState) {
         // Create a simpler string representation that's JSON-safe
         return boardState.map(row => 
             row.map(cell => 
                 cell ? `${cell.player}${cell.state[0]}` : '_'  // Use first letter of state
             ).join('')
         ).join('|');
-    }
-
-    // Serialize board for TF model input
-    function boardToNNInput(boardState) {
-        // !!! CRITICAL: This function MUST replicate the logic of your Python
-        // board_to_binary function to produce 5 integer values representing the board.
-        // The current implementation generating 33 values is INCORRECT for the model.
-
-        // Placeholder - Replace with your actual JavaScript implementation
-        // of the Python board_to_binary logic.
-        const binaryBoardRepresentation = convertBoardToBinaryJS(boardState); // Needs implementation
-
-        if (!Array.isArray(binaryBoardRepresentation) || binaryBoardRepresentation.length !== 5) {
-             console.error("convertBoardToBinaryJS did not return an array of 5 elements!");
-             // Return a dummy array to avoid crashing, but NN will be wrong
-             return [0, 0, 0, 0, 0, 1];
-        }
-
-        // Last element is current player: 1 for PLAYER_B (AI), -1 for PLAYER_A (opponent)
-        // The model was trained with PLAYER_B_ID (likely 1) as the player indicator
-        const playerIndicator = 1; // Assuming PLAYER_B is 1 in the Python training
-
-        // Return the 6-element array
-        return [...binaryBoardRepresentation, playerIndicator];
     }
 
     // --- You MUST implement this function based on your Python code ---
