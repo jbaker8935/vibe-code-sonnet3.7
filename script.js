@@ -58,13 +58,23 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         { dr:  1, dc: -1 }, // 5
         { dr:  1, dc:  0 }, // 6
         { dr:  1, dc:  1 }  // 7
-    ];
-    let AI_DIFFICULTY = 'easy'; // easy, hard1, hard2, hard_ai
-    let AI_DEPTH = 5; // Will be set based on difficulty
+    ];    let AI_DIFFICULTY = 'easy'; // easy, hard1, hard2, hard_ai
+    let AI_DEPTH = 1; // Will be set based on difficulty
     let ANALYSIS_MODE = true; // Ensure this is true for detailed NN logging
-    let tfModel = null; // TensorFlow.js model
-    let startingPosition = null; // Starting position for the game
+    let tfModel = null; // TensorFlow.js model    let startingPosition = null; // Starting position for the game
     let startingPositionIndex = 0; // Index for the initial position in the array
+      // MCTS Configuration
+    let MCTS_ENABLED = false; // Enable/disable MCTS for performance comparison - disabled by default for easy mode
+    let MCTS_SIMULATIONS = 50; // Number of MCTS simulations per move (1-1000)
+    let MCTS_TEMPERATURE = 0.01; // Temperature for action selection (0.0-2.0)
+    let MCTS_PUCT_CONSTANT = 1.0; // PUCT exploration constant
+    let MCTS_DIRICHLET_ALPHA = 0.3; // Dirichlet noise alpha
+    let MCTS_DIRICHLET_EPSILON = 0.25; // Dirichlet noise epsilon
+    let MCTS_VERBOSE = false; // Enable detailed MCTS logging
+    
+    // MCTS instances
+    let mctsSearch = null;
+    let gameLogic = null;
 
     const initialPosition = [
         "BBBB\nBBBB\n....\n....\n....\n....\nAAAA\nAAAA",
@@ -98,12 +108,9 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 // GraphModel does not have .summary() or .inputs/.outputs in the same way as LayersModel
                 // console.log("Model summary:"); // tfModel.summary(); // This would error for GraphModel
                 // console.log("Model inputs:", tfModel.inputs); // Different structure for GraphModel
-                // console.log("Model outputs:", tfModel.outputs);
-                console.log("Model signature:", tfModel.signature);
+                // console.log("Model outputs:", tfModel.outputs);                console.log("Model signature:", tfModel.signature);
 
 
-                // Enable the hard_ai option once the model is loaded
-                document.getElementById('difficulty-btn').classList.add('model-loaded');
                 return true;
             } catch (directLoadError) {
                 console.warn("Could not load pre-trained graph model. Error object:", directLoadError); // Log the error object
@@ -128,17 +135,44 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             loadTFJSModel();
         } else {
             console.warn("TensorFlow.js is not available. 'AI' difficulty option will not use the neural network model.");
-        }
-    } catch (e) {
+        }    } catch (e) {
         console.warn("Error initializing TensorFlow.js:", e);
+    }    // Initialize MCTS components
+    function initializeMCTS() {
+        if (typeof MCTSSearch !== 'undefined' && typeof SwitcharooGameLogic !== 'undefined') {
+            gameLogic = new SwitcharooGameLogic({
+                ROWS: ROWS,
+                COLS: COLS,
+                PLAYER_A: PLAYER_A,
+                PLAYER_B: PLAYER_B,
+                NORMAL: NORMAL,
+                SWAPPED: SWAPPED,
+                NUM_DIRECTIONS: NUM_DIRECTIONS,
+                JS_DIRECTIONS: JS_DIRECTIONS
+            });            mctsSearch = new MCTSSearch({
+                numSimulations: MCTS_SIMULATIONS,
+                cPuct: MCTS_PUCT_CONSTANT,
+                temperature: MCTS_TEMPERATURE,
+                dirichletAlpha: MCTS_DIRICHLET_ALPHA,
+                dirichletEpsilon: MCTS_DIRICHLET_EPSILON,
+                enabled: MCTS_ENABLED,
+                verbose: MCTS_VERBOSE,
+                logSearchStats: true // Force enable for testing
+            });
+            console.log("MCTS initialized successfully");
+        } else {
+            console.warn("MCTS classes not available - MCTS features disabled");
+        }
     }
 
-    const boardElement = document.getElementById('game-board');
+    // Initialize MCTS when DOM is ready
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeMCTS();
+    });    const boardElement = document.getElementById('game-board');
     const resetBtn = document.getElementById('reset-btn');
     const infoBtn = document.getElementById('info-btn');
     const historyBtn = document.getElementById('history-btn');
-    const difficultyBtn = document.getElementById('difficulty-btn'); 
-    const startBtn = document.getElementById('start-btn');     
+    const startBtn = document.getElementById('start-btn');
     const infoOverlay = document.getElementById('info-overlay');
     const historyOverlay = document.getElementById('history-overlay');
     const winOverlay = document.getElementById('win-overlay');
@@ -157,10 +191,13 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     let winner = null;
     let winPath = []; // Stores cells [{row, col}] of the winning path
     let playerAScore = 0;
-    let playerBScore = 0;
-    let currentHistoryIndex = undefined;
+    let playerBScore = 0;    let currentHistoryIndex = undefined;
     let touchStartY = 0;
     const transpositionTable = new Map();
+    
+    // Self-play variables
+    let isInSelfPlay = false;
+    let selfPlayTimeoutId = null;
 
     var DEBUG = true; // Set to false to disable
     var old_console_log = console.log;
@@ -196,9 +233,12 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             }
         }
         return board;
-    }
-
-    function initGame() {
+    }    function initGame() {
+        // Stop self-play if it's running
+        if (isInSelfPlay) {
+            stopSelfPlay();
+        }
+        
         // Use the updated startingPositionIndex to set the starting position
         console.log(`initGame called with startingPositionIndex: ${startingPositionIndex}`); // Add log
         startingPosition = parseStartingPosition(initialPosition[startingPositionIndex]);
@@ -336,14 +376,13 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     function updateStatusMessage() {
         // Optional: Implement a status display element if needed
         // e.g., document.getElementById('status').textContent = `Turn: Player ${currentPlayer}`;
-    }
-
-     // --- Event Handlers ---
+    }     // --- Event Handlers ---
      // (No changes needed in handleCellClick, resetBtn, infoBtn, historyBtn listeners,
      // overlayCloseButtons, or overlay backdrop listeners)
     function handleCellClick(row, col) {
         if (gameOver) return; // No moves after game ends (unless viewing history)
-        if (currentPlayer === PLAYER_B) return; // Block human clicks during AI turn
+        if (currentPlayer === PLAYER_B && !isInSelfPlay) return; // Block human clicks during AI turn (except in self-play)
+        if (isInSelfPlay) return; // Block all human interaction during self-play
 
         const clickedCellPiece = board[row][col];
 
@@ -373,9 +412,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 renderBoard();
             }
         }
-    }
-
-    resetBtn.addEventListener('click', () => {
+    }    resetBtn.addEventListener('click', () => {
         console.log("Reset button clicked. Resetting to initial position 0."); // Add log
         startingPositionIndex = 0; // Explicitly reset index to 0
         initGame();
@@ -385,61 +422,85 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         if (!historyBtn.disabled) {
             displayMoveHistory();
             showOverlay(historyOverlay);
-        }
+        }    });
+    startBtn.addEventListener('click', () => {
+        // Cycle through starting positions
+        startingPositionIndex = (startingPositionIndex + 1) % initialPosition.length;
+        console.log(`Starting board button clicked. New position index: ${startingPositionIndex}`);
+        initGame();
     });
 
-    // Replace the difficultyBtn click handler with this new version
-    difficultyBtn.addEventListener('click', () => {
-        switch(AI_DIFFICULTY) {
+// AI Difficulty Selection (moved to MCTS overlay)
+    function updateAIDifficulty(difficulty) {
+        switch(difficulty) {
             case 'easy':
-                AI_DIFFICULTY = 'hard1';
-                AI_DEPTH = 3;
-                difficultyBtn.classList.add('hard');
-                const img = difficultyBtn.querySelector('img');
-                img.src = 'images/hardware-chip-outline.svg';
-                difficultyBtn.title = 'AI Difficulty: Hard Level 1';
+                AI_DIFFICULTY = 'easy';
+                AI_DEPTH = 1;
                 break;
             case 'hard1':
+                AI_DIFFICULTY = 'hard1';
+                AI_DEPTH = 3;
+                break;
+            case 'hard_ai':
                 // Only allow hard_ai if model is loaded
                 if (tfModel) {
                     AI_DIFFICULTY = 'hard_ai';
                     AI_DEPTH = 1; // Depth doesn't matter for neural network
-                    difficultyBtn.classList.add('ai');
-                    const imgAI = difficultyBtn.querySelector('img');
-                    imgAI.src = 'images/skull-outline.svg';
-                    difficultyBtn.title = 'AI Difficulty: Neural Network';
+                    MCTS_ENABLED = true; // Enable MCTS by default in AI Agent mode
                 } else {
                     AI_DIFFICULTY = 'easy';
                     AI_DEPTH = 1;
-                    difficultyBtn.classList.remove('hard');
-                    difficultyBtn.classList.remove('ai');
-                    const img3 = difficultyBtn.querySelector('img');
-                    img3.src = 'images/happy-outline.svg';
-                    difficultyBtn.title = 'AI Difficulty: Easy';
+                    console.warn("Neural network model not loaded, falling back to Easy");
                 }
                 break;
-            case 'hard_ai':
-                AI_DIFFICULTY = 'easy';
-                AI_DEPTH = 1;
-                difficultyBtn.classList.remove('hard');
-                difficultyBtn.classList.remove('ai');
-                const img3 = difficultyBtn.querySelector('img');
-                img3.src = 'images/happy-outline.svg';
-                difficultyBtn.title = 'AI Difficulty: Easy';
-                break;
-            // case 'hard2':
-            //     AI_DIFFICULTY = 'easy';
-            //     AI_DEPTH = 1;
-            //     difficultyBtn.classList.remove('hard');
-            //     const img3 = difficultyBtn.querySelector('img');
-            //     img3.src = 'images/happy-outline.svg';
-            //     difficultyBtn.title = 'AI Difficulty: Easy';
-            //     break;
         }
+          // Update MCTS controls visibility
+        updateMCTSControlsVisibility();
+        
+        // Update MCTS button image
+        updateMCTSButtonImage();
+        
         console.log(`AI Difficulty switched to: ${AI_DIFFICULTY} (depth: ${AI_DEPTH})`);
-    });
+    }
 
-    overlayCloseButtons.forEach(button => {
+    function updateMCTSButtonImage() {
+        const mctsBtn = document.getElementById('mcts-btn');
+        const mctsImg = mctsBtn?.querySelector('img');
+        
+        if (mctsImg) {
+            switch(AI_DIFFICULTY) {
+                case 'easy':
+                    mctsImg.src = 'images/happy-outline.svg';
+                    break;
+                case 'hard1':
+                    mctsImg.src = 'images/hardware-chip-outline.svg';
+                    break;
+                case 'hard_ai':
+                    mctsImg.src = 'images/skull-outline.svg';
+                    break;
+                default:
+                    mctsImg.src = 'images/happy-outline.svg';
+                    break;
+            }
+        }
+    }    function updateMCTSControlsVisibility() {
+        const mctsOnlyElements = document.querySelectorAll('.mcts-only');
+        if (AI_DIFFICULTY === 'hard_ai') {
+            mctsOnlyElements.forEach(element => {
+                element.classList.remove('disabled');
+            });
+        } else {
+            mctsOnlyElements.forEach(element => {
+                element.classList.add('disabled');
+            });
+            // Disable MCTS when not in AI Agent mode
+            MCTS_ENABLED = false;
+            updateMCTSSettings();
+        }
+        
+        // Update the UI to reflect current MCTS settings
+        updateMCTSUI();
+    }overlayCloseButtons.forEach(button => {
         button.addEventListener('click', () => {
              const overlayId = button.getAttribute('data-overlay');
              hideOverlay(document.getElementById(overlayId));
@@ -618,12 +679,11 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     }
                 });
             }
-            
-            handleWin(winner);
-        } else {
+              handleWin(winner);        } else {
             renderBoard();
             switchPlayer();
-            if (currentPlayer === PLAYER_B && !gameOver) {
+            // Trigger AI move for Player B in normal mode, but NOT for self-play (self-play handles its own timing)
+            if (currentPlayer === PLAYER_B && !isInSelfPlay) {
                 setTimeout(() => {
                     triggerAIMove();
                 }, 50);
@@ -704,10 +764,13 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
         return { win: false, path: [] }; // No path found
     }
-
-
     function handleWin(winningPlayer) {
         console.log(`Game Over! ${winningPlayer === 'both' ? 'Both players win!' : 'Player ' + winningPlayer + ' wins!'}`);
+
+        // Stop self-play if it's running and update play button
+        if (isInSelfPlay) {
+            stopSelfPlay();
+        }
 
         // Update scores
         if (winningPlayer === 'both') {
@@ -764,7 +827,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     // This function replicates the Python _get_state() method from game_env.py
     // Returns a 6-channel representation: each channel is a flattened ROWS x COLS board (32 elements each)
     // Total: 6 * 32 = 192 elements to match AZ_NN_INPUT_DEPTH
-    function boardToNNInput(boardState) {
+    function boardToNNInput(boardState, currentPlayer = PLAYER_B) {
         if (DEBUG) console.log("boardToNNInput: input boardState (first row):", JSON.stringify(boardState[0])); // Log part of input board
         
         const flatBoardSize = ROWS * COLS; // 8 * 4 = 32
@@ -813,8 +876,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         for (let pos = 0; pos < flatBoardSize; pos++) {
             nnInput[5 * flatBoardSize + pos] = playerValue;
         }
-        
-        if (DEBUG) {
+          if (DEBUG) {
             console.log("boardToNNInput: output nnInput length:", nnInput.length);
             console.log("boardToNNInput: first 10 values:", Array.from(nnInput.slice(0, 10)));
             console.log("boardToNNInput: last 10 values:", Array.from(nnInput.slice(-10)));
@@ -822,9 +884,68 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         return nnInput;
     }
 
-    async function triggerAIMove() {
+    // Neural Network Prediction Function for MCTS
+    // Takes NN input array and returns {policy, value}
+    async function neuralNetworkPredict(nnInput) {
+        if (!tfModel) {
+            throw new Error("TensorFlow model not loaded");
+        }
+
+        if (!nnInput || nnInput.length !== 192) {
+            throw new Error(`Invalid NN input: expected 192 elements, got ${nnInput?.length}`);
+        }
+
+        let inputTensor;
+        let outputTensors;
+
+        try {
+            // Create tensor with batch dimension [1, 192]
+            inputTensor = tf.tensor2d([nnInput]);
+
+            // Use executeAsync for GraphModel prediction
+            const inputNodeName = tfModel.inputs[0].name;
+            outputTensors = await tfModel.executeAsync({[inputNodeName]: inputTensor});
+
+            if (outputTensors.length < 2) {
+                throw new Error(`Expected 2 output tensors (value, policy), got ${outputTensors.length}`);
+            }
+
+            const valueOutputTensor = outputTensors[0]; // Shape [1, 1]
+            const policyOutputTensor = outputTensors[1]; // Shape [1, 256]
+
+            // Extract value and policy data
+            const valueData = await valueOutputTensor.array();
+            const policyData = await policyOutputTensor.array();
+
+            const value = valueData[0][0]; // Single value
+            const policy = policyData[0]; // Array of 256 policy values
+
+            // Clean up tensors
+            inputTensor.dispose();
+            outputTensors.forEach(tensor => tensor.dispose());
+
+            return {
+                value: value,
+                policy: policy
+            };
+
+        } catch (error) {
+            // Clean up tensors in case of error
+            if (inputTensor && !inputTensor.isDisposed) {
+                inputTensor.dispose();
+            }
+            if (outputTensors) {
+                outputTensors.forEach(tensor => {
+                    if (tensor && !tensor.isDisposed) {
+                        tensor.dispose();
+                    }
+                });
+            }
+            throw error;
+        }
+    }    async function triggerAIMove() {
         if (gameOver) return;
-        console.log("AI (Player B) is thinking...");
+        console.log(`AI (Player ${currentPlayer}) is thinking...`);
 
         const spinnerDelay = 1500; // Time before showing spinner
         const spinnerMinDisplay = 1000; // Minimum time spinner is shown
@@ -846,7 +967,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             // Using setTimeout to ensure it's async and doesn't block the main thread
             setTimeout(() => {
                  try { // Added try...catch for errors within findBestAIMove
-                     const bestMove = findBestAIMove();
+                     const bestMove = findBestAIMove(board, currentPlayer);
                      resolve(bestMove);
                  } catch (err) {
                      reject(err); // Reject promise if findBestAIMove throws error
@@ -885,7 +1006,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             const timeSpinnerShouldHaveStarted = startTime + spinnerDelay;
 
             if (duration >= spinnerDelay) {
-                // AI took longer than the delay. Spinner should be shown or was shown.
+                // AI took longer than the delay. Spinner should show or was shown.
                 console.log(`AI took ${duration.toFixed(0)}ms (>= ${spinnerDelay}ms delay). Spinner should show.`);
 
                 // Show the spinner now if it wasn't shown already (i.e., AI finished before initial timeout fired)
@@ -931,13 +1052,11 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
              console.warn("Error in AI turn. Switching back to Player A.");
              switchPlayer();
         });
-    }
-
-    async function findBestAIMove(boardState = board) {
+    }    async function findBestAIMove(boardState = board, player = PLAYER_B) {
         let possibleMoves = [];
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
-                if (boardState[r][c] && boardState[r][c].player === PLAYER_B) {
+                if (boardState[r][c] && boardState[r][c].player === player) {
                     const moves = calculateLegalMovesForState(boardState, r, c);
                     moves.forEach(move => {
                         possibleMoves.push({
@@ -950,9 +1069,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             }
         }
 
-        if (possibleMoves.length === 0) return null;
-
-        // First, check for immediate winning moves
+        if (possibleMoves.length === 0) return null;        // First, check for immediate winning moves
         for (const move of possibleMoves) {
             const tempBoard = cloneBoard(boardState);
             const { start, end } = move; // Ensure `start` and `end` are destructured from `move`
@@ -962,27 +1079,78 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             if (!targetPiece) {
                 tempBoard[end.row][end.col] = { ...movingPiece };
                 tempBoard[start.row][start.col] = null;
-                unmarkPlayerSwapped(PLAYER_B, tempBoard); 
+                unmarkPlayerSwapped(player, tempBoard); 
             } else {
                 tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
-            }
-    
-            if (checkWinConditionForState(tempBoard, PLAYER_B).win) {
+            }            if (checkWinConditionForState(tempBoard, player).win) {
                 if (ANALYSIS_MODE) {
                     console.log(`Found immediate winning move: ${start.row},${start.col} to ${end.row},${end.col}`);
                 }
                 return move;
             }
-        }
-
-        // If using neural network model
+        }        // If using neural network model
         if (AI_DIFFICULTY === 'hard_ai' && tfModel) {
             console.log("Using neural network for move selection");
+            
+            // Use MCTS if enabled and available
+            if (MCTS_ENABLED && mctsSearch && gameLogic) {
+                console.log(`Using MCTS with ${MCTS_SIMULATIONS} simulations`);
+                try {
+                    const actionProbs = await mctsSearch.search(boardState, player, neuralNetworkPredict, gameLogic);
+                    
+                    // Convert action probabilities to move
+                    const legalMoves = [];
+                    for (let r = 0; r < ROWS; r++) {
+                        for (let c = 0; c < COLS; c++) {
+                            if (boardState[r][c] && boardState[r][c].player === player) {
+                                const moves = calculateLegalMovesForState(boardState, r, c);
+                                moves.forEach(move => {
+                                    legalMoves.push({
+                                        start: { row: r, col: c },
+                                        end: { row: move.row, col: move.col },
+                                        isSwap: !!move.isSwap
+                                    });
+                                });
+                            }
+                        }
+                    }
+                    
+                    if (legalMoves.length > 0) {
+                        // Select move based on MCTS action probabilities
+                        let bestMove = null;
+                        let bestProb = -1;
+                        
+                        for (const move of legalMoves) {
+                            const actionIndex = moveToActionIndex(move);
+                            if (actionIndex !== null && actionIndex >= 0 && actionIndex < actionProbs.length) {
+                                const prob = actionProbs[actionIndex];
+                                if (prob > bestProb) {
+                                    bestProb = prob;
+                                    bestMove = move;
+                                }
+                            }
+                        }
+                        
+                        if (bestMove && ANALYSIS_MODE) {
+                            console.log(`MCTS selected move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (prob: ${bestProb.toFixed(4)})`);
+                        }
+                        
+                        if (bestMove) {
+                            return bestMove;
+                        }
+                    }
+                } catch (error) {
+                    console.error("MCTS error, falling back to direct NN policy:", error);
+                    // Fall through to direct neural network policy
+                }
+            }
+            
+            console.log("Using direct neural network policy");
             let bestScore = -Infinity;
             let scoredMoves = [];
-            let topMoves = []; // Initialize topMoves            // Get the neural network input from the CURRENT board state
-            const currentNNInput = boardToNNInput(boardState); // boardState is the current game board
+            let topMoves = []; // Initialize topMoves// Get the neural network input from the CURRENT board state
+            const currentNNInput = boardToNNInput(boardState, player); // Include currentPlayer parameter
 
             if (!currentNNInput || currentNNInput.length !== 192) {
                 console.error("Failed to generate valid NN input from current board state. Expected 192 elements but got:", currentNNInput?.length, "Falling back.");
@@ -1054,19 +1222,16 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     // Create a temporary board to check if the move allows an opponent win
                     const tempBoard = cloneBoard(boardState);
                     const movingPiece = tempBoard[start.row][start.col];
-                    const targetPiece = tempBoard[end.row][end.col];
-
-                    if (!targetPiece) {
+                    const targetPiece = tempBoard[end.row][end.col];                    if (!targetPiece) {
                         tempBoard[end.row][end.col] = { ...movingPiece };
                         tempBoard[start.row][start.col] = null;
-                        unmarkPlayerSwapped(PLAYER_B, tempBoard);
+                        unmarkPlayerSwapped(player, tempBoard);
                     } else {
                         tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                         tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
-                    }
-
-                    // Check if this move allows Player A to win immediately
-                    if (allowsOpponentWin(tempBoard, PLAYER_A)) {
+                    }                    // Check if this move allows opponent to win
+                    const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
+                    if (allowsOpponentWin(tempBoard, opponent, AI_DEPTH)) { // Use proper AI_DEPTH for thorough checking
                         if (ANALYSIS_MODE) {
                             console.log(`NN: Skipping move ${start.row},${start.col} to ${end.row},${end.col}: allows opponent win`);
                         }
@@ -1165,20 +1330,17 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 
                 // Apply move to temporary board
                 const movingPiece = tempBoard[start.row][start.col];
-                const targetPiece = tempBoard[end.row][end.col];
-
-                if (!targetPiece) {
+                const targetPiece = tempBoard[end.row][end.col];                if (!targetPiece) {
                     tempBoard[end.row][end.col] = {...movingPiece};
                     tempBoard[start.row][start.col] = null;
-                    unmarkPlayerSwapped(PLAYER_B, tempBoard); 
+                    unmarkPlayerSwapped(player, tempBoard); 
                 } else {
                     tempBoard[end.row][end.col] = {...movingPiece, state: SWAPPED};
                     tempBoard[start.row][start.col] = {...targetPiece, state: SWAPPED};
-                }
-
-                // Check if this move allows Player A to win on their *next* turn
-                // Use allowsOpponentWin with depth 1 for easy difficulty
-                const isSafe = !allowsOpponentWin(tempBoard, PLAYER_A, 1);
+                }                // Check if this move allows opponent to win on their next turn(s)
+                // Use allowsOpponentWin with proper AI_DEPTH for consistency
+                const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
+                const isSafe = !allowsOpponentWin(tempBoard, opponent, AI_DEPTH);
                 if (ANALYSIS_MODE) {
                     console.log(`Evaluating move: ${start.row},${start.col} to ${end.row},${end.col} - Safe: ${isSafe}`);
                 }
@@ -1211,18 +1373,16 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             if (targetPiece === null) {
                 // Empty cell move
                 tempBoard[move.end.row][move.end.col] = {...movingPiece}; // Use spread to clone
-                tempBoard[move.start.row][move.start.col] = null; // Fix: use move.start instead of start
-                unmarkPlayerSwapped(PLAYER_B, tempBoard); 
+                tempBoard[move.start.row][move.start.col] = null; // Fix: use move.start instead of start                unmarkPlayerSwapped(player, tempBoard); 
             } else {
                 // Swap move
                 tempBoard[move.end.row][move.end.col] = {...movingPiece, state: SWAPPED};
                 tempBoard[move.start.row][move.start.col] = {...targetPiece, state: SWAPPED};
             }
 
-            const score = evaluateBoardState(tempBoard, PLAYER_B, move); // << Uses updated evaluateBoardState
-
-             // Check if this move allows Player A to win immediately
-             if (!allowsOpponentWin(tempBoard, PLAYER_A)) { // << Uses updated allowsOpponentWin
+            const score = evaluateBoardState(tempBoard, player, move); // << Uses updated evaluateBoardState             // Check if this move allows opponent to win
+             const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
+             if (!allowsOpponentWin(tempBoard, opponent, AI_DEPTH)) { // Use proper AI_DEPTH for thorough checking
                   if (score > bestScore) {
                        bestScore = score;
                        bestMoves = [move];
@@ -1464,31 +1624,33 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
          }
 
          while (queue.length > 0) {
-             const current = queue.shift();
-             const { row, col, path } = current;
+            const current = queue.shift();
+            const { row, col, path } = current;
 
-             // Check if we reached the target row - IMPORTANT: Return the complete path!
-             if (row === targetRow) {
-                 return { win: true, path: path }; // Return the complete winning path
-             }
+            // Check if we reached the target row
+            if (row === targetRow) {
+                 console.log(`Win detected for Player ${player}. Path:`, path);
+                 return { win: true, path: path }; // Found a path
+            }
 
-             // Explore neighbors
-             for (let dr = -1; dr <= 1; dr++) {
-                 for (let dc = -1; dc <= 1; dc++) {
-                     if (dr === 0 && dc === 0) continue;
-                     const nr = row + dr;
-                     const nc = col + dc;
+            // Explore neighbors
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    if (dr === 0 && dc === 0) continue;
 
-                     // Check bounds, if visited, and if it's the player's piece
-                     if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS &&
-                         !visited[nr][nc] &&
-                         boardState[nr] && boardState[nr][nc] && boardState[nr][nc].player === player)
+                    const nr = row + dr;
+                    const nc = col + dc;
+
+                    // Check bounds, if visited, and if it's the player's piece
+                    if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS &&
+                        !visited[nr][nc] &&
+                        boardState[nr] && boardState[nr][nc] && boardState[nr][nc].player === player)
                      {
                          visited[nr][nc] = true;
                          queue.push({ row: nr, col: nc, path: [...path, { row: nr, col: nc }] }); // Include complete path to current position
                      }
-                 }
-             }
+                }
+            }
          }
 
          return { win: false, path: [] };
@@ -1903,18 +2065,24 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 return `${cell.player}${cell.state === NORMAL ? 'N' : 'S'}`;
             }).join('')
         ).join('|');
-    }
-    function analyzeHistoricalMove() {
+    }    async function analyzeHistoricalMove() {
         if (currentHistoryIndex !== undefined && currentHistoryIndex > 0) {
             const historicalBoard = moveHistory[currentHistoryIndex - 1].boardAfter;
+            
+            // Determine whose turn it is for this historical board state
+            // The boardAfter represents the state after a move was made
+            // So the next player to move is the opposite of who made that move
+            const playerWhoMadePreviousMove = moveHistory[currentHistoryIndex - 1].player;
+            const playerToMoveNext = playerWhoMadePreviousMove === PLAYER_A ? PLAYER_B : PLAYER_A;
+            
             ANALYSIS_MODE = true;
-            const bestMove = findBestAIMove(historicalBoard);
+            const bestMove = await findBestAIMove(historicalBoard, playerToMoveNext);
             ANALYSIS_MODE = false;
-            console.log('Best move for this board state:', bestMove);
+            console.log(`Best move for this board state (Player ${playerToMoveNext}'s turn):`, bestMove);
         } else {
             console.log('No historical move selected.');
         }    
-    }    
+    }
     window.analyzeHistoricalMove = analyzeHistoricalMove;
 
     function setupTestPosition() {
@@ -1987,55 +2155,244 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     }
 
     // For testing in console
-    window.setupTestPosition = setupTestPosition;
-
-    // Add start button event listener
-    startBtn.addEventListener('click', () => {
-        const newIndex = (startingPositionIndex + 1) % initialPosition.length;
-        console.log(`Start button clicked. Changing startingPositionIndex from ${startingPositionIndex} to ${newIndex}.`); // Add log
-        // Increment the startingPositionIndex and wrap around if necessary
-        startingPositionIndex = newIndex;
-        initGame(); // Reinitialize the game with the new starting position
+    window.setupTestPosition = setupTestPosition;    // --- MCTS configuration button
+    const mctsBtn = document.getElementById('mcts-btn');
+    const mctsOverlay = document.getElementById('mcts-overlay');
+    
+    mctsBtn.addEventListener('click', () => {
+        showOverlay(mctsOverlay);
+        updateMCTSUI();
     });
 
-    // --- You MUST implement this function based on your Python action mapping ---
-    function moveToActionIndex(move) {
-        // This function needs to take a move object { start: {row, col}, end: {row, col} }
-        // and return the corresponding integer action index (0-255).
-        // It implements the logic from game_env.py:
-        // action_index = (start_r * COLS + start_c) * NUM_DIRECTIONS + direction_index
-
-        const startCellIndex = move.start.row * COLS + move.start.col; // 0-31
-        const dr = move.end.row - move.start.row; // -1, 0, or 1
-        const dc = move.end.col - move.start.col; // -1, 0, or 1
-
-        // Map (dr, dc) to direction index (0-7) - MUST MATCH PYTHON game_env.py DIRECTIONS array order
-        let directionIndex = -1;
-        if (dr === -1 && dc === -1) directionIndex = 0; // NW
-        else if (dr === -1 && dc ===  0) directionIndex = 1; // N
-        else if (dr === -1 && dc ===  1) directionIndex = 2; // NE
-        else if (dr ===  0 && dc === -1) directionIndex = 3; // W
-        else if (dr ===  0 && dc ===  1) directionIndex = 4; // E
-        else if (dr ===  1 && dc === -1) directionIndex = 5; // SW
-        else if (dr ===  1 && dc ===  0) directionIndex = 6; // S
-        else if (dr ===  1 && dc ===  1) directionIndex = 7; // SE
-
-        // Validate components
-        if (directionIndex === -1 || startCellIndex < 0 || startCellIndex >= (ROWS * COLS)) {
-             console.error(`Invalid components for moveToActionIndex: move=${JSON.stringify(move)}, startCellIndex=${startCellIndex}, directionIndex=${directionIndex}`);
-            return null; // Invalid move components
-        }
-
-        // Combine cell and direction - MUST MATCH PYTHON FORMULA
-        // NUM_DIRECTIONS is 8 in Python
-        const actionIndex = startCellIndex * 8 + directionIndex;
-
-        // Final validation
-        if (actionIndex < 0 || actionIndex >= (ROWS * COLS * 8)) {
-            console.error(`Calculated actionIndex out of bounds: ${actionIndex}`);
-            return null;
-        }
-
-        return actionIndex; // 0-255
+    // MCTS control functions
+    function toggleMCTS() {
+        MCTS_ENABLED = !MCTS_ENABLED;
+        updateMCTSSettings();
+        console.log(`MCTS ${MCTS_ENABLED ? 'enabled' : 'disabled'}`);
     }
+
+    function setMCTSSimulations(value) {
+        MCTS_SIMULATIONS = Math.max(1, Math.min(1000, parseInt(value)));
+        updateMCTSSettings();
+        if (MCTS_VERBOSE) {
+            console.log(`MCTS simulations set to ${MCTS_SIMULATIONS}`);
+        }
+    }
+
+    function setMCTSTemperature(value) {
+        MCTS_TEMPERATURE = Math.max(0.0, Math.min(2.0, parseFloat(value)));
+        updateMCTSSettings();
+        if (MCTS_VERBOSE) {
+            console.log(`MCTS temperature set to ${MCTS_TEMPERATURE}`);
+        }
+    }
+
+    function updateMCTSSettings() {
+        // Reinitialize MCTS with new settings if it exists
+        if (typeof initializeMCTS === 'function') {
+            initializeMCTS();
+        }
+        
+        // Update window globals for debugging
+        window.MCTS_ENABLED = MCTS_ENABLED;
+        window.MCTS_SIMULATIONS = MCTS_SIMULATIONS;
+        window.MCTS_TEMPERATURE = MCTS_TEMPERATURE;
+        window.MCTS_VERBOSE = MCTS_VERBOSE;
+    }    // MCTS control event handlers
+    function setupMCTSControls() {
+        const aiDifficultySelect = document.getElementById('ai-difficulty-select');
+        const mctsEnabledCheckbox = document.getElementById('mcts-enabled');
+        const mctsSimulationsSlider = document.getElementById('mcts-simulations');
+        const mctsSimulationsValue = document.getElementById('mcts-simulations-value');
+        const mctsTemperatureSlider = document.getElementById('mcts-temperature');
+        const mctsTemperatureValue = document.getElementById('mcts-temperature-value');
+        const mctsVerboseCheckbox = document.getElementById('mcts-verbose');
+        const mctsResetBtn = document.getElementById('mcts-reset-defaults');
+
+        // AI Difficulty selector
+        aiDifficultySelect.addEventListener('change', (e) => {
+            updateAIDifficulty(e.target.value);
+        });
+
+        // MCTS enabled/disabled
+        mctsEnabledCheckbox.addEventListener('change', (e) => {
+            if (AI_DIFFICULTY === 'hard_ai') {
+                MCTS_ENABLED = e.target.checked;
+                updateMCTSSettings();
+            } else {
+                // Force disable if not in AI Agent mode
+                e.target.checked = false;
+                MCTS_ENABLED = false;
+            }
+        });        // Simulations slider
+        mctsSimulationsSlider.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            setMCTSSimulations(value);
+            if (mctsSimulationsValue) mctsSimulationsValue.textContent = value;
+        });
+
+        // Temperature slider
+        mctsTemperatureSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            setMCTSTemperature(value);
+            if (mctsTemperatureValue) mctsTemperatureValue.textContent = value.toFixed(2);
+        });
+
+        // Verbose logging
+        mctsVerboseCheckbox.addEventListener('change', (e) => {
+            MCTS_VERBOSE = e.target.checked;
+            updateMCTSSettings();
+        });        // Reset to defaults
+        mctsResetBtn.addEventListener('click', () => {
+            MCTS_ENABLED = true;
+            MCTS_SIMULATIONS = 50;
+            MCTS_TEMPERATURE = 0.01;
+            MCTS_VERBOSE = false; // Reset verbose to disabled by default
+            updateMCTSSettings();
+            updateMCTSUI(); // Update all UI elements including sliders
+        });
+    }
+
+    // Update MCTS UI to reflect current settings
+    function updateMCTSUI() {
+        const aiDifficultySelect = document.getElementById('ai-difficulty-select');
+        const mctsEnabledCheckbox = document.getElementById('mcts-enabled');
+        const mctsSimulationsSlider = document.getElementById('mcts-simulations');
+        const mctsSimulationsValue = document.getElementById('mcts-simulations-value');
+        const mctsTemperatureSlider = document.getElementById('mcts-temperature');
+        const mctsTemperatureValue = document.getElementById('mcts-temperature-value');
+        const mctsVerboseCheckbox = document.getElementById('mcts-verbose');
+
+        // Update AI difficulty selector
+        if (aiDifficultySelect) aiDifficultySelect.value = AI_DIFFICULTY;
+        
+        // Update MCTS controls
+        if (mctsEnabledCheckbox) mctsEnabledCheckbox.checked = MCTS_ENABLED;
+        if (mctsSimulationsSlider) mctsSimulationsSlider.value = MCTS_SIMULATIONS;
+        if (mctsSimulationsValue) mctsSimulationsValue.textContent = MCTS_SIMULATIONS;        if (mctsTemperatureSlider) mctsTemperatureSlider.value = MCTS_TEMPERATURE;
+        if (mctsTemperatureValue) mctsTemperatureValue.textContent = MCTS_TEMPERATURE.toFixed(2);
+        if (mctsVerboseCheckbox) mctsVerboseCheckbox.checked = MCTS_VERBOSE;
+        
+        // Note: updateMCTSControlsVisibility() handles the visibility logic and calls updateMCTSUI()
+        // So we don't call it here to avoid infinite recursion
+    }// Initialize MCTS controls when DOM is ready
+    setupMCTSControls();
+    
+    // Initialize MCTS controls visibility
+    updateMCTSControlsVisibility();
+    
+    // Initialize MCTS button image
+    updateMCTSButtonImage();
+
+    // --- Debugging and Analysis Tools ---
+    window.DEBUG = DEBUG;
+    window.tfModel = tfModel;
+    window.AI_DIFFICULTY = AI_DIFFICULTY;
+    window.AI_DEPTH = AI_DEPTH;
+    window.MCTS_ENABLED = MCTS_ENABLED;
+    window.MCTS_SIMULATIONS = MCTS_SIMULATIONS;
+    window.MCTS_TEMPERATURE = MCTS_TEMPERATURE;
+    window.MCTS_PUCT_CONSTANT = MCTS_PUCT_CONSTANT;
+    window.MCTS_DIRICHLET_ALPHA = MCTS_DIRICHLET_ALPHA;
+    window.MCTS_DIRICHLET_EPSILON = MCTS_DIRICHLET_EPSILON;
+    window.MCTS_VERBOSE = MCTS_VERBOSE;
+    window.moveHistory = moveHistory;
+    window.currentPlayer = currentPlayer;
+    window.board = board;
+    window.selectPiece = selectPiece;
+    window.deselectPiece = deselectPiece;
+    window.makeMove = makeMove;
+    window.triggerAIMove = triggerAIMove;
+    window.findBestAIMove = findBestAIMove;
+    window.neuralNetworkPredict = neuralNetworkPredict;
+    window.allowsOpponentWin = allowsOpponentWin;
+    window.checkWinCondition = checkWinCondition;
+    window.serializeBoardState = serializeBoardState;
+    window.convertBoardToBinaryJS = convertBoardToBinaryJS;
+    window.cloneBoard = cloneBoard;
+    window.boardToKey = boardToKey;
+    window.parseStartingPosition = parseStartingPosition;
+    window.initGame = initGame;
+    window.renderBoard = renderBoard;
+    window.updateScoreDisplay = updateScoreDisplay;    window.displayMoveHistory = displayMoveHistory;
+    window.navigateHistory = navigateHistory;
+    window.toggleMCTS = toggleMCTS;
+    window.setMCTSSimulations = setMCTSSimulations;
+    window.setMCTSTemperature = setMCTSTemperature;
+        window.analyzeHistoricalMove = analyzeHistoricalMove;
+    window.setupTestPosition = setupTestPosition;    window.startSelfPlay = startSelfPlay;
+    window.stopSelfPlay = stopSelfPlay;
+    
+    // Convenience toggle function
+    window.selfPlay = function() {
+        if (isInSelfPlay) {
+            stopSelfPlay();
+        } else {
+            startSelfPlay();
+        }
+    };
+
+    // --- Self-Play Functions ---
+      function startSelfPlay() {
+        if (gameOver) {
+            console.log("Cannot start self-play: game is over");
+            return;
+        }
+        
+        isInSelfPlay = true;
+        console.log("Self-play started");
+        
+        // Start the self-play loop
+        scheduleSelfPlayMove();
+    }
+    
+    function stopSelfPlay() {
+        isInSelfPlay = false;
+        
+        // Clear any pending self-play move
+        if (selfPlayTimeoutId) {
+            clearTimeout(selfPlayTimeoutId);
+            selfPlayTimeoutId = null;
+        }
+          console.log("Self-play stopped");
+    }
+    
+    function scheduleSelfPlayMove() {
+        if (!isInSelfPlay || gameOver) {
+            return;
+        }
+        
+        // 500ms pause between player moves for better visualization
+        const delay = 500; // 500ms between moves
+        
+        selfPlayTimeoutId = setTimeout(() => {
+            makeSelfPlayMove();
+        }, delay);
+    }
+    
+    async function makeSelfPlayMove() {
+        if (!isInSelfPlay || gameOver) {
+            return;
+        }
+        
+        try {
+            // Make an AI move for the current player
+            await triggerAIMove();
+            
+            // Schedule the next move if game is still ongoing
+            if (!gameOver && isInSelfPlay) {
+                scheduleSelfPlayMove();
+            } else if (gameOver) {
+                stopSelfPlay();
+            }
+        } catch (error) {
+            console.error("Error during self-play move:", error);            stopSelfPlay();
+        }
+    }
+    
+    // Console commands info
+    console.log("🎮 Self-play console commands available:");
+    console.log("  startSelfPlay() - Start AI vs AI self-play");
+    console.log("  stopSelfPlay()  - Stop AI vs AI self-play");
+    console.log("  selfPlay()      - Toggle self-play on/off");
 });

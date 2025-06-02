@@ -18,17 +18,14 @@
         <div id="controls">
             <button id="reset-btn" title="Reset Game" type="button">
                 <img src="images/refresh-circle-outline.svg" alt="Reset">
-            </button>
-            <button id="info-btn" title="Game Rules" type="button">
+            </button>            <button id="info-btn" title="Game Rules" type="button">
                 <img src="images/information-circle-outline.svg" alt="Info">
-            </button>
-            <button id="difficulty-btn" title="AI Difficulty" type="button">
-                <img src="images/happy-outline.svg" alt="AI Difficulty">
+            </button>            <button id="mcts-btn" title="AI Settings" type="button">
+                <img src="images/happy-outline.svg" alt="AI">
             </button>
             <button id="start-btn" title="Starting Board" type="button">
                 <img src="images/location-outline.svg" alt="Starting Board">
-            </button>            
-            <button id="history-btn" title="Move History" disabled type="button">
+            </button>            <button id="history-btn" title="Move History" disabled type="button">
                 <img src="images/list-circle-outline.svg" alt="History">
             </button>
             <div id="score-display">
@@ -76,7 +73,7 @@
                             <img class="rules-icon" src="images/hardware-chip-outline.svg" alt="AI Difficulty"> Look-ahead 3
                         </div>
                         <div class="difficulty-item">
-                            <img class="rules-icon" src="images/skull-outline.svg" alt="AI Difficulty"> Neural Network
+                            <img class="rules-icon" src="images/skull-outline.svg" alt="AI Difficulty"> Neural Network with optional MCTS
                         </div>
                     </div>
             </ul>
@@ -109,10 +106,58 @@
             <div class="spinner"></div>
             Thinking ...
         </div>
+    </div>    <!-- MCTS Configuration Overlay -->
+    <div id="mcts-overlay" class="overlay">
+        <div class="overlay-content">
+            <button class="close-overlay-btn" data-overlay="mcts-overlay" type="button">
+                <img src="images/close-circle-outline.svg" alt="Close">
+            </button>            <h2>AI Configuration</h2>
+            <div class="mcts-controls">                <div class="control-group">
+                    <label for="ai-difficulty-select">AI Difficulty:</label>
+                    <select id="ai-difficulty-select">
+                        <option value="easy" selected>Easy</option>
+                        <option value="hard1">Look-ahead 3</option>
+                        <option value="hard_ai">AI Agent</option>
+                    </select>
+                    <span class="help-text">Choose AI difficulty level</span>
+                </div>
+                
+                <div class="control-group mcts-only">
+                    <label for="mcts-enabled">Enable MCTS:</label>
+                    <input type="checkbox" id="mcts-enabled" checked>
+                    <span class="help-text">Use MCTS tree search vs direct neural network policy (AI Agent only)</span>
+                </div>                
+                <div class="control-group mcts-only">
+                    <label for="mcts-simulations">Simulations per move:</label>
+                    <input type="range" id="mcts-simulations" min="1" max="1000" value="50" step="1">
+                    <span id="mcts-simulations-value">50</span>
+                    <span class="help-text">More simulations = stronger play but slower (AI Agent + MCTS only)</span>
+                </div>
+                
+                <div class="control-group mcts-only">                    <label for="mcts-temperature">Temperature:</label>
+                    <input type="range" id="mcts-temperature" min="0" max="2" value="0.01" step="0.01">
+                    <span id="mcts-temperature-value">0.01</span>
+                    <span class="help-text">Lower = more deterministic, Higher = more exploration (AI Agent + MCTS only)</span>
+                </div>
+                  <div class="control-group mcts-only">
+                    <label for="mcts-verbose">Verbose logging:</label>
+                    <input type="checkbox" id="mcts-verbose">
+                    <span class="help-text">Enable detailed MCTS search logging (AI Agent + MCTS only)</span>
+                </div>
+                
+                <div class="control-group">
+                    <button id="mcts-reset-defaults" type="button">Reset to Defaults</button>
+                </div>
+            </div>
+        </div>
     </div>    <!-- Import TensorFlow.js Core library first -->
     <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <!-- Add WASM backend for better mobile performance -->
     <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.22.0/dist/tf-backend-wasm.min.js"></script>
+    <!-- Load MCTS and game logic adapter -->
+    <script defer src="game_logic_adapter.js"></script>
+    <script defer src="mcts_js.js"></script>    <!-- Load debug script -->
+
     <!-- Then load our module code -->
     <script defer src="script.js"></script>
 </body>

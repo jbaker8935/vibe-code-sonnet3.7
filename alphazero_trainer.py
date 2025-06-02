@@ -114,21 +114,21 @@ def get_curriculum_aware_temperature(total_game_steps, iteration):
         return max(base_temp, phase_temp)
         
     elif current_phase_name == 'phase_3':
-        # Phase 3: Higher boost for 4 positions, extended annealing
-        phase_min_temp = 0.25  # Even higher minimum for 4-position exploration  
-        phase_max_temp = 0.8   # Strong reset for maximum exploration
+        # Phase 3: Extended boost for 3 positions with slower annealing
+        phase_min_temp = 0.30  # Higher minimum for sustained 3-position exploration  
+        phase_max_temp = 0.85  # Strong reset for maximum exploration
         
-        # Slower annealing within the phase for complex positions
-        phase_temp = phase_max_temp * (1 - phase_progress**0.7) + phase_min_temp * (phase_progress**0.7)
+        # Much slower annealing within the phase for complex positions
+        phase_temp = phase_max_temp * (1 - phase_progress**0.8) + phase_min_temp * (phase_progress**0.8)
         return max(base_temp, phase_temp)
         
     elif current_phase_name == 'phase_4':
-        # Phase 4: Refinement phase with moderate exploration for polishing
-        phase_min_temp = 0.08  # Lower minimum for precise strategic play
-        phase_max_temp = 0.4   # Moderate reset for refinement
+        # Phase 4: Maximum exploration for 4 positions, very slow annealing
+        phase_min_temp = 0.35  # Very high minimum for 4-position exploration
+        phase_max_temp = 0.9   # Maximum reset for ultimate exploration
         
-        # Conservative annealing for strategic refinement
-        phase_temp = phase_max_temp * (1 - phase_progress**0.5) + phase_min_temp * (phase_progress**0.5)
+        # Ultra-slow annealing for the most complex phase
+        phase_temp = phase_max_temp * (1 - phase_progress**0.9) + phase_min_temp * (phase_progress**0.9)
         return max(base_temp, phase_temp)
         
     elif current_phase_name == 'phase_5':
@@ -192,6 +192,17 @@ def select_weighted_position(positions, iteration=None):
 class AlphaZeroTrainer:
     def __init__(self, use_wandb=True, use_jit_env=False):  # Add use_jit_env parameter
         print("Initializing AlphaZero Trainer...")
+        
+        # Configure GPU memory growth to prevent full VRAM allocation
+        gpus = tf.config.experimental.list_physical_devices('GPU')
+        if gpus:
+            try:
+                for gpu in gpus:
+                    tf.config.experimental.set_memory_growth(gpu, True)
+                print(f"🔧 GPU Memory Growth enabled for {len(gpus)} GPU(s)")
+            except RuntimeError as e:
+                print(f"⚠️  GPU Memory Growth setting failed: {e}")
+        
         if use_jit_env:
             from game_env_jit import SwitcharooEnvJitWrapper
             self.game_env = SwitcharooEnvJitWrapper()
@@ -1129,8 +1140,13 @@ class AlphaZeroTrainer:
                 "evaluation/skipped": False
             })
 
-    def train(self):
+    def train(self, start_iteration=1):
         print("Starting AlphaZero Training Process...")
+        
+        if start_iteration > 1:
+            print(f"🔄 RESUMING training from iteration {start_iteration}")
+        else:
+            print("🚀 STARTING training from iteration 1")
 
         # --- Step 1.3: Static Dataset Generation / Training ---
         if AZ_GENERATE_STATIC_DATASET:
@@ -1150,7 +1166,7 @@ class AlphaZeroTrainer:
             return
         # --- End Step 1.3 ---
 
-        for iteration in range(1, AZ_ITERATIONS + 1):
+        for iteration in range(start_iteration, AZ_ITERATIONS + 1):
             # Update current iteration for curriculum tracking
             self.current_iteration = iteration
             
@@ -1168,9 +1184,10 @@ class AlphaZeroTrainer:
             start_time_iter = time.time()
             # Log GPU memory usage if available
             try:
-                if gpus:
+                gpu_devices = tf.config.list_physical_devices('GPU')
+                if gpu_devices:
                     memory_info = {}
-                    for device in tf.config.list_physical_devices('GPU'):
+                    for device in gpu_devices:
                         device_idx = device.name.split(':')[-1]
                         memory_stats = tf.config.experimental.get_memory_info(f'/device:GPU:{device_idx}')
                         if memory_stats:
@@ -1284,4 +1301,5 @@ if __name__ == '__main__':
         print(f"[Overfit Test] Restored AZ_BATCH_SIZE and AZ_LEARNING_RATE to original values.")
 
     # Now run the main training loop (which will fill the buffer again as needed)
-    trainer.train()
+    # Phase 4 Full Mastery: iterations 261-320
+    trainer.train(start_iteration=261)
