@@ -116,6 +116,14 @@ AZ_CURRICULUM_SCHEDULE = {
                      POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
         'target_policy_accuracy': 0.48,  # REALISTIC: Lowered for four-position complexity
         'description': 'Full strategic mastery with stability focus'
+    },
+    # Phase 5: Ultra-mastery and fine-tuning (321-400)
+    'phase_5': {
+        'iterations': (321, 400),        # ADVANCED: Building on Phase 4's ELO 1774 success
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
+                     POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
+        'target_policy_accuracy': 0.52,  # AMBITIOUS: Higher target based on Phase 4's 87.4% success
+        'description': 'Ultra-precision mastery and tournament-level refinement'
     }
 }
 
@@ -147,7 +155,7 @@ DIRICHLET_EPSILON = 0.18       # INCREASED: More noise for exploration across po
 
 # AlphaZero Training Loop Parameters - PHASE 4 FULL MASTERY (JIT-OPTIMIZED)
 # Building on Phase 3's excellent results: 94.9% policy accuracy, 23/39 model updates
-AZ_ITERATIONS = 320             # PHASE 4: Full 4-position strategic mastery (261-320)
+AZ_ITERATIONS = 400             # PHASE 5: Ultra-mastery and fine-tuning (321-400)
 AZ_GAMES_PER_ITERATION = 25      # INCREASED: More experience per iteration for 4-position complexity
 AZ_TRAINING_STEPS_PER_ITERATION = 1200   # INCREASED: Deeper learning for complex positions
 AZ_REPLAY_BUFFER_SIZE = 20000    # EXPANDED: Larger buffer for 4-position diversity

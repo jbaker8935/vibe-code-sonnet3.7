@@ -1231,6 +1231,7 @@ if __name__ == '__main__':
     parser.add_argument('--reduce-lr', type=float, help="Override learning rate with a lower value")
     parser.add_argument('--disable-xla', action='store_true', help="Disable XLA JIT compilation")
     parser.add_argument('--diagnostics', action='store_true', help="Enable extra diagnostics and debugging output.")
+    parser.add_argument('--start-iteration', type=int, default=1, help="Starting iteration number for training (default: 1)")
     args = parser.parse_args()
 
     # Enable TensorFlow debug logging for numerical issues
@@ -1301,5 +1302,5 @@ if __name__ == '__main__':
         print(f"[Overfit Test] Restored AZ_BATCH_SIZE and AZ_LEARNING_RATE to original values.")
 
     # Now run the main training loop (which will fill the buffer again as needed)
-    # Phase 4 Full Mastery: iterations 261-320
-    trainer.train(start_iteration=261)
+    # Use command line argument for start iteration (default 1)
+    trainer.train(start_iteration=args.start_iteration)
