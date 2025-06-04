@@ -1,10 +1,21 @@
+// The code in this file has been refactored into ES modules:
+//   - game-constants.js
+//   - game-board.js
+//   - game-render.js
+//   - game-logic.js
+//   - game-ai.js
+//   - game-mcts-wrapper.js
+//   - game-overlays.js
+//   - main.js (entry point)
+// See those files for the new modular code structure.
+
 document.addEventListener('DOMContentLoaded', async () => {    // Try best available backend: WebGL > WASM > CPU
     try {
         if (typeof tf !== 'undefined') {
             // Check available backends
             const backends = Object.keys(tf.engine().registryFactory);
             console.log("Available TF.js backends:", backends);
-            
+
             // Try WebGL first for better performance on devices that support it
             if (backends.includes('webgl')) {
                 try {
@@ -24,16 +35,16 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     await tf.setBackend('cpu');
                     console.log("TensorFlow.js using CPU backend");
                 }
-            } 
+            }
             // Default to CPU as last resort
             else {
                 await tf.setBackend('cpu');
                 console.log("TensorFlow.js using CPU backend");
             }
-            
+
             // Ensure backend is ready before loading model
             await tf.ready();
-            
+
             console.log("Active backend:", tf.getBackend());
         } else {
             console.warn("tf object not available at the time of setting backend.");
@@ -51,19 +62,19 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     const NUM_DIRECTIONS = 8;
     const JS_DIRECTIONS = [
         { dr: -1, dc: -1 }, // 0
-        { dr: -1, dc:  0 }, // 1
-        { dr: -1, dc:  1 }, // 2
-        { dr:  0, dc: -1 }, // 3
-        { dr:  0, dc:  1 }, // 4
-        { dr:  1, dc: -1 }, // 5
-        { dr:  1, dc:  0 }, // 6
-        { dr:  1, dc:  1 }  // 7
-    ];    let AI_DIFFICULTY = 'easy'; // easy, hard1, hard2, hard_ai
+        { dr: -1, dc: 0 }, // 1
+        { dr: -1, dc: 1 }, // 2
+        { dr: 0, dc: -1 }, // 3
+        { dr: 0, dc: 1 }, // 4
+        { dr: 1, dc: -1 }, // 5
+        { dr: 1, dc: 0 }, // 6
+        { dr: 1, dc: 1 }  // 7
+    ]; let AI_DIFFICULTY = 'easy'; // easy, hard1, hard2, hard_ai
     let AI_DEPTH = 1; // Will be set based on difficulty
     let ANALYSIS_MODE = true; // Ensure this is true for detailed NN logging
     let tfModel = null; // TensorFlow.js model    let startingPosition = null; // Starting position for the game
     let startingPositionIndex = 0; // Index for the initial position in the array
-      // MCTS Configuration
+    // MCTS Configuration
     let MCTS_ENABLED = false; // Enable/disable MCTS for performance comparison - disabled by default for easy mode
     let MCTS_SIMULATIONS = 50; // Number of MCTS simulations per move (1-1000)
     let MCTS_TEMPERATURE = 0.01; // Temperature for action selection (0.0-2.0)
@@ -71,7 +82,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     let MCTS_DIRICHLET_ALPHA = 0.3; // Dirichlet noise alpha
     let MCTS_DIRICHLET_EPSILON = 0.25; // Dirichlet noise epsilon
     let MCTS_VERBOSE = false; // Enable detailed MCTS logging
-    
+
     // MCTS instances
     let mctsSearch = null;
     let gameLogic = null;
@@ -82,8 +93,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         "BB..\nBB..\nBB..\nBB..\n..AA\n..AA\n..AA\n..AA",
         "B...\nBB..\nBB..\nBBB.\n.AAA\n..AA\n..AA\n...A",
         "B..B\n.BB.\n.BB.\nB..B\nA..A\n.AA.\n.AA.\nA..A",
-        "....\n....\nBABA\nABAB\nBABA\nABAB\n....\n...."        
-    ];    
+        "....\n....\nBABA\nABAB\nBABA\nABAB\n....\n...."
+    ];
 
 
 
@@ -96,15 +107,15 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             // Try direct model loading first
             try {
                 console.info("Attempting to load GRAPH model from: ./switcharoo_tfjs_model/model.json");
-                console.log("BEFORE await tf.loadGraphModel"); 
+                console.log("BEFORE await tf.loadGraphModel");
                 // Switched back to loadGraphModel
                 const loadedModel = await tf.loadGraphModel('./switcharoo_tfjs_model/model.json');
-                console.log("AFTER await tf.loadGraphModel. Model object:", loadedModel); 
+                console.log("AFTER await tf.loadGraphModel. Model object:", loadedModel);
                 console.info("Graph model loaded successfully!");
 
                 // Use the loaded model directly
                 tfModel = loadedModel;
-                
+
                 // GraphModel does not have .summary() or .inputs/.outputs in the same way as LayersModel
                 // console.log("Model summary:"); // tfModel.summary(); // This would error for GraphModel
                 // console.log("Model inputs:", tfModel.inputs); // Different structure for GraphModel
@@ -135,7 +146,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             loadTFJSModel();
         } else {
             console.warn("TensorFlow.js is not available. 'AI' difficulty option will not use the neural network model.");
-        }    } catch (e) {
+        }
+    } catch (e) {
         console.warn("Error initializing TensorFlow.js:", e);
     }    // Initialize MCTS components
     function initializeMCTS() {
@@ -149,7 +161,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 SWAPPED: SWAPPED,
                 NUM_DIRECTIONS: NUM_DIRECTIONS,
                 JS_DIRECTIONS: JS_DIRECTIONS
-            });            mctsSearch = new MCTSSearch({
+            }); mctsSearch = new MCTSSearch({
                 numSimulations: MCTS_SIMULATIONS,
                 cPuct: MCTS_PUCT_CONSTANT,
                 temperature: MCTS_TEMPERATURE,
@@ -168,7 +180,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     // Initialize MCTS when DOM is ready
     document.addEventListener('DOMContentLoaded', () => {
         initializeMCTS();
-    });    const boardElement = document.getElementById('game-board');
+    }); const boardElement = document.getElementById('game-board');
     const resetBtn = document.getElementById('reset-btn');
     const infoBtn = document.getElementById('info-btn');
     const historyBtn = document.getElementById('history-btn');
@@ -191,25 +203,25 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     let winner = null;
     let winPath = []; // Stores cells [{row, col}] of the winning path
     let playerAScore = 0;
-    let playerBScore = 0;    let currentHistoryIndex = undefined;
+    let playerBScore = 0; let currentHistoryIndex = undefined;
     let touchStartY = 0;
     const transpositionTable = new Map();
-    
+
     // Self-play variables
     let isInSelfPlay = false;
     let selfPlayTimeoutId = null;
 
     var DEBUG = true; // Set to false to disable
     var old_console_log = console.log;
-    console.log = function() {
+    console.log = function () {
         if (DEBUG) {
             old_console_log.apply(this, arguments);
         }
     };
     var old_console_warn = console.warn;
-    console.warn = function() {
+    console.warn = function () {
         if (DEBUG) {
-            old_console_warn.apply (this, arguments);
+            old_console_warn.apply(this, arguments);
         }
     };
     // leave in console.error
@@ -233,17 +245,17 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             }
         }
         return board;
-    }    function initGame() {
+    } function initGame() {
         // Stop self-play if it's running
         if (isInSelfPlay) {
             stopSelfPlay();
         }
-        
+
         // Use the updated startingPositionIndex to set the starting position
         console.log(`initGame called with startingPositionIndex: ${startingPositionIndex}`); // Add log
         startingPosition = parseStartingPosition(initialPosition[startingPositionIndex]);
-        board = startingPosition.map(row => row.map(cell => cell ? {...cell} : null));
-        
+        board = startingPosition.map(row => row.map(cell => cell ? { ...cell } : null));
+
         currentPlayer = PLAYER_A;
         selectedPiece = null;
         legalMoves = [];
@@ -300,7 +312,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 }
 
                 // Win path highlighting - only show on final move
-                if (gameOver && winner && 
+                if (gameOver && winner &&
                     (currentHistoryIndex === undefined || currentHistoryIndex === moveHistory.length)) {
                     // Get current state win paths from move history
                     const lastMove = moveHistory[moveHistory.length - 1];
@@ -332,16 +344,16 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 boardElement.appendChild(cell);
             }
         }
-        
+
         // Add score display and move counter if game is over
         if (gameOver) {
             boardElement.classList.add('game-over');
-            
+
             if (currentHistoryIndex !== undefined) {
                 const moveCount = document.createElement('div');
                 moveCount.classList.add('move-counter');
-                moveCount.textContent = currentHistoryIndex === moveHistory.length ? 
-                    'Final Position' : 
+                moveCount.textContent = currentHistoryIndex === moveHistory.length ?
+                    'Final Position' :
                     `Move ${currentHistoryIndex} of ${moveHistory.length}`;
                 boardElement.appendChild(moveCount);
             }
@@ -377,8 +389,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         // Optional: Implement a status display element if needed
         // e.g., document.getElementById('status').textContent = `Turn: Player ${currentPlayer}`;
     }     // --- Event Handlers ---
-     // (No changes needed in handleCellClick, resetBtn, infoBtn, historyBtn listeners,
-     // overlayCloseButtons, or overlay backdrop listeners)
+    // (No changes needed in handleCellClick, resetBtn, infoBtn, historyBtn listeners,
+    // overlayCloseButtons, or overlay backdrop listeners)
     function handleCellClick(row, col) {
         if (gameOver) return; // No moves after game ends (unless viewing history)
         if (currentPlayer === PLAYER_B && !isInSelfPlay) return; // Block human clicks during AI turn (except in self-play)
@@ -401,9 +413,9 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 selectPiece(row, col);
                 renderBoard();
             } else {
-                 // Clicking an invalid spot deselects
-                 deselectPiece();
-                 renderBoard();
+                // Clicking an invalid spot deselects
+                deselectPiece();
+                renderBoard();
             }
         } else {
             // No piece selected, try selecting if it's the current player's piece
@@ -412,7 +424,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 renderBoard();
             }
         }
-    }    resetBtn.addEventListener('click', () => {
+    } resetBtn.addEventListener('click', () => {
         console.log("Reset button clicked. Resetting to initial position 0."); // Add log
         startingPositionIndex = 0; // Explicitly reset index to 0
         initGame();
@@ -422,7 +434,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         if (!historyBtn.disabled) {
             displayMoveHistory();
             showOverlay(historyOverlay);
-        }    });
+        }
+    });
     startBtn.addEventListener('click', () => {
         // Cycle through starting positions
         startingPositionIndex = (startingPositionIndex + 1) % initialPosition.length;
@@ -430,9 +443,9 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         initGame();
     });
 
-// AI Difficulty Selection (moved to MCTS overlay)
+    // AI Difficulty Selection (moved to MCTS overlay)
     function updateAIDifficulty(difficulty) {
-        switch(difficulty) {
+        switch (difficulty) {
             case 'easy':
                 AI_DIFFICULTY = 'easy';
                 AI_DEPTH = 1;
@@ -454,21 +467,21 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 }
                 break;
         }
-          // Update MCTS controls visibility
+        // Update MCTS controls visibility
         updateMCTSControlsVisibility();
-        
+
         // Update MCTS button image
         updateMCTSButtonImage();
-        
+
         console.log(`AI Difficulty switched to: ${AI_DIFFICULTY} (depth: ${AI_DEPTH})`);
     }
 
     function updateMCTSButtonImage() {
         const mctsBtn = document.getElementById('mcts-btn');
         const mctsImg = mctsBtn?.querySelector('img');
-        
+
         if (mctsImg) {
-            switch(AI_DIFFICULTY) {
+            switch (AI_DIFFICULTY) {
                 case 'easy':
                     mctsImg.src = 'images/happy-outline.svg';
                     break;
@@ -483,7 +496,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     break;
             }
         }
-    }    function updateMCTSControlsVisibility() {
+    } function updateMCTSControlsVisibility() {
         const mctsOnlyElements = document.querySelectorAll('.mcts-only');
         if (AI_DIFFICULTY === 'hard_ai') {
             mctsOnlyElements.forEach(element => {
@@ -497,17 +510,17 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             MCTS_ENABLED = false;
             updateMCTSSettings();
         }
-        
+
         // Update the UI to reflect current MCTS settings
         updateMCTSUI();
-    }overlayCloseButtons.forEach(button => {
+    } overlayCloseButtons.forEach(button => {
         button.addEventListener('click', () => {
-             const overlayId = button.getAttribute('data-overlay');
-             hideOverlay(document.getElementById(overlayId));
+            const overlayId = button.getAttribute('data-overlay');
+            hideOverlay(document.getElementById(overlayId));
         });
     });
 
-     // Close overlay by clicking outside content
+    // Close overlay by clicking outside content
     overlays.forEach(overlay => {
         overlay.addEventListener('click', (event) => {
             if (event.target === overlay) { // Check if click is on the backdrop itself
@@ -519,7 +532,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
     // --- Game Logic ---
     // (selectPiece, deselectPiece, calculateLegalMoves, unmarkAllSwapped, switchPlayer remain the same)
-     function selectPiece(row, col) {
+    function selectPiece(row, col) {
         selectedPiece = { row, col };
         legalMoves = calculateLegalMoves(row, col);
         console.log(`Selected piece at (${row}, ${col}). Legal moves:`, legalMoves);
@@ -555,18 +568,18 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     } else if (targetCell.player === opponent) {
                         // Can swap only with opponent's NORMAL piece
                         if (targetCell.state === NORMAL) {
-                             moves.push({ row: nr, col: nc, isSwap: true });
+                            moves.push({ row: nr, col: nc, isSwap: true });
                         }
                     }
-                     // Cannot move to a cell occupied by own piece
-                     // Cannot move to a cell occupied by opponent's SWAPPED piece
+                    // Cannot move to a cell occupied by own piece
+                    // Cannot move to a cell occupied by opponent's SWAPPED piece
                 }
             }
         }
         return moves;
     }
 
-     function makeMove(startRow, startCol, endRow, endCol) {
+    function makeMove(startRow, startCol, endRow, endCol) {
         if (!selectedPiece || startRow !== selectedPiece.row || startCol !== selectedPiece.col) {
             console.error("Move error: Invalid start piece.");
             return;
@@ -613,7 +626,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         const otherPlayer = currentPlayer === PLAYER_A ? PLAYER_B : PLAYER_A;
         const otherPlayerCheck = checkWinConditionForState(board, otherPlayer);
 
-        console.log("Win check results:", { 
+        console.log("Win check results:", {
             currentPlayer,
             currentPlayerWin: currentPlayerCheck.win,
             otherPlayerWin: otherPlayerCheck.win,
@@ -623,7 +636,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
         if (currentPlayerCheck.win || otherPlayerCheck.win) {
             gameOver = true;
-            
+
             if (currentPlayerCheck.win && otherPlayerCheck.win) {
                 // Simultaneous win scenario
                 winner = 'both';
@@ -632,10 +645,10 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     current: currentPlayerCheck.path,
                     other: otherPlayerCheck.path
                 };
-                
+
                 // First render the board without highlights
                 renderBoard();
-                
+
                 // Add BOTH winning paths
                 if (currentPlayerCheck.path) {
                     currentPlayerCheck.path.forEach(pos => {
@@ -646,7 +659,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                         }
                     });
                 }
-                
+
                 if (otherPlayerCheck.path) {
                     otherPlayerCheck.path.forEach(pos => {
                         const cell = boardElement.querySelector(`[data-row="${pos.row}"][data-col="${pos.col}"]`);
@@ -679,7 +692,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     }
                 });
             }
-              handleWin(winner);        } else {
+            handleWin(winner);
+        } else {
             renderBoard();
             switchPlayer();
             // Trigger AI move for Player B in normal mode, but NOT for self-play (self-play handles its own timing)
@@ -721,10 +735,10 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         // Find starting pieces for the player in their designated 'start' row
         for (let c = 0; c < COLS; c++) {
             if (board[startRow] && board[startRow][c] && board[startRow][c].player === player) {
-                queue.push({ 
-                    row: startRow, 
-                    col: c, 
-                    path: [{ row: startRow, col: c }] 
+                queue.push({
+                    row: startRow,
+                    col: c,
+                    path: [{ row: startRow, col: c }]
                 });
                 visited[startRow][c] = true;
             }
@@ -737,8 +751,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
             // Check if we reached the target row
             if (row === targetRow) {
-                 console.log(`Win detected for Player ${player}. Path:`, path);
-                 return { win: true, path: path }; // Found a path
+                console.log(`Win detected for Player ${player}. Path:`, path);
+                return { win: true, path: path }; // Found a path
             }
 
             // Explore neighbors
@@ -781,23 +795,23 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         } else {
             playerBScore++;
         }
-        
+
         updateScoreDisplay();
-        
-        winMessage.textContent = winningPlayer === 'both' ? 
-            "Hey, You Both Win!" : 
+
+        winMessage.textContent = winningPlayer === 'both' ?
+            "Hey, You Both Win!" :
             `Player ${winningPlayer} Wins!`;
-        
+
         showOverlay(winOverlay);
         historyBtn.disabled = false;
         currentHistoryIndex = moveHistory.length;
 
-         // Auto-close win overlay after 5 seconds
-         setTimeout(() => {
-             if (winOverlay.classList.contains('active')) {
-                 hideOverlay(winOverlay);
-             }
-         }, 5000);
+        // Auto-close win overlay after 5 seconds
+        setTimeout(() => {
+            if (winOverlay.classList.contains('active')) {
+                hideOverlay(winOverlay);
+            }
+        }, 5000);
     }
 
     // --- AI Opponent (Player B) ---
@@ -818,7 +832,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
         if (directionIndex === -1) {
             console.error("Could not find direction for move:", JSON.stringify(move)); // Log input move
-            return null; 
+            return null;
         }
         const actionIndex = startCellIndex * NUM_DIRECTIONS + directionIndex;
         if (DEBUG) console.log(`moveToActionIndex: move: ${JSON.stringify(move)}, startCellIndex: ${startCellIndex}, directionIndex: ${directionIndex}, actionIndex: ${actionIndex}`); // Log details
@@ -829,22 +843,22 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     // Total: 6 * 32 = 192 elements to match AZ_NN_INPUT_DEPTH
     function boardToNNInput(boardState, currentPlayer = PLAYER_B) {
         if (DEBUG) console.log("boardToNNInput: input boardState (first row):", JSON.stringify(boardState[0])); // Log part of input board
-        
+
         const flatBoardSize = ROWS * COLS; // 8 * 4 = 32
         const totalSize = 6 * flatBoardSize; // 6 * 32 = 192
         const nnInput = new Float32Array(totalSize);
-        
+
         // Initialize all channels to 0
         for (let i = 0; i < totalSize; i++) {
             nnInput[i] = 0.0;
         }
-        
+
         // Process each cell of the board
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
                 const pos = r * COLS + c; // Position in flattened board (0-31)
                 const pieceData = boardState[r][c];
-                
+
                 if (pieceData) {
                     if (pieceData.player === PLAYER_A) {
                         if (pieceData.state === NORMAL) {
@@ -869,14 +883,14 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 }
             }
         }
-        
+
         // Channel 5: Current player (all positions)
         // Fill all positions in channel 5 with 0.0 for Player A, 1.0 for Player B
         const playerValue = (currentPlayer === PLAYER_A) ? 0.0 : 1.0;
         for (let pos = 0; pos < flatBoardSize; pos++) {
             nnInput[5 * flatBoardSize + pos] = playerValue;
         }
-          if (DEBUG) {
+        if (DEBUG) {
             console.log("boardToNNInput: output nnInput length:", nnInput.length);
             console.log("boardToNNInput: first 10 values:", Array.from(nnInput.slice(0, 10)));
             console.log("boardToNNInput: last 10 values:", Array.from(nnInput.slice(-10)));
@@ -904,7 +918,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
             // Use executeAsync for GraphModel prediction
             const inputNodeName = tfModel.inputs[0].name;
-            outputTensors = await tfModel.executeAsync({[inputNodeName]: inputTensor});
+            outputTensors = await tfModel.executeAsync({ [inputNodeName]: inputTensor });
 
             if (outputTensors.length < 2) {
                 throw new Error(`Expected 2 output tensors (value, policy), got ${outputTensors.length}`);
@@ -943,7 +957,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             }
             throw error;
         }
-    }    async function triggerAIMove() {
+    } async function triggerAIMove() {
         if (gameOver) return;
         console.log(`AI (Player ${currentPlayer}) is thinking...`);
 
@@ -966,12 +980,12 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             // Simulate AI thinking time (replace with actual call)
             // Using setTimeout to ensure it's async and doesn't block the main thread
             setTimeout(() => {
-                 try { // Added try...catch for errors within findBestAIMove
-                     const bestMove = findBestAIMove(board, currentPlayer);
-                     resolve(bestMove);
-                 } catch (err) {
-                     reject(err); // Reject promise if findBestAIMove throws error
-                 }
+                try { // Added try...catch for errors within findBestAIMove
+                    const bestMove = findBestAIMove(board, currentPlayer);
+                    resolve(bestMove);
+                } catch (err) {
+                    reject(err); // Reject promise if findBestAIMove throws error
+                }
             }, 10); // Small delay to yield thread, actual calculation happens in findBestAIMove
         }).then(bestMove => {
             const endTime = performance.now();
@@ -982,25 +996,25 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             clearTimeout(spinnerShowTimeout);
 
             const executeMoveAction = () => {
-                    if (bestMove) {
-                        console.log("AI chooses move:", bestMove);
-                        selectPiece(bestMove.start.row, bestMove.start.col);
-                        const currentLegalMoves = calculateLegalMoves(bestMove.start.row, bestMove.start.col);
-                        if (currentLegalMoves.some(m => m.row === bestMove.end.row && m.col === bestMove.end.col)) {
-                            makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col);
-                            return;
-                        } else {
-                            console.error("AI Logic Error: Chosen move is not legal after re-selection?", bestMove, currentLegalMoves);
-                            deselectPiece();
-                            renderBoard();
-                            console.warn("AI failed to make a legal move. Switching back to Player A.");
-                            switchPlayer();
-                        }
+                if (bestMove) {
+                    console.log("AI chooses move:", bestMove);
+                    selectPiece(bestMove.start.row, bestMove.start.col);
+                    const currentLegalMoves = calculateLegalMoves(bestMove.start.row, bestMove.start.col);
+                    if (currentLegalMoves.some(m => m.row === bestMove.end.row && m.col === bestMove.end.col)) {
+                        makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col);
+                        return;
                     } else {
-                        console.warn("AI has no legal moves!");
+                        console.error("AI Logic Error: Chosen move is not legal after re-selection?", bestMove, currentLegalMoves);
+                        deselectPiece();
+                        renderBoard();
+                        console.warn("AI failed to make a legal move. Switching back to Player A.");
                         switchPlayer();
                     }
-                };
+                } else {
+                    console.warn("AI has no legal moves!");
+                    switchPlayer();
+                }
+            };
 
             // Decide whether to show/hide spinner based on actual duration
             const timeSpinnerShouldHaveStarted = startTime + spinnerDelay;
@@ -1042,17 +1056,17 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 executeMoveAction();
             }
         }).catch(error => {
-             console.error("Error during AI move calculation:", error);
-             // Handle error: maybe hide spinner, switch player, show error message?
-             clearTimeout(spinnerShowTimeout); // Ensure spinner timeout is cleared
-             if (spinnerIsVisible) { // Use the flag, not classList, as it might not be added yet
-                 hideOverlay(aiSpinnerOverlay);
-             }
-             // Optionally switch back to player A
-             console.warn("Error in AI turn. Switching back to Player A.");
-             switchPlayer();
+            console.error("Error during AI move calculation:", error);
+            // Handle error: maybe hide spinner, switch player, show error message?
+            clearTimeout(spinnerShowTimeout); // Ensure spinner timeout is cleared
+            if (spinnerIsVisible) { // Use the flag, not classList, as it might not be added yet
+                hideOverlay(aiSpinnerOverlay);
+            }
+            // Optionally switch back to player A
+            console.warn("Error in AI turn. Switching back to Player A.");
+            switchPlayer();
         });
-    }    async function findBestAIMove(boardState = board, player = PLAYER_B) {
+    } async function findBestAIMove(boardState = board, player = PLAYER_B) {
         let possibleMoves = [];
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
@@ -1075,15 +1089,15 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             const { start, end } = move; // Ensure `start` and `end` are destructured from `move`
             const movingPiece = tempBoard[start.row][start.col];
             const targetPiece = tempBoard[end.row][end.col];
-    
+
             if (!targetPiece) {
                 tempBoard[end.row][end.col] = { ...movingPiece };
                 tempBoard[start.row][start.col] = null;
-                unmarkPlayerSwapped(player, tempBoard); 
+                unmarkPlayerSwapped(player, tempBoard);
             } else {
                 tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
-            }            if (checkWinConditionForState(tempBoard, player).win) {
+            } if (checkWinConditionForState(tempBoard, player).win) {
                 if (ANALYSIS_MODE) {
                     console.log(`Found immediate winning move: ${start.row},${start.col} to ${end.row},${end.col}`);
                 }
@@ -1092,13 +1106,13 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         }        // If using neural network model
         if (AI_DIFFICULTY === 'hard_ai' && tfModel) {
             console.log("Using neural network for move selection");
-            
+
             // Use MCTS if enabled and available
             if (MCTS_ENABLED && mctsSearch && gameLogic) {
                 console.log(`Using MCTS with ${MCTS_SIMULATIONS} simulations`);
                 try {
                     const actionProbs = await mctsSearch.search(boardState, player, neuralNetworkPredict, gameLogic);
-                    
+
                     // Convert action probabilities to move
                     const legalMoves = [];
                     for (let r = 0; r < ROWS; r++) {
@@ -1115,12 +1129,12 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                             }
                         }
                     }
-                    
+
                     if (legalMoves.length > 0) {
                         // Select move based on MCTS action probabilities
                         let bestMove = null;
                         let bestProb = -1;
-                        
+
                         for (const move of legalMoves) {
                             const actionIndex = moveToActionIndex(move);
                             if (actionIndex !== null && actionIndex >= 0 && actionIndex < actionProbs.length) {
@@ -1131,11 +1145,11 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                                 }
                             }
                         }
-                        
+
                         if (bestMove && ANALYSIS_MODE) {
                             console.log(`MCTS selected move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (prob: ${bestProb.toFixed(4)})`);
                         }
-                        
+
                         if (bestMove) {
                             return bestMove;
                         }
@@ -1145,7 +1159,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     // Fall through to direct neural network policy
                 }
             }
-            
+
             console.log("Using direct neural network policy");
             let bestScore = -Infinity;
             let scoredMoves = [];
@@ -1167,13 +1181,13 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
             try {                // Create a single tensor for the current board state input
                 // Reshape to [1, 192] as the model expects a batch dimension
-                inputTensor = tf.tensor2d([currentNNInput]); 
+                inputTensor = tf.tensor2d([currentNNInput]);
 
                 if (ANALYSIS_MODE) console.log("NN Input Tensor Shape:", inputTensor.shape);
 
                 // Use executeAsync for GraphModel prediction
                 const inputNodeName = tfModel.inputs[0].name;
-                outputTensors = await tfModel.executeAsync({[inputNodeName]: inputTensor});
+                outputTensors = await tfModel.executeAsync({ [inputNodeName]: inputTensor });
 
                 if (ANALYSIS_MODE) {
                     console.log("--- Model Output Inspection (Current State Prediction) ---");
@@ -1197,14 +1211,14 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     console.error("Policy output tensor (outputTensors[1]) is undefined. Cannot proceed with NN.");
                     throw new Error("Policy tensor is missing, cannot use NN.");
                 }
-                
+
                 // policyQValues will be an array like [[q0, q1, ..., q255]]
-                const policyData = await policyOutputTensor.array(); 
+                const policyData = await policyOutputTensor.array();
                 policyQValues = policyData[0]; // Extract the actual Q-values array
 
                 if (ANALYSIS_MODE) {
-                    console.log(`Predicted Value from NN: ${ (await valueOutputTensor.array())[0][0] }`);
-                    console.log(`Policy Q-Values (first 10 of ${policyQValues.length}):`, policyQValues.slice(0,10));
+                    console.log(`Predicted Value from NN: ${(await valueOutputTensor.array())[0][0]}`);
+                    console.log(`Policy Q-Values (first 10 of ${policyQValues.length}):`, policyQValues.slice(0, 10));
                 }
 
                 // Dispose tensors as soon as their data is extracted
@@ -1222,7 +1236,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     // Create a temporary board to check if the move allows an opponent win
                     const tempBoard = cloneBoard(boardState);
                     const movingPiece = tempBoard[start.row][start.col];
-                    const targetPiece = tempBoard[end.row][end.col];                    if (!targetPiece) {
+                    const targetPiece = tempBoard[end.row][end.col]; if (!targetPiece) {
                         tempBoard[end.row][end.col] = { ...movingPiece };
                         tempBoard[start.row][start.col] = null;
                         unmarkPlayerSwapped(player, tempBoard);
@@ -1285,16 +1299,16 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     topMoves = scoredMoves
                         .filter(sm => typeof sm.score === 'number' && !isNaN(sm.score) && sm.score >= dynamicScoreThreshold)
                         .map(({ move }) => move);
-                    
+
                     if (ANALYSIS_MODE && topMoves.length === 0 && scoredMoves.length > 0) {
                         console.log("NN: No moves met the dynamic threshold, but scored moves exist. Considering all scored moves as top moves.");
                         // Fallback: if no moves meet the threshold but there are scored moves, consider all of them.
                         // Or, more simply, take the one(s) with the absolute bestScore.
-                        topMoves = scoredMoves.filter(sm => sm.score === bestScore).map(({move}) => move);
+                        topMoves = scoredMoves.filter(sm => sm.score === bestScore).map(({ move }) => move);
                     }
 
                 } else {
-                     if (ANALYSIS_MODE) console.log("NN: No moves scored or bestScore remained -Infinity.");
+                    if (ANALYSIS_MODE) console.log("NN: No moves scored or bestScore remained -Infinity.");
                 }
 
                 if (topMoves.length > 0) {
@@ -1305,7 +1319,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     console.warn("Neural network failed to find any moves above threshold or any valid moves. Falling back to heuristic.");
                     // Fall through to heuristic AI logic
                 }
-                
+
             } catch (error) {
                 console.error("Error in neural network prediction or processing:", error);
                 // Dispose any tensors that might still be around from the try block
@@ -1326,17 +1340,17 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             for (const move of possibleMoves) {
                 // Test each move on a cloned board
                 const tempBoard = cloneBoard(boardState);
-                const {start, end} = move;
-                
+                const { start, end } = move;
+
                 // Apply move to temporary board
                 const movingPiece = tempBoard[start.row][start.col];
-                const targetPiece = tempBoard[end.row][end.col];                if (!targetPiece) {
-                    tempBoard[end.row][end.col] = {...movingPiece};
+                const targetPiece = tempBoard[end.row][end.col]; if (!targetPiece) {
+                    tempBoard[end.row][end.col] = { ...movingPiece };
                     tempBoard[start.row][start.col] = null;
-                    unmarkPlayerSwapped(player, tempBoard); 
+                    unmarkPlayerSwapped(player, tempBoard);
                 } else {
-                    tempBoard[end.row][end.col] = {...movingPiece, state: SWAPPED};
-                    tempBoard[start.row][start.col] = {...targetPiece, state: SWAPPED};
+                    tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+                    tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
                 }                // Check if this move allows opponent to win on their next turn(s)
                 // Use allowsOpponentWin with proper AI_DEPTH for consistency
                 const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
@@ -1363,46 +1377,46 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
         for (const move of possibleMoves) {
             // Create proper deep clone of board
-            const tempBoard = board.map(row => 
-                row.map(cell => cell ? {...cell} : null)
+            const tempBoard = board.map(row =>
+                row.map(cell => cell ? { ...cell } : null)
             );
-            
+
             const movingPiece = tempBoard[move.start.row][move.start.col];
             const targetPiece = tempBoard[move.end.row][move.end.col];
 
             if (targetPiece === null) {
                 // Empty cell move
-                tempBoard[move.end.row][move.end.col] = {...movingPiece}; // Use spread to clone
+                tempBoard[move.end.row][move.end.col] = { ...movingPiece }; // Use spread to clone
                 tempBoard[move.start.row][move.start.col] = null; // Fix: use move.start instead of start                unmarkPlayerSwapped(player, tempBoard); 
             } else {
                 // Swap move
-                tempBoard[move.end.row][move.end.col] = {...movingPiece, state: SWAPPED};
-                tempBoard[move.start.row][move.start.col] = {...targetPiece, state: SWAPPED};
+                tempBoard[move.end.row][move.end.col] = { ...movingPiece, state: SWAPPED };
+                tempBoard[move.start.row][move.start.col] = { ...targetPiece, state: SWAPPED };
             }
 
             const score = evaluateBoardState(tempBoard, player, move); // << Uses updated evaluateBoardState             // Check if this move allows opponent to win
-             const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
-             if (!allowsOpponentWin(tempBoard, opponent, AI_DEPTH)) { // Use proper AI_DEPTH for thorough checking
-                  if (score > bestScore) {
-                       bestScore = score;
-                       bestMoves = [move];
-                  } else if (score === bestScore) {
-                       bestMoves.push(move);
-                  }
-             } else {
-                 console.log(`AI Avoids move: ${move.start.row},${move.start.col} -> ${move.end.row},${move.end.col} (allows Player A win)`);
-                 // If all moves lead to a loss, the AI will have to pick one eventually
-                 // We could give these moves a massive penalty instead of excluding them
-                 // For now, let's try excluding them unless no other options exist.
-                 // Revisit this if AI gets stuck. Let's add them back with a huge penalty.
-                  const lossPenalty = -100000;
-                   if (lossPenalty > bestScore) {
-                       bestScore = lossPenalty;
-                       bestMoves = [move];
-                   } else if (lossPenalty === bestScore) {
-                       bestMoves.push(move);
-                   }
-             }
+            const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
+            if (!allowsOpponentWin(tempBoard, opponent, AI_DEPTH)) { // Use proper AI_DEPTH for thorough checking
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMoves = [move];
+                } else if (score === bestScore) {
+                    bestMoves.push(move);
+                }
+            } else {
+                console.log(`AI Avoids move: ${move.start.row},${move.start.col} -> ${move.end.row},${move.end.col} (allows Player A win)`);
+                // If all moves lead to a loss, the AI will have to pick one eventually
+                // We could give these moves a massive penalty instead of excluding them
+                // For now, let's try excluding them unless no other options exist.
+                // Revisit this if AI gets stuck. Let's add them back with a huge penalty.
+                const lossPenalty = -100000;
+                if (lossPenalty > bestScore) {
+                    bestScore = lossPenalty;
+                    bestMoves = [move];
+                } else if (lossPenalty === bestScore) {
+                    bestMoves.push(move);
+                }
+            }
         }
 
         // Check if all evaluated moves lead to a loss
@@ -1410,18 +1424,18 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         if (bestMoves.length > 0 && bestScore === lossPenalty) {
             console.log("AI: All moves lead to a loss. Forced move.");
         }
- 
-         // If bestMoves is empty (maybe all moves led to immediate loss?), pick any move?
-         // This shouldn't happen if we add the losing moves with a penalty.
-         if (bestMoves.length === 0) {
-             console.warn("AI couldn't find a non-losing move, or evaluation error. Picking random move.");
-             // Ensure possibleMoves isn't empty before picking random
-             if (possibleMoves.length > 0) {
-                 return possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
-             } else {
-                 return null; // Truly no moves available
-             }
-         }
+
+        // If bestMoves is empty (maybe all moves led to immediate loss?), pick any move?
+        // This shouldn't happen if we add the losing moves with a penalty.
+        if (bestMoves.length === 0) {
+            console.warn("AI couldn't find a non-losing move, or evaluation error. Picking random move.");
+            // Ensure possibleMoves isn't empty before picking random
+            if (possibleMoves.length > 0) {
+                return possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
+            } else {
+                return null; // Truly no moves available
+            }
+        }
 
 
         // Choose randomly among the best moves
@@ -1432,7 +1446,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     // (allowsOpponentWin simulation logic remains the same, but calls updated checkWinConditionForState)
     function allowsOpponentWin(boardState, opponentPlayer, depth = AI_DEPTH, alpha = -Infinity, beta = Infinity) {
         if (depth <= 0) return false;
-    
+
         // Early exit - check immediate win
         if (checkWinConditionForState(boardState, opponentPlayer).win) {
             if (ANALYSIS_MODE) {
@@ -1440,7 +1454,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             }
             return true;
         }
-    
+
         // Check transposition table using serialized key
         const boardKey = serializeBoardState(boardState);
         if (transpositionTable.has(boardKey)) {
@@ -1452,50 +1466,50 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 return cachedEntry.value;
             }
         }
-    
+
         // Get all opponent's possible moves
         let opponentMoves = [];
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
                 if (boardState[r][c]?.player === opponentPlayer) {
                     const moves = calculateLegalMovesForState(boardState, r, c);
-                    moves.forEach(move => 
-                        opponentMoves.push({start: {row: r, col: c}, end: move})
+                    moves.forEach(move =>
+                        opponentMoves.push({ start: { row: r, col: c }, end: move })
                     );
                 }
             }
         }
-    
+
         // Move ordering optimization: Prioritize moves that might lead to a win
         let immediateWinMoves = [];
         let otherMoves = [];
         let moveStates = new Map();
-    
+
         for (const move of opponentMoves) {
-            const {start, end} = move;
+            const { start, end } = move;
             const afterOpponentMove = cloneBoard(boardState);
             const movingPiece = afterOpponentMove[start.row][start.col];
             const targetPiece = afterOpponentMove[end.row][end.col];
-    
+
             if (!targetPiece) {
-                afterOpponentMove[end.row][end.col] = {...movingPiece};
+                afterOpponentMove[end.row][end.col] = { ...movingPiece };
                 afterOpponentMove[start.row][start.col] = null;
-                unmarkPlayerSwapped(opponentPlayer, afterOpponentMove); 
+                unmarkPlayerSwapped(opponentPlayer, afterOpponentMove);
             } else {
                 afterOpponentMove[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 afterOpponentMove[start.row][start.col] = { ...targetPiece, state: SWAPPED };
             }
             moveStates.set(move, afterOpponentMove);
-    
+
             if (checkWinConditionForState(afterOpponentMove, opponentPlayer).win) {
                 immediateWinMoves.push(move);
             } else {
                 otherMoves.push(move);
             }
         }
-    
+
         const orderedOpponentMoves = [...immediateWinMoves, ...otherMoves];
-    
+
         // Check each move using the ordered list
         for (const move of orderedOpponentMoves) {
             const afterOpponentMove = moveStates.get(move);
@@ -1503,17 +1517,17 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 if (ANALYSIS_MODE) {
                     console.log(`Opponent can win with move: ${move.start.row},${move.start.col} to ${move.end.row},${move.end.col}`);
                 }
-                transpositionTable.set(boardKey, {value: true, depth: depth});
+                transpositionTable.set(boardKey, { value: true, depth: depth });
                 return true;
             }
-    
+
             // Recursive search for harder difficulties
             if ((AI_DIFFICULTY === 'hard1' || AI_DIFFICULTY === 'hard2') && depth > 1) {
                 const currentPlayer = opponentPlayer === PLAYER_A ? PLAYER_B : PLAYER_A;
                 if (!hasValidResponse(afterOpponentMove, currentPlayer, depth - 1, -beta, -alpha)) {
                     beta = Math.min(beta, 1);
                     if (beta <= alpha) {
-                        transpositionTable.set(boardKey, {value: true, depth: depth});
+                        transpositionTable.set(boardKey, { value: true, depth: depth });
                         return true;
                     }
                 } else {
@@ -1521,8 +1535,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 }
             }
         }
-    
-        transpositionTable.set(boardKey, {value: false, depth: depth});
+
+        transpositionTable.set(boardKey, { value: false, depth: depth });
         return false;
     }
 
@@ -1541,8 +1555,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             for (let c = 0; c < COLS; c++) {
                 if (boardState[r][c]?.player === currentPlayer) {
                     const moves = calculateLegalMovesForState(boardState, r, c);
-                    moves.forEach(move => 
-                        possibleMoves.push({start: {row: r, col: c}, end: move})
+                    moves.forEach(move =>
+                        possibleMoves.push({ start: { row: r, col: c }, end: move })
                     );
                 }
             }
@@ -1551,16 +1565,16 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         // Try each move and look deeper
         for (const move of possibleMoves) {
             const nextState = cloneBoard(boardState);
-            const {start, end} = move;
-            
+            const { start, end } = move;
+
             // Apply move
             const movingPiece = nextState[start.row][start.col];
             const targetPiece = nextState[end.row][end.col];
 
             if (!targetPiece) {
-                nextState[end.row][end.col] = {...movingPiece};
+                nextState[end.row][end.col] = { ...movingPiece };
                 nextState[start.row][start.col] = null;
-                unmarkPlayerSwapped(currentPlayer, nextState); 
+                unmarkPlayerSwapped(currentPlayer, nextState);
             } else {
                 nextState[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 nextState[start.row][start.col] = { ...targetPiece, state: SWAPPED };
@@ -1577,60 +1591,60 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
     // (calculateLegalMovesForState remains the same)
     function calculateLegalMovesForState(boardState, r, c) {
-         const moves = [];
-         const piece = boardState[r][c];
-         if (!piece) return moves;
+        const moves = [];
+        const piece = boardState[r][c];
+        if (!piece) return moves;
 
-         const opponent = piece.player === PLAYER_A ? PLAYER_B : PLAYER_A;
+        const opponent = piece.player === PLAYER_A ? PLAYER_B : PLAYER_A;
 
-         for (let dr = -1; dr <= 1; dr++) {
-             for (let dc = -1; dc <= 1; dc++) {
-                 if (dr === 0 && dc === 0) continue;
-                 const nr = r + dr;
-                 const nc = c + dc;
+        for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+                if (dr === 0 && dc === 0) continue;
+                const nr = r + dr;
+                const nc = c + dc;
 
-                 if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
-                     const targetCell = boardState[nr][nc];
-                     if (targetCell === null) {
-                         moves.push({ row: nr, col: nc });
-                     } else if (targetCell.player === opponent && targetCell.state === NORMAL) {
-                         moves.push({ row: nr, col: nc, isSwap: true });
-                     }
-                 }
-             }
-         }
-         return moves;
+                if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+                    const targetCell = boardState[nr][nc];
+                    if (targetCell === null) {
+                        moves.push({ row: nr, col: nc });
+                    } else if (targetCell.player === opponent && targetCell.state === NORMAL) {
+                        moves.push({ row: nr, col: nc, isSwap: true });
+                    }
+                }
+            }
+        }
+        return moves;
     }
 
     // Helper to check win condition for a given board state - UPDATED start/target rows
-     function checkWinConditionForState(boardState, player) {
-         // REVERSED ORIENTATION: Define start/target based on player and new orientation
-         const startRow = (player === PLAYER_A) ? ROWS - 2 : 1; // A starts near bottom (idx 6), B near top (idx 1)
-         const targetRow = (player === PLAYER_A) ? 1 : ROWS - 2; // A targets near top (idx 1), B targets near bottom (idx 6)
+    function checkWinConditionForState(boardState, player) {
+        // REVERSED ORIENTATION: Define start/target based on player and new orientation
+        const startRow = (player === PLAYER_A) ? ROWS - 2 : 1; // A starts near bottom (idx 6), B near top (idx 1)
+        const targetRow = (player === PLAYER_A) ? 1 : ROWS - 2; // A targets near top (idx 1), B targets near bottom (idx 6)
 
-         const visited = Array(ROWS).fill(null).map(() => Array(COLS).fill(false));
-         const queue = []; // Queue for BFS: stores {row, col, path}
+        const visited = Array(ROWS).fill(null).map(() => Array(COLS).fill(false));
+        const queue = []; // Queue for BFS: stores {row, col, path}
 
-         // Find starting pieces for the player in their designated 'start' row
-         for (let c = 0; c < COLS; c++) {
-             if (boardState[startRow] && boardState[startRow][c] && boardState[startRow][c].player === player) {
-                 queue.push({ 
-                     row: startRow, 
-                     col: c, 
-                     path: [{ row: startRow, col: c }] 
-                 });
-                 visited[startRow][c] = true;
-             }
-         }
+        // Find starting pieces for the player in their designated 'start' row
+        for (let c = 0; c < COLS; c++) {
+            if (boardState[startRow] && boardState[startRow][c] && boardState[startRow][c].player === player) {
+                queue.push({
+                    row: startRow,
+                    col: c,
+                    path: [{ row: startRow, col: c }]
+                });
+                visited[startRow][c] = true;
+            }
+        }
 
-         while (queue.length > 0) {
+        while (queue.length > 0) {
             const current = queue.shift();
             const { row, col, path } = current;
 
             // Check if we reached the target row
             if (row === targetRow) {
-                 console.log(`Win detected for Player ${player}. Path:`, path);
-                 return { win: true, path: path }; // Found a path
+                console.log(`Win detected for Player ${player}. Path:`, path);
+                return { win: true, path: path }; // Found a path
             }
 
             // Explore neighbors
@@ -1644,20 +1658,19 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                     // Check bounds, if visited, and if it's the player's piece
                     if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS &&
                         !visited[nr][nc] &&
-                        boardState[nr] && boardState[nr][nc] && boardState[nr][nc].player === player)
-                     {
-                         visited[nr][nc] = true;
-                         queue.push({ row: nr, col: nc, path: [...path, { row: nr, col: nc }] }); // Include complete path to current position
-                     }
+                        boardState[nr] && boardState[nr][nc] && boardState[nr][nc].player === player) {
+                        visited[nr][nc] = true;
+                        queue.push({ row: nr, col: nc, path: [...path, { row: nr, col: nc }] }); // Include complete path to current position
+                    }
                 }
             }
-         }
+        }
 
-         return { win: false, path: [] };
-     }
+        return { win: false, path: [] };
+    }
 
 
-     // --- Heuristic Evaluation --- UPDATED for new orientation
+    // --- Heuristic Evaluation --- UPDATED for new orientation
     function evaluateBoardState(boardState, player, move) {
         let score = 0;
         const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
@@ -1708,7 +1721,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                         }
 
                         // Connectivity Score only do this count for pieces mid-board
-                        if (r > 1 && r < ROWS - 1){
+                        if (r > 1 && r < ROWS - 1) {
                             playerConnectivity += countFriendlyNeighbors(boardState, r, c, player);
                         }
 
@@ -1719,28 +1732,28 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
                         if (r === 3 || r === 4) {
                             score += CENTER_SQUARES_WEIGHT;
-                        }                        
+                        }
 
                     } else { // Opponent piece (Player A)
                         opponentCount++;
                         playerHorizontalRow = 0; // Reset count on opponent piece
-                        if (r> 1 && r < ROWS-1) {
+                        if (r > 1 && r < ROWS - 1) {
                             opponentConnectivity += countFriendlyNeighbors(boardState, r, c, opponent);
                         }
                         // Could add opponent advancement penalty here (A wants lower index)
                         // score -= ADVANCE_WEIGHT * (ROWS - 1 - r); // Penalize AI if opponent advances
                     }
                 } else {
-                     playerHorizontalRow = 0; // Reset count on empty cell
+                    playerHorizontalRow = 0; // Reset count on empty cell
                 }
 
-                 // 4-in-a-row Penalty (only check if count reaches 4)
-                 if (playerHorizontalRow === 4) {
-                     score += FOUR_IN_ROW_PENALTY;
-                 }
+                // 4-in-a-row Penalty (only check if count reaches 4)
+                if (playerHorizontalRow === 4) {
+                    score += FOUR_IN_ROW_PENALTY;
+                }
 
             }
-             playerHorizontalRow = 0; // Reset at end of row
+            playerHorizontalRow = 0; // Reset at end of row
         }
 
         // Add connectivity scores
@@ -1755,30 +1768,30 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         }
 
 
-         // Opponent Restriction (Approximate) - Count opponent's legal moves
-         let opponentMovesCount = 0;
-         for (let r = 0; r < ROWS; r++) {
-             for (let c = 0; c < COLS; c++) {
-                 if (boardState[r][c] && boardState[r][c].player === opponent) {
-                     opponentMovesCount += calculateLegalMovesForState(boardState, r, c).length;
-                 }
-             }
-         }
-         score -= RESTRICT_OPPONENT_WEIGHT * opponentMovesCount;
+        // Opponent Restriction (Approximate) - Count opponent's legal moves
+        let opponentMovesCount = 0;
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                if (boardState[r][c] && boardState[r][c].player === opponent) {
+                    opponentMovesCount += calculateLegalMovesForState(boardState, r, c).length;
+                }
+            }
+        }
+        score -= RESTRICT_OPPONENT_WEIGHT * opponentMovesCount;
 
 
-         let rowsOccupiedCount = 0;
-         for (let r = 0; r < ROWS; r++) {
-             for (let c = 0; c < COLS; c++) {
-                 if (boardState[r][c] && boardState[r][c].player === player) {
-                     rowsOccupiedCount += 1;
-                 }
-             }
-         }         
-         // score -= ROW_COUNT_WEIGHT * rowsOccupiedCount;
+        let rowsOccupiedCount = 0;
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                if (boardState[r][c] && boardState[r][c].player === player) {
+                    rowsOccupiedCount += 1;
+                }
+            }
+        }
+        // score -= ROW_COUNT_WEIGHT * rowsOccupiedCount;
 
         // Add small random factor to break ties sometimes
-         score += Math.random() * 0.1;
+        score += Math.random() * 0.1;
 
         return score;
     }
@@ -1839,77 +1852,77 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             historyList.appendChild(moveDiv);
         });
 
-         // Add option to view initial state
-         const initialStateDiv = document.createElement('div');
-         initialStateDiv.textContent = `0. Initial State`;
-         initialStateDiv.classList.add('history-move');
-         // Highlight initial state if it's currently viewed
-         if (currentHistoryIndex === 0) {
-             initialStateDiv.classList.add('selected-move');
-         }
-         initialStateDiv.addEventListener('click', () => {
-             const initialBoard = startingPosition.map(row => row.map(cell => cell ? {...cell} : null));
-             currentHistoryIndex = 0;
-             renderBoard(initialBoard);
-             updateMoveCounter();
-             hideOverlay(historyOverlay);
-         });
-         historyList.appendChild(initialStateDiv); // Add initial state option at the end
+        // Add option to view initial state
+        const initialStateDiv = document.createElement('div');
+        initialStateDiv.textContent = `0. Initial State`;
+        initialStateDiv.classList.add('history-move');
+        // Highlight initial state if it's currently viewed
+        if (currentHistoryIndex === 0) {
+            initialStateDiv.classList.add('selected-move');
+        }
+        initialStateDiv.addEventListener('click', () => {
+            const initialBoard = startingPosition.map(row => row.map(cell => cell ? { ...cell } : null));
+            currentHistoryIndex = 0;
+            renderBoard(initialBoard);
+            updateMoveCounter();
+            hideOverlay(historyOverlay);
+        });
+        historyList.appendChild(initialStateDiv); // Add initial state option at the end
     }
 
-     function navigateHistory(direction) {
-         if (!gameOver) return; // Exit if not in history mode
-         
-         if (currentHistoryIndex === undefined) {
-             currentHistoryIndex = moveHistory.length;
-         }
-         
-         const newIndex = Math.max(0, Math.min(moveHistory.length, currentHistoryIndex + direction));
-         if (newIndex === currentHistoryIndex) return; // No change needed
-         
-         currentHistoryIndex = newIndex;
-         
-         if (currentHistoryIndex === moveHistory.length) {
-             renderBoard(board);
-         } else if (currentHistoryIndex === 0) {
-             // Show initial board state
-             const initialBoard = startingPosition.map(row => row.map(cell => cell ? {...cell} : null));
-             renderBoard(initialBoard);
-         } else {
-             renderBoard(moveHistory[currentHistoryIndex - 1].boardAfter);
-         }
-         updateMoveCounter();
-     }
+    function navigateHistory(direction) {
+        if (!gameOver) return; // Exit if not in history mode
 
-     function updateMoveCounter() {
-         if (!gameOver) return;
-         
-         const counter = document.createElement('div');
-         counter.classList.add('move-counter');
-         counter.textContent = currentHistoryIndex === undefined || currentHistoryIndex === moveHistory.length ? 
-             'Final Position' : 
-             `Move ${currentHistoryIndex} of ${moveHistory.length}`;
-         
-         // Remove any existing counter
-         const existingCounter = boardElement.querySelector('.move-counter');
-         if (existingCounter) {
-             existingCounter.remove();
-         }
-         boardElement.appendChild(counter);
-     }
+        if (currentHistoryIndex === undefined) {
+            currentHistoryIndex = moveHistory.length;
+        }
 
-     function restoreFinalState() {
-         currentHistoryIndex = undefined;
-         boardElement.style.opacity = '1';
-         renderBoard(board);
-     }
+        const newIndex = Math.max(0, Math.min(moveHistory.length, currentHistoryIndex + direction));
+        if (newIndex === currentHistoryIndex) return; // No change needed
 
-     // Update board click handler for history mode
-     boardElement.addEventListener('click', () => {
-         if (currentHistoryIndex !== undefined) {
-             restoreFinalState();
-         }
-     });
+        currentHistoryIndex = newIndex;
+
+        if (currentHistoryIndex === moveHistory.length) {
+            renderBoard(board);
+        } else if (currentHistoryIndex === 0) {
+            // Show initial board state
+            const initialBoard = startingPosition.map(row => row.map(cell => cell ? { ...cell } : null));
+            renderBoard(initialBoard);
+        } else {
+            renderBoard(moveHistory[currentHistoryIndex - 1].boardAfter);
+        }
+        updateMoveCounter();
+    }
+
+    function updateMoveCounter() {
+        if (!gameOver) return;
+
+        const counter = document.createElement('div');
+        counter.classList.add('move-counter');
+        counter.textContent = currentHistoryIndex === undefined || currentHistoryIndex === moveHistory.length ?
+            'Final Position' :
+            `Move ${currentHistoryIndex} of ${moveHistory.length}`;
+
+        // Remove any existing counter
+        const existingCounter = boardElement.querySelector('.move-counter');
+        if (existingCounter) {
+            existingCounter.remove();
+        }
+        boardElement.appendChild(counter);
+    }
+
+    function restoreFinalState() {
+        currentHistoryIndex = undefined;
+        boardElement.style.opacity = '1';
+        renderBoard(board);
+    }
+
+    // Update board click handler for history mode
+    boardElement.addEventListener('click', () => {
+        if (currentHistoryIndex !== undefined) {
+            restoreFinalState();
+        }
+    });
 
     // --- Overlay Management ---
     // (showOverlay, hideOverlay, hideAllOverlays remain the same)
@@ -1920,9 +1933,9 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     function hideOverlay(overlayElement) {
         overlayElement.classList.remove('active');
     }
-     function hideAllOverlays() {
-          overlays.forEach(hideOverlay);
-     }
+    function hideAllOverlays() {
+        overlays.forEach(hideOverlay);
+    }
 
     // --- Start Game ---
     initGame();
@@ -1930,7 +1943,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     // Add scroll wheel handler
     boardElement.addEventListener('wheel', (event) => {
         if (!gameOver) return;
-        
+
         event.preventDefault();
         const direction = event.deltaY > 0 ? 1 : -1;
         navigateHistory(direction);
@@ -1945,10 +1958,10 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     boardElement.addEventListener('touchmove', (event) => {
         if (!gameOver) return;
         event.preventDefault();
-        
+
         const touchEndY = event.touches[0].clientY;
         const deltaY = touchEndY - touchStartY;
-        
+
         if (Math.abs(deltaY) > 30) { // Minimum swipe distance
             const direction = deltaY < 0 ? 1 : -1;
             navigateHistory(direction);
@@ -1960,14 +1973,14 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         if (currentHistoryIndex === undefined) {
             currentHistoryIndex = moveHistory.length;
         }
-        
+
         currentHistoryIndex = Math.max(0, Math.min(moveHistory.length, currentHistoryIndex + direction));
-        
+
         if (currentHistoryIndex === moveHistory.length) {
             restoreFinalState();
         } else if (currentHistoryIndex === 0) {
             // Show initial board state with experimental positions:
-            const initialBoard = startingPosition.map(row => row.map(cell => cell ? {...cell} : null));
+            const initialBoard = startingPosition.map(row => row.map(cell => cell ? { ...cell } : null));
             renderBoard(initialBoard);
         } else {
             renderBoard(moveHistory[currentHistoryIndex - 1].boardAfter);
@@ -1994,13 +2007,13 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     // Utility to deep clone boardState
     function cloneBoard(boardState) {
         // Use structuredClone if available (modern browsers), else fallback to JSON method
-        return (typeof structuredClone === 'function') ? 
-               structuredClone(boardState) :
-               JSON.parse(JSON.stringify(boardState));
-    }    function boardToKey(boardState) {
+        return (typeof structuredClone === 'function') ?
+            structuredClone(boardState) :
+            JSON.parse(JSON.stringify(boardState));
+    } function boardToKey(boardState) {
         // Create a simpler string representation that's JSON-safe
-        return boardState.map(row => 
-            row.map(cell => 
+        return boardState.map(row =>
+            row.map(cell =>
                 cell ? `${cell.player}${cell.state[0]}` : '_'  // Use first letter of state
             ).join('')
         ).join('|');
@@ -2011,7 +2024,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         // This function needs to take the 8x4 boardState and produce
         // an array of 5 numbers (integers) exactly like the Python
         // board_to_binary function does (likely using bitwise operations).
-        
+
         // Initialize 5 numbers (unsigned 32-bit integers)
         // JavaScript bitwise operations operate on 32-bit signed integers,
         // but for setting bits with OR, this should be fine.
@@ -2059,36 +2072,36 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
     function serializeBoardState(boardState) {
         // Create a simple string representation that avoids JSON.parse/stringify errors
-        return boardState.map(row => 
+        return boardState.map(row =>
             row.map(cell => {
                 if (!cell) return '_';
                 return `${cell.player}${cell.state === NORMAL ? 'N' : 'S'}`;
             }).join('')
         ).join('|');
-    }    async function analyzeHistoricalMove() {
+    } async function analyzeHistoricalMove() {
         if (currentHistoryIndex !== undefined && currentHistoryIndex > 0) {
             const historicalBoard = moveHistory[currentHistoryIndex - 1].boardAfter;
-            
+
             // Determine whose turn it is for this historical board state
             // The boardAfter represents the state after a move was made
             // So the next player to move is the opposite of who made that move
             const playerWhoMadePreviousMove = moveHistory[currentHistoryIndex - 1].player;
             const playerToMoveNext = playerWhoMadePreviousMove === PLAYER_A ? PLAYER_B : PLAYER_A;
-            
+
             ANALYSIS_MODE = true;
             const bestMove = await findBestAIMove(historicalBoard, playerToMoveNext);
             ANALYSIS_MODE = false;
             console.log(`Best move for this board state (Player ${playerToMoveNext}'s turn):`, bestMove);
         } else {
             console.log('No historical move selected.');
-        }    
+        }
     }
     window.analyzeHistoricalMove = analyzeHistoricalMove;
 
     function setupTestPosition() {
         // Clear the board first
         board = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
-        
+
         // Setup the position from bottom to top (row 7 to 0)
         const position = [
             '....',  // row 0 (top)
@@ -2121,7 +2134,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 }
             }
         }
-        
+
         currentPlayer = PLAYER_B; // Set to Player B's turn
         selectedPiece = null;
         legalMoves = [];
@@ -2158,7 +2171,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     window.setupTestPosition = setupTestPosition;    // --- MCTS configuration button
     const mctsBtn = document.getElementById('mcts-btn');
     const mctsOverlay = document.getElementById('mcts-overlay');
-    
+
     mctsBtn.addEventListener('click', () => {
         showOverlay(mctsOverlay);
         updateMCTSUI();
@@ -2192,7 +2205,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         if (typeof initializeMCTS === 'function') {
             initializeMCTS();
         }
-        
+
         // Update window globals for debugging
         window.MCTS_ENABLED = MCTS_ENABLED;
         window.MCTS_SIMULATIONS = MCTS_SIMULATIONS;
@@ -2265,22 +2278,22 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
 
         // Update AI difficulty selector
         if (aiDifficultySelect) aiDifficultySelect.value = AI_DIFFICULTY;
-        
+
         // Update MCTS controls
         if (mctsEnabledCheckbox) mctsEnabledCheckbox.checked = MCTS_ENABLED;
         if (mctsSimulationsSlider) mctsSimulationsSlider.value = MCTS_SIMULATIONS;
-        if (mctsSimulationsValue) mctsSimulationsValue.textContent = MCTS_SIMULATIONS;        if (mctsTemperatureSlider) mctsTemperatureSlider.value = MCTS_TEMPERATURE;
+        if (mctsSimulationsValue) mctsSimulationsValue.textContent = MCTS_SIMULATIONS; if (mctsTemperatureSlider) mctsTemperatureSlider.value = MCTS_TEMPERATURE;
         if (mctsTemperatureValue) mctsTemperatureValue.textContent = MCTS_TEMPERATURE.toFixed(2);
         if (mctsVerboseCheckbox) mctsVerboseCheckbox.checked = MCTS_VERBOSE;
-        
+
         // Note: updateMCTSControlsVisibility() handles the visibility logic and calls updateMCTSUI()
         // So we don't call it here to avoid infinite recursion
     }// Initialize MCTS controls when DOM is ready
     setupMCTSControls();
-    
+
     // Initialize MCTS controls visibility
     updateMCTSControlsVisibility();
-    
+
     // Initialize MCTS button image
     updateMCTSButtonImage();
 
@@ -2314,17 +2327,17 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     window.parseStartingPosition = parseStartingPosition;
     window.initGame = initGame;
     window.renderBoard = renderBoard;
-    window.updateScoreDisplay = updateScoreDisplay;    window.displayMoveHistory = displayMoveHistory;
+    window.updateScoreDisplay = updateScoreDisplay; window.displayMoveHistory = displayMoveHistory;
     window.navigateHistory = navigateHistory;
     window.toggleMCTS = toggleMCTS;
     window.setMCTSSimulations = setMCTSSimulations;
     window.setMCTSTemperature = setMCTSTemperature;
-        window.analyzeHistoricalMove = analyzeHistoricalMove;
-    window.setupTestPosition = setupTestPosition;    window.startSelfPlay = startSelfPlay;
+    window.analyzeHistoricalMove = analyzeHistoricalMove;
+    window.setupTestPosition = setupTestPosition; window.startSelfPlay = startSelfPlay;
     window.stopSelfPlay = stopSelfPlay;
-    
+
     // Convenience toggle function
-    window.selfPlay = function() {
+    window.selfPlay = function () {
         if (isInSelfPlay) {
             stopSelfPlay();
         } else {
@@ -2333,52 +2346,52 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     };
 
     // --- Self-Play Functions ---
-      function startSelfPlay() {
+    function startSelfPlay() {
         if (gameOver) {
             console.log("Cannot start self-play: game is over");
             return;
         }
-        
+
         isInSelfPlay = true;
         console.log("Self-play started");
-        
+
         // Start the self-play loop
         scheduleSelfPlayMove();
     }
-    
+
     function stopSelfPlay() {
         isInSelfPlay = false;
-        
+
         // Clear any pending self-play move
         if (selfPlayTimeoutId) {
             clearTimeout(selfPlayTimeoutId);
             selfPlayTimeoutId = null;
         }
-          console.log("Self-play stopped");
+        console.log("Self-play stopped");
     }
-    
+
     function scheduleSelfPlayMove() {
         if (!isInSelfPlay || gameOver) {
             return;
         }
-        
+
         // 500ms pause between player moves for better visualization
         const delay = 500; // 500ms between moves
-        
+
         selfPlayTimeoutId = setTimeout(() => {
             makeSelfPlayMove();
         }, delay);
     }
-    
+
     async function makeSelfPlayMove() {
         if (!isInSelfPlay || gameOver) {
             return;
         }
-        
+
         try {
             // Make an AI move for the current player
             await triggerAIMove();
-            
+
             // Schedule the next move if game is still ongoing
             if (!gameOver && isInSelfPlay) {
                 scheduleSelfPlayMove();
@@ -2386,10 +2399,10 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
                 stopSelfPlay();
             }
         } catch (error) {
-            console.error("Error during self-play move:", error);            stopSelfPlay();
+            console.error("Error during self-play move:", error); stopSelfPlay();
         }
     }
-    
+
     // Console commands info
     console.log("🎮 Self-play console commands available:");
     console.log("  startSelfPlay() - Start AI vs AI self-play");
