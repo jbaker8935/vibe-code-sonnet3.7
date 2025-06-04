@@ -584,7 +584,7 @@ if (boardElement) {
 
 // --- AI Move Trigger ---
 // Helper: filter out moves that allow immediate opponent win
-function getSafeMoves(possibleMoves, board, player, opponent) {
+function getSafeMoves(possibleMoves, board, player, opponent, excludeForcingMoves = false) {
     const safeMoves = [];
     for (const move of possibleMoves) {
         let tempBoard = cloneBoard(board);
@@ -600,6 +600,7 @@ function getSafeMoves(possibleMoves, board, player, opponent) {
         }
         // Check if any opponent response is an immediate win
         let opponentCanWin = false;
+        let opponentCanForce = false;
         for (let r2 = 0; r2 < ROWS && !opponentCanWin; r2++) {
             for (let c2 = 0; c2 < COLS && !opponentCanWin; c2++) {
                 if (tempBoard[r2][c2] && tempBoard[r2][c2].player === opponent) {
@@ -621,11 +622,76 @@ function getSafeMoves(possibleMoves, board, player, opponent) {
                             opponentCanWin = true;
                             break;
                         }
+                        // Forcing move check: after this opponent move, does player have any safe moves?
+                        if (excludeForcingMoves && !opponentCanWin) {
+                            // Find all possible player moves after this opponent move
+                            let playerMoves = [];
+                            for (let r3 = 0; r3 < ROWS; r3++) {
+                                for (let c3 = 0; c3 < COLS; c3++) {
+                                    if (oppBoard[r3][c3] && oppBoard[r3][c3].player === player) {
+                                        const moves = calculateLegalMoves(r3, c3, oppBoard, player);
+                                        moves.forEach(mv => {
+                                            playerMoves.push({ start: { row: r3, col: c3 }, end: { row: mv.row, col: mv.col } });
+                                        });
+                                    }
+                                }
+                            }
+                            // Are there any safe moves for player?
+                            let foundSafe = false;
+                            for (const pmove of playerMoves) {
+                                let testBoard = cloneBoard(oppBoard);
+                                const pmovingPiece = testBoard[pmove.start.row][pmove.start.col];
+                                const ptargetPiece = testBoard[pmove.end.row][pmove.end.col];
+                                if (!ptargetPiece) {
+                                    testBoard[pmove.end.row][pmove.end.col] = { ...pmovingPiece };
+                                    testBoard[pmove.start.row][pmove.start.col] = null;
+                                    unmarkPlayerSwapped(player, testBoard);
+                                } else {
+                                    testBoard[pmove.end.row][pmove.end.col] = { ...pmovingPiece, state: SWAPPED };
+                                    testBoard[pmove.start.row][pmove.start.col] = { ...ptargetPiece, state: SWAPPED };
+                                }
+                                // Check if opponent can win immediately after this move
+                                let oppCanWin = false;
+                                for (let r4 = 0; r4 < ROWS && !oppCanWin; r4++) {
+                                    for (let c4 = 0; c4 < COLS && !oppCanWin; c4++) {
+                                        if (testBoard[r4][c4] && testBoard[r4][c4].player === opponent) {
+                                            const oppMoves2 = calculateLegalMoves(r4, c4, testBoard, opponent);
+                                            for (const om2 of oppMoves2) {
+                                                let tb2 = cloneBoard(testBoard);
+                                                const omPiece = tb2[r4][c4];
+                                                const omTarget = tb2[om2.row][om2.col];
+                                                if (!omTarget) {
+                                                    tb2[om2.row][om2.col] = { ...omPiece };
+                                                    tb2[r4][c4] = null;
+                                                    unmarkPlayerSwapped(opponent, tb2);
+                                                } else {
+                                                    tb2[om2.row][om2.col] = { ...omPiece, state: SWAPPED };
+                                                    tb2[r4][c4] = { ...omTarget, state: SWAPPED };
+                                                }
+                                                const win2 = checkWinCondition(tb2, opponent);
+                                                if (win2.win) {
+                                                    oppCanWin = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (!oppCanWin) {
+                                    foundSafe = true;
+                                    break;
+                                }
+                            }
+                            if (!foundSafe) {
+                                opponentCanForce = true;
+                                break;
+                            }
+                        }
                     }
                 }
             }
         }
-        if (!opponentCanWin) safeMoves.push(move);
+        if (!opponentCanWin && (!excludeForcingMoves || !opponentCanForce)) safeMoves.push(move);
     }
     return safeMoves.length > 0 ? safeMoves : possibleMoves;
 }
@@ -671,7 +737,8 @@ async function triggerAIMove() {
         bestMove = immediateWin;
     } else {
         // Filter out own-goal moves (allowing immediate opponent win)
-        const safeMoves = getSafeMoves(possibleMoves, board, PLAYER_B, PLAYER_A);
+        let excludeForcing = (AI_DIFFICULTY === 'hard1' || (AI_DIFFICULTY === 'hard_ai'));
+        const safeMoves = getSafeMoves(possibleMoves, board, PLAYER_B, PLAYER_A, excludeForcing);
         if (AI_DIFFICULTY === 'easy') {
             bestMove = safeMoves[Math.floor(Math.random() * safeMoves.length)];
         } else if (AI_DIFFICULTY === 'hard1' || (AI_DIFFICULTY === 'hard_ai' && !tfModel)) {
