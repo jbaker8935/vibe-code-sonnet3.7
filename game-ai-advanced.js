@@ -35,6 +35,14 @@ export function moveToActionIndex(move) {
         return null;
     }
     const actionIndex = startCellIndex * NUM_DIRECTIONS + directionIndex;
+    
+    // Validate action index range
+    if (actionIndex < 0 || actionIndex >= 256) {
+        console.error(`INVALID ACTION INDEX: ${actionIndex} for move (${move.start.row},${move.start.col}) → (${move.end.row},${move.end.col})`);
+        console.error(`  Details: startCell=${startCellIndex}, direction=${directionIndex}, dr=${dr}, dc=${dc}`);
+        return null; // Return null for invalid indices
+    }
+    
     return actionIndex;
 }
 
@@ -65,46 +73,221 @@ export function calculateLegalMovesForState(boardState, row, col) {
     return moves;
 }
 
-// Helper function to check if a move allows opponent to win
-export function allowsOpponentWin(boardState, opponent, depth = 1) {
-    if (depth <= 0) return false;
-
-    // Check all possible opponent moves
+// Helper function to check if a player can win in one move
+export function canWinInOneMove(boardState, player) {
+    // Check all possible moves for the player
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
-            if (boardState[r][c] && boardState[r][c].player === opponent) {
-                const oppMoves = calculateLegalMovesForState(boardState, r, c);
-                for (const oppMove of oppMoves) {
+            if (boardState[r][c] && boardState[r][c].player === player) {
+                const moves = calculateLegalMovesForState(boardState, r, c);
+                for (const move of moves) {
                     const tempBoard = cloneBoard(boardState);
                     const movingPiece = tempBoard[r][c];
-                    const targetPiece = tempBoard[oppMove.row][oppMove.col];
+                    const targetPiece = tempBoard[move.row][move.col];
                     
                     if (!targetPiece) {
-                        tempBoard[oppMove.row][oppMove.col] = { ...movingPiece };
+                        // Move to empty cell
+                        tempBoard[move.row][move.col] = { ...movingPiece };
                         tempBoard[r][c] = null;
-                        unmarkPlayerSwapped(opponent, tempBoard);
+                        unmarkPlayerSwapped(player, tempBoard);
                     } else {
-                        tempBoard[oppMove.row][oppMove.col] = { ...movingPiece, state: SWAPPED };
+                        // Swap move
+                        tempBoard[move.row][move.col] = { ...movingPiece, state: SWAPPED };
                         tempBoard[r][c] = { ...targetPiece, state: SWAPPED };
                     }
                     
-                    const win = checkWinCondition(tempBoard, opponent);
-                    if (win.win) {
-                        return true;
-                    }
-                    
-                    // Recursive check for deeper analysis
-                    if (depth > 1) {
-                        const currentPlayer = opponent === PLAYER_A ? PLAYER_B : PLAYER_A;
-                        if (allowsOpponentWin(tempBoard, currentPlayer, depth - 1)) {
-                            return true;
-                        }
+                    // Check if this move results in a win
+                    const winResult = checkWinCondition(tempBoard, player);
+                    if (winResult.win) {
+                        return {
+                            canWin: true,
+                            winningMove: {
+                                start: { row: r, col: c },
+                                end: { row: move.row, col: move.col },
+                                isSwap: !!targetPiece
+                            },
+                            winResult: winResult
+                        };
                     }
                 }
             }
         }
     }
+    return { canWin: false };
+}
+
+// Helper function to check if a move allows opponent to win
+export function allowsOpponentWin(boardState, opponent, depth = 1, aiDifficulty = 'hard1') {
+    if (depth <= 0) return false;
+
+    // Use the new canWinInOneMove function for immediate win check
+    const immediateWin = canWinInOneMove(boardState, opponent);
+    if (immediateWin.canWin) {
+        return true;
+    }
+
+    // For easy mode: only check immediate wins and direct one-move threats
+    if (aiDifficulty === 'easy') {
+        // Easy mode only checks:
+        // 1. If opponent can win immediately (already checked above)
+        // 2. If opponent can win on their next move after our move
+        
+        if (depth > 1) {
+            // Check if opponent can make a move that wins immediately on their next turn
+            const currentPlayer = opponent === PLAYER_A ? PLAYER_B : PLAYER_A;
+            
+            // Get opponent's possible moves
+            let opponentMoves = [];
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    if (boardState[r][c] && boardState[r][c].player === opponent) {
+                        const moves = calculateLegalMovesForState(boardState, r, c);
+                        moves.forEach(move => {
+                            opponentMoves.push({
+                                start: { row: r, col: c },
+                                end: { row: move.row, col: move.col },
+                                isSwap: !!move.isSwap
+                            });
+                        });
+                    }
+                }
+            }
+
+            // Check if any opponent move leads to an immediate win
+            for (const opponentMove of opponentMoves) {
+                const tempBoard = cloneBoard(boardState);
+                const { start, end } = opponentMove;
+                const movingPiece = tempBoard[start.row][start.col];
+                const targetPiece = tempBoard[end.row][end.col];
+
+                // Apply opponent's move
+                if (!targetPiece) {
+                    tempBoard[end.row][end.col] = { ...movingPiece };
+                    tempBoard[start.row][start.col] = null;
+                    unmarkPlayerSwapped(opponent, tempBoard);
+                } else {
+                    tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+                    tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
+                }
+
+                // Check if this move wins immediately for opponent
+                const opponentWinsNow = checkWinCondition(tempBoard, opponent);
+                if (opponentWinsNow.win) {
+                    return true;
+                }
+            }
+        }
+        
+        return false; // Easy mode stops here - no forced move detection
+    }
+
+    // Enhanced forced loss detection for hard1 and hard_ai modes
+    if (depth > 1 && (aiDifficulty === 'hard1' || aiDifficulty === 'hard_ai')) {
+        const currentPlayer = opponent === PLAYER_A ? PLAYER_B : PLAYER_A;
+        
+        // Get all possible moves for the opponent
+        let opponentMoves = [];
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                if (boardState[r][c] && boardState[r][c].player === opponent) {
+                    const moves = calculateLegalMovesForState(boardState, r, c);
+                    moves.forEach(move => {
+                        opponentMoves.push({
+                            start: { row: r, col: c },
+                            end: { row: move.row, col: move.col },
+                            isSwap: !!move.isSwap
+                        });
+                    });
+                }
+            }
+        }
+
+        // Check if opponent has any move that forces the current player into a losing position
+        for (const opponentMove of opponentMoves) {
+            const tempBoard = cloneBoard(boardState);
+            const { start, end } = opponentMove;
+            const movingPiece = tempBoard[start.row][start.col];
+            const targetPiece = tempBoard[end.row][end.col];
+
+            // Apply opponent's move
+            if (!targetPiece) {
+                tempBoard[end.row][end.col] = { ...movingPiece };
+                tempBoard[start.row][start.col] = null;
+                unmarkPlayerSwapped(opponent, tempBoard);
+            } else {
+                tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+                tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
+            }
+
+            // Check if this move wins immediately for opponent
+            const opponentWinsNow = checkWinCondition(tempBoard, opponent);
+            if (opponentWinsNow.win) {
+                return true;
+            }
+
+            // Check if this move leaves current player with no safe responses (forced loss)
+            if (allCurrentPlayerMovesAllowOpponentWin(tempBoard, currentPlayer, opponent, depth - 1, aiDifficulty)) {
+                return true;
+            }
+        }
+    }
+    
     return false;
+}
+
+// Helper function to check if all moves by current player allow opponent to win
+function allCurrentPlayerMovesAllowOpponentWin(boardState, currentPlayer, opponent, depth, aiDifficulty = 'hard1') {
+    if (depth <= 0) return false;
+
+    // Get all possible moves for current player
+    let currentPlayerMoves = [];
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            if (boardState[r][c] && boardState[r][c].player === currentPlayer) {
+                const moves = calculateLegalMovesForState(boardState, r, c);
+                moves.forEach(move => {
+                    currentPlayerMoves.push({
+                        start: { row: r, col: c },
+                        end: { row: move.row, col: move.col },
+                        isSwap: !!move.isSwap
+                    });
+                });
+            }
+        }
+    }
+
+    // If current player has no moves, they lose
+    if (currentPlayerMoves.length === 0) {
+        return true;
+    }
+
+    // Check if ALL moves by current player allow opponent to win
+    for (const playerMove of currentPlayerMoves) {
+        const tempBoard = cloneBoard(boardState);
+        const { start, end } = playerMove;
+        const movingPiece = tempBoard[start.row][start.col];
+        const targetPiece = tempBoard[end.row][end.col];
+
+        // Apply current player's move
+        if (!targetPiece) {
+            tempBoard[end.row][end.col] = { ...movingPiece };
+            tempBoard[start.row][start.col] = null;
+            unmarkPlayerSwapped(currentPlayer, tempBoard);
+        } else {
+            tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+            tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
+        }
+
+        // Check if opponent can win after this current player move
+        // Use recursion to check if opponent can force a win from this position
+        if (!allowsOpponentWin(tempBoard, opponent, depth, aiDifficulty)) {
+            // Found at least one safe move for current player
+            return false;
+        }
+    }
+
+    // All moves by current player allow opponent to win
+    return true;
 }
 
 // Helper function to evaluate board state heuristically
@@ -158,6 +341,40 @@ export function checkWinConditionForState(boardState, player) {
     return checkWinCondition(boardState, player);
 }
 
+// Helper function to check if a player has valid defensive responses
+function hasValidDefensiveResponse(boardState, currentPlayer, opponent, depth) {
+    if (depth <= 0) return true; // Assume defensive move exists at max depth
+
+    // Get all possible moves for current player
+    for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+            if (boardState[r][c] && boardState[r][c].player === currentPlayer) {
+                const moves = calculateLegalMovesForState(boardState, r, c);
+                for (const move of moves) {
+                    const tempBoard = cloneBoard(boardState);
+                    const movingPiece = tempBoard[r][c];
+                    const targetPiece = tempBoard[move.row][move.col];
+                    
+                    if (!targetPiece) {
+                        tempBoard[move.row][move.col] = { ...movingPiece };
+                        tempBoard[r][c] = null;
+                        unmarkPlayerSwapped(currentPlayer, tempBoard);
+                    } else {
+                        tempBoard[move.row][move.col] = { ...movingPiece, state: SWAPPED };
+                        tempBoard[r][c] = { ...targetPiece, state: SWAPPED };
+                    }
+                    
+                    // Check if this defensive move prevents the opponent from winning
+                    if (!allowsOpponentWin(tempBoard, opponent, depth - 1)) {
+                        return true; // Found a valid defensive move
+                    }
+                }
+            }
+        }
+    }
+    return false; // No valid defensive moves found
+}
+
 // Main sophisticated AI function
 export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty = 'hard_ai', aiDepth = 1, analysisMode = false, mctsEnabled = false, mctsSimulations = 50, tfModel = null, mctsSearch = null, gameLogic = null) {
     let possibleMoves = [];
@@ -203,14 +420,27 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
     }
 
     // If using neural network model
-    if (aiDifficulty === 'hard_ai' && tfModel) {
+    if (aiDifficulty === 'hard_ai') {
+
+        
+        if (!tfModel) {
+            console.warn("Neural network model not available. Falling back to heuristic AI (hard1).");
+            // Recursively call with hard1 difficulty as fallback
+            return await findBestAIMove(boardState, player, 'hard1', aiDepth, analysisMode, mctsEnabled, mctsSimulations, tfModel, mctsSearch, gameLogic);
+        }
+        
         console.log("Using neural network for move selection");
 
         // Use MCTS if enabled and available
         if (mctsEnabled && mctsSearch && gameLogic) {
             console.log(`Using MCTS with ${mctsSimulations} simulations`);
             try {
-                const actionProbs = await mctsSearch.search(boardState, player, neuralNetworkPredict, gameLogic);
+                // Create a wrapper function that includes tfModel
+                const neuralNetworkPredictWithModel = async (nnInput) => {
+                    return await neuralNetworkPredict(tfModel, nnInput);
+                };
+                
+                const actionProbs = await mctsSearch.search(boardState, player, neuralNetworkPredictWithModel, gameLogic);
 
                 // Convert action probabilities to move
                 const legalMoves = [];
@@ -230,11 +460,29 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
                 }
 
                 if (legalMoves.length > 0) {
-                    // Select move based on MCTS action probabilities
+                    // Filter out moves that allow opponent to win immediately or force a loss
+                    const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
+                    const safeMoves = legalMoves.filter(move => {
+                        const tempBoard = cloneBoard(boardState);
+                        const { start, end } = move;
+                        const movingPiece = tempBoard[start.row][start.col];
+                        const targetPiece = tempBoard[end.row][end.col];
+                        if (!targetPiece) {
+                            tempBoard[end.row][end.col] = { ...movingPiece };
+                            tempBoard[start.row][start.col] = null;
+                            unmarkPlayerSwapped(player, tempBoard);
+                        } else {
+                            tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+                            tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
+                        }
+                        return !allowsOpponentWin(tempBoard, opponent, aiDepth, aiDifficulty);
+                    });
+
+                    // Select move based on MCTS action probabilities, but only among safe moves if any
                     let bestMove = null;
                     let bestProb = -1;
-
-                    for (const move of legalMoves) {
+                    const movesToConsider = safeMoves.length > 0 ? safeMoves : legalMoves;
+                    for (const move of movesToConsider) {
                         const actionIndex = moveToActionIndex(move);
                         if (actionIndex !== null && actionIndex >= 0 && actionIndex < actionProbs.length) {
                             const prob = actionProbs[actionIndex];
@@ -247,6 +495,9 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
 
                     if (bestMove && analysisMode) {
                         console.log(`MCTS selected move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (prob: ${bestProb.toFixed(4)})`);
+                        if (safeMoves.length === 0) {
+                            console.warn('All MCTS moves allow opponent win; forced to pick among losing moves.');
+                        }
                     }
 
                     if (bestMove) {
@@ -254,181 +505,16 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
                     }
                 }
             } catch (error) {
-                console.error("MCTS error, falling back to direct NN policy:", error);
-                // Fall through to direct neural network policy
+                console.error("Error during MCTS move selection:", error);
             }
         }
 
-        console.log("Using direct neural network policy");
+        // Fallback to heuristic evaluation for move selection
+        let bestMove = null;
         let bestScore = -Infinity;
-        let scoredMoves = [];
-        let topMoves = [];
-
-        // Get the neural network input from the CURRENT board state
-        const currentNNInput = boardToNNInput(boardState, player);
-
-        if (!currentNNInput || currentNNInput.length !== 192) {
-            console.error("Failed to generate valid NN input from current board state. Expected 192 elements but got:", currentNNInput?.length, "Falling back.");
-            // Fallback to heuristic AI if NN input generation fails
-            const fallbackMove = await findBestAIMove(boardState, player, 'hard1', aiDepth, analysisMode);
-            return fallbackMove;
-        }
-
-        let inputTensor;
-        let outputTensors;
-        let policyQValues;
-
-        try {
-            // Create a single tensor for the current board state input
-            inputTensor = tf.tensor2d([currentNNInput]);
-
-            if (analysisMode) console.log("NN Input Tensor Shape:", inputTensor.shape);
-
-            // Use executeAsync for GraphModel prediction
-            const inputNodeName = tfModel.inputs[0].name;
-            outputTensors = await tfModel.executeAsync({ [inputNodeName]: inputTensor });
-
-            if (analysisMode) {
-                console.log("--- Model Output Inspection (Current State Prediction) ---");
-                console.log("tfModel.outputs:", tfModel.outputs);
-                if (tfModel.outputs && tfModel.outputs.length > 0) {
-                    tfModel.outputs.forEach((output, index) => {
-                        console.log(`Output ${index}:`, output.name, output.shape);
-                    });
-                }
-            }
-
-            // Extract policy and value from output
-            let policyOutput, valueOutput;
-            if (Array.isArray(outputTensors)) {
-                // Multiple outputs: policy and value
-                policyOutput = outputTensors[0];
-                valueOutput = outputTensors.length > 1 ? outputTensors[1] : null;
-            } else {
-                // Single output: assume it's policy
-                policyOutput = outputTensors;
-            }
-
-            if (analysisMode) {
-                console.log("Policy Output Shape:", policyOutput.shape);
-                if (valueOutput) console.log("Value Output Shape:", valueOutput.shape);
-            }
-
-            policyQValues = await policyOutput.data();
-
-            // Dispose tensors
-            if (inputTensor && !inputTensor.isDisposed) inputTensor.dispose();
-            outputTensors.forEach(t => { if (t && !t.isDisposed) t.dispose(); });
-
-            // Process Scores for all possible moves from the CURRENT state
-            for (const move of possibleMoves) {
-                const { start, end } = move;
-
-                // Create a temporary board to check if the move allows an opponent win
-                const tempBoard = cloneBoard(boardState);
-                const movingPiece = tempBoard[start.row][start.col];
-                const targetPiece = tempBoard[end.row][end.col];
-
-                if (!targetPiece) {
-                    tempBoard[end.row][end.col] = { ...movingPiece };
-                    tempBoard[start.row][start.col] = null;
-                    unmarkPlayerSwapped(player, tempBoard);
-                } else {
-                    tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
-                    tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
-                }
-
-                // Check if this move allows opponent to win
-                const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
-                if (allowsOpponentWin(tempBoard, opponent, aiDepth)) {
-                    if (analysisMode) {
-                        console.log(`NN: Skipping move ${start.row},${start.col} to ${end.row},${end.col}: allows opponent win`);
-                    }
-                    continue; // Skip moves that allow opponent to win
-                }
-
-                const actionIndex = moveToActionIndex(move);
-
-                if (actionIndex === null || actionIndex < 0 || actionIndex >= policyQValues.length) {
-                    if (analysisMode) console.warn(`NN: Skipping move due to invalid actionIndex (${actionIndex}) for move:`, move);
-                    continue;
-                }
-
-                const score = policyQValues[actionIndex];
-
-                if (typeof score === 'number' && !isNaN(score)) {
-                    scoredMoves.push({ move, score });
-                    if (score > bestScore) {
-                        bestScore = score;
-                    }
-                    if (analysisMode) {
-                        console.log(`NN Move ${start.row},${start.col} to ${end.row},${end.col} (Action ${actionIndex}): Q-value ${score.toFixed(4)}`);
-                    }
-                } else {
-                    if (analysisMode) {
-                        console.warn(`NN Move ${start.row},${start.col} to ${end.row},${end.col} (Action ${actionIndex}): Q-value is invalid (Score: ${score}, Type: ${typeof score})`);
-                    }
-                }
-            }
-
-            if (scoredMoves.length > 0 && bestScore > -Infinity) {
-                // Use a threshold relative to the best score
-                let dynamicScoreThreshold;
-                if (bestScore >= 0) {
-                    dynamicScoreThreshold = bestScore * 0.8;
-                } else {
-                    dynamicScoreThreshold = bestScore * 1.2;
-                }
-                const scoreTolerance = 0.05;
-                dynamicScoreThreshold = bestScore - Math.abs(bestScore * 0.20) - scoreTolerance;
-
-                if (analysisMode) console.log(`NN: Final bestScore: ${bestScore.toFixed(4)}, dynamicScoreThreshold: ${dynamicScoreThreshold.toFixed(4)}`);
-
-                topMoves = scoredMoves
-                    .filter(sm => typeof sm.score === 'number' && !isNaN(sm.score) && sm.score >= dynamicScoreThreshold)
-                    .map(({ move }) => move);
-
-                if (analysisMode && topMoves.length === 0 && scoredMoves.length > 0) {
-                    console.log("NN: No moves met the dynamic threshold, but scored moves exist. Considering all scored moves as top moves.");
-                    topMoves = scoredMoves.filter(sm => sm.score === bestScore).map(({ move }) => move);
-                }
-
-            } else {
-                if (analysisMode) console.log("NN: No moves scored or bestScore remained -Infinity.");
-            }
-
-            if (topMoves.length > 0) {
-                const randomIndex = Math.floor(Math.random() * topMoves.length);
-                if (analysisMode) console.log(`NN chose from ${topMoves.length} top moves. Best Q-value: ${bestScore.toFixed(4)}`);
-                return topMoves[randomIndex];
-            } else {
-                console.warn("Neural network failed to find any moves above threshold or any valid moves. Falling back to heuristic.");
-                // Fall through to heuristic AI logic
-            }
-
-        } catch (error) {
-            console.error("Error in neural network prediction or processing:", error);
-            // Dispose any tensors that might still be around from the try block
-            if (inputTensor && !inputTensor.isDisposed) inputTensor.dispose();
-            if (outputTensors) {
-                outputTensors.forEach(t => { if (t && !t.isDisposed) t.dispose(); });
-            }
-            // Fall through to heuristic AI logic
-        }
-    }
-
-    // Fallback Heuristic AI Logic (easy, hard1, or if NN fails)
-    console.log(`Falling back to heuristic AI: ${aiDifficulty}`);
-
-    if (aiDifficulty === 'easy') {
-        // Filter out moves that allow immediate opponent win
-        let safeMoves = [];
         for (const move of possibleMoves) {
-            // Test each move on a cloned board
             const tempBoard = cloneBoard(boardState);
             const { start, end } = move;
-
-            // Apply move to temporary board
             const movingPiece = tempBoard[start.row][start.col];
             const targetPiece = tempBoard[end.row][end.col];
 
@@ -441,120 +527,60 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
                 tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
             }
 
-            // Check if this move allows opponent to win on their next turn(s)
-            const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
-            const isSafe = !allowsOpponentWin(tempBoard, opponent, aiDepth);
-            if (analysisMode) {
-                console.log(`Evaluating move: ${start.row},${start.col} to ${end.row},${end.col} - Safe: ${isSafe}`);
-            }
-            if (isSafe) {
-                safeMoves.push(move);
-            }
-        }
-        if (analysisMode) {
-            console.log('Safe moves:', safeMoves.map(m => `${m.start.row},${m.start.col} to ${m.end.row},${m.end.col}`));
-            if (safeMoves.length === 0) {
-                console.log('No safe moves found; selecting from all possible moves.');
-            }
-        }
-        const movesToChoose = safeMoves.length > 0 ? safeMoves : possibleMoves;
-        return movesToChoose[Math.floor(Math.random() * movesToChoose.length)];
-    }
-
-    let bestScore = -Infinity;
-    let bestMoves = []; // Store moves with the best score
-
-    for (const move of possibleMoves) {
-        // Create proper deep clone of board
-        const tempBoard = boardState.map(row =>
-            row.map(cell => cell ? { ...cell } : null)
-        );
-
-        const movingPiece = tempBoard[move.start.row][move.start.col];
-        const targetPiece = tempBoard[move.end.row][move.end.col];
-
-        if (targetPiece === null) {
-            // Empty cell move
-            tempBoard[move.end.row][move.end.col] = { ...movingPiece };
-            tempBoard[move.start.row][move.start.col] = null;
-            unmarkPlayerSwapped(player, tempBoard);
-        } else {
-            // Swap move
-            tempBoard[move.end.row][move.end.col] = { ...movingPiece, state: SWAPPED };
-            tempBoard[move.start.row][move.start.col] = { ...targetPiece, state: SWAPPED };
-        }
-
-        const score = evaluateBoardState(tempBoard, player, move);
-        // Check if this move allows opponent to win
-        const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
-        if (!allowsOpponentWin(tempBoard, opponent, aiDepth)) {
+            // Evaluate the board state after the hypothetical move
+            const score = evaluateBoardState(tempBoard, player);
             if (score > bestScore) {
                 bestScore = score;
-                bestMoves = [move];
-            } else if (score === bestScore) {
-                bestMoves.push(move);
-            }
-        } else {
-            console.log(`AI Avoids move: ${move.start.row},${move.start.col} -> ${move.end.row},${move.end.col} (allows Player A win)`);
-            // If all moves lead to a loss, give these moves a massive penalty instead of excluding them
-            const lossPenalty = -100000;
-            if (lossPenalty > bestScore) {
-                bestScore = lossPenalty;
-                bestMoves = [move];
-            } else if (lossPenalty === bestScore) {
-                bestMoves.push(move);
+                bestMove = move;
             }
         }
-    }
 
-    // Check if all evaluated moves lead to a loss
-    const lossPenalty = -100000;
-    if (bestMoves.length > 0 && bestScore === lossPenalty) {
-        console.log("AI: All moves lead to a loss. Forced move.");
-    }
-
-    // If bestMoves is empty (shouldn't happen), pick any move
-    if (bestMoves.length === 0) {
-        console.warn("AI couldn't find a non-losing move, or evaluation error. Picking random move.");
-        if (possibleMoves.length > 0) {
-            return possibleMoves[Math.floor(Math.random() * possibleMoves.length)];
-        } else {
-            return null; // Truly no moves available
+        if (bestMove && analysisMode) {
+            console.log(`Heuristic selected move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (score: ${bestScore})`);
         }
-    }
 
-    // Choose randomly among the best moves
-    return bestMoves[Math.floor(Math.random() * bestMoves.length)];
-}
-
-// Analyze historical move function
-export async function analyzeHistoricalMove(moveHistory, currentHistoryIndex, tfModel = null, aiDifficulty = 'hard_ai', aiDepth = 1, mctsEnabled = false, mctsSimulations = 50, mctsSearch = null, gameLogic = null) {
-    if (currentHistoryIndex !== undefined && currentHistoryIndex > 0) {
-        const historicalBoard = moveHistory[currentHistoryIndex - 1].boardAfter;
-
-        // Determine whose turn it is for this historical board state
-        // The boardAfter represents the state after a move was made
-        // So the next player to move is the opposite of who made that move
-        const playerWhoMadePreviousMove = moveHistory[currentHistoryIndex - 1].player;
-        const playerToMoveNext = playerWhoMadePreviousMove === PLAYER_A ? PLAYER_B : PLAYER_A;
-
-        const analysisMode = true;
-        const bestMove = await findBestAIMove(
-            historicalBoard, 
-            playerToMoveNext, 
-            aiDifficulty, 
-            aiDepth, 
-            analysisMode, 
-            mctsEnabled, 
-            mctsSimulations, 
-            tfModel, 
-            mctsSearch, 
-            gameLogic
-        );
-        console.log(`Best move for this board state (Player ${playerToMoveNext}'s turn):`, bestMove);
         return bestMove;
-    } else {
-        console.log('No historical move selected.');
-        return null;
     }
+
+    // For hard1 difficulty: use heuristic evaluation with forced loss detection
+    if (aiDifficulty === 'hard1') {
+        let bestMove = null;
+        let bestScore = -Infinity;
+        for (const move of possibleMoves) {
+            const tempBoard = cloneBoard(boardState);
+            const { start, end } = move;
+            const movingPiece = tempBoard[start.row][start.col];
+            const targetPiece = tempBoard[end.row][end.col];
+
+            if (!targetPiece) {
+                tempBoard[end.row][end.col] = { ...movingPiece };
+                tempBoard[start.row][start.col] = null;
+                unmarkPlayerSwapped(player, tempBoard);
+            } else {
+                tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+                tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
+            }
+
+            // Evaluate the board state after the hypothetical move
+            const score = evaluateBoardState(tempBoard, player);
+
+            // Penalize moves that allow opponent to win immediately
+            if (allowsOpponentWin(tempBoard, player === PLAYER_A ? PLAYER_B : PLAYER_A, 1, 'easy')) {
+                continue; // Skip this move, it's not safe
+            }
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestMove = move;
+            }
+        }
+
+        if (bestMove && analysisMode) {
+            console.log(`Hard1 heuristic selected move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (score: ${bestScore})`);
+        }
+
+        return bestMove;
+    }
+
+    return null;
 }

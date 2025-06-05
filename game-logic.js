@@ -79,23 +79,33 @@ export function switchPlayer(currentPlayer) {
 }
 
 export function checkWinCondition(board, player) {
-    const startRow = (player === PLAYER_A) ? ROWS - 2 : 1;
-    const targetRow = (player === PLAYER_A) ? 1 : ROWS - 2;
+    // Define starting and target areas for each player
+    const startRows = (player === PLAYER_A) ? [ROWS - 2, ROWS - 1] : [0, 1];  // A: rows 6,7; B: rows 0,1
+    const targetRows = (player === PLAYER_A) ? [0, 1] : [ROWS - 2, ROWS - 1]; // A: rows 0,1; B: rows 6,7
+    
     const visited = Array(ROWS).fill(null).map(() => Array(COLS).fill(false));
     const queue = [];
-    for (let c = 0; c < COLS; c++) {
-        if (board[startRow] && board[startRow][c] && board[startRow][c].player === player) {
-            queue.push({ row: startRow, col: c, path: [{ row: startRow, col: c }] });
-            visited[startRow][c] = true;
+    
+    // Find all pieces in the starting area and add them to the queue
+    for (const startRow of startRows) {
+        for (let c = 0; c < COLS; c++) {
+            if (board[startRow] && board[startRow][c] && board[startRow][c].player === player) {
+                queue.push({ row: startRow, col: c, path: [{ row: startRow, col: c }] });
+                visited[startRow][c] = true;
+            }
         }
     }
+    
     while (queue.length > 0) {
         const current = queue.shift();
         const { row, col, path } = current;
-        if (row === targetRow) {
-            console.log(`Win detected for Player ${player}. Path:`, path);
+        
+        // Check if we reached any target row
+        if (targetRows.includes(row)) {
             return { win: true, path };
         }
+        
+        // Explore neighbors
         for (let dr = -1; dr <= 1; dr++) {
             for (let dc = -1; dc <= 1; dc++) {
                 if (dr === 0 && dc === 0) continue;

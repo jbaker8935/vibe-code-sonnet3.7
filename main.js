@@ -21,9 +21,12 @@ import {
     showOverlay, hideOverlay, hideAllOverlays
 } from './game-overlays.js';
 import {
-    findBestAIMove, analyzeHistoricalMove, moveToActionIndex, calculateLegalMovesForState, 
+    findBestAIMove, moveToActionIndex, calculateLegalMovesForState, 
     allowsOpponentWin, evaluateBoardState, countFriendlyNeighbors, checkWinConditionForState
 } from './game-ai-advanced.js';
+import {
+    runBoardPositionTest
+} from './test-board-position.js';
 
 // --- Main Orchestration ---
 // This code is adapted from script.js and is compatible with game_logic_adapter.js and mcts_js.js
@@ -50,7 +53,7 @@ let AI_DEPTH = 1;
 let ANALYSIS_MODE = true;
 let MCTS_ENABLED = false;
 let MCTS_SIMULATIONS = 50;
-let MCTS_TEMPERATURE = 0.01;
+let MCTS_TEMPERATURE = 0.1; // Better default for gameplay (was 0.01)
 let MCTS_PUCT_CONSTANT = 1.0;
 let MCTS_DIRICHLET_ALPHA = 0.3;
 let MCTS_DIRICHLET_EPSILON = 0.25;
@@ -96,17 +99,111 @@ const mctsOverlay = document.getElementById('mcts-overlay');
     }
 })();
 
+// --- Wait for TensorFlow.js to be Available ---
+async function waitForTensorFlow(maxWaitTime = 30000) {
+    console.log("Waiting for TensorFlow.js to become available...");
+    const startTime = Date.now();
+    let attempts = 0;
+    
+    while (typeof tf === 'undefined') {
+        attempts++;
+        const elapsed = Date.now() - startTime;
+        
+        if (elapsed > maxWaitTime) {
+            console.error(`TensorFlow.js failed to load within ${maxWaitTime}ms timeout after ${attempts} attempts`);
+            throw new Error("TensorFlow.js failed to load within timeout");
+        }
+        
+        if (attempts % 10 === 0) {
+            console.log(`Still waiting for TensorFlow.js... Attempt ${attempts}, elapsed: ${elapsed}ms`);
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 200)); // Wait 200ms between checks
+    }
+    
+    console.log(`TensorFlow.js is now available after ${attempts} attempts (${Date.now() - startTime}ms)`);
+    return true;
+}
+
 // --- Model Loading ---
 async function loadTFJSModel() {
     try {
+        console.log("=== Model Loading Debug Start ===");
         console.log("Loading TensorFlow.js model...");
-        tfModel = await tf.loadGraphModel('./switcharoo_tfjs_model/model.json');
+        console.log("TensorFlow.js available:", typeof tf !== 'undefined');
+        console.log("TensorFlow.js version:", typeof tf !== 'undefined' ? tf.version?.tfjs : 'N/A');
+        
+        if (typeof tf === 'undefined') {
+            throw new Error("TensorFlow.js not available yet");
+        }
+        
+        // Wait for TensorFlow.js to be ready
+        console.log("Waiting for TensorFlow.js backend to be ready...");
+        await tf.ready();
+        console.log("TensorFlow.js backend ready, active backend:", tf.getBackend());
+        
+        console.log("Loading model from: ./switcharoo_tfjs_model/model.json");
+        console.log("Starting tf.loadGraphModel call...");
+        
+        // Add detailed error handling for model loading
+        let loadedModel;
+        try {
+            loadedModel = await tf.loadGraphModel('./switcharoo_tfjs_model/model.json');
+            console.log("tf.loadGraphModel completed successfully");
+        } catch (modelLoadError) {
+            console.error("Error during tf.loadGraphModel:", modelLoadError);
+            console.error("Model load error type:", modelLoadError.constructor.name);
+            console.error("Model load error message:", modelLoadError.message);
+            console.error("Model load error stack:", modelLoadError.stack);
+            throw modelLoadError;
+        }
+        
+        tfModel = loadedModel;
         console.log("Model loaded successfully:", tfModel);
+        console.log("Model constructor:", tfModel.constructor.name);
+        console.log("Model inputs:", tfModel.inputs?.length || 'undefined');
+        console.log("Model outputs:", tfModel.outputs?.length || 'undefined');
+        
+        // Test the model with a dummy prediction
+        try {
+            console.log("Testing model with dummy input...");
+            const dummyInput = tf.zeros([1, 192]);
+            const inputNodeName = tfModel.inputs[0].name;
+            console.log("Input node name:", inputNodeName);
+            
+            const prediction = tfModel.execute({[inputNodeName]: dummyInput});
+            console.log("Dummy prediction successful, output tensors:", prediction.length);
+            
+            // Clean up test tensors
+            dummyInput.dispose();
+            if (Array.isArray(prediction)) {
+                prediction.forEach(tensor => tensor.dispose());
+            } else {
+                prediction.dispose();
+            }
+            console.log("Model test completed successfully");
+        } catch (testError) {
+            console.warn("Model test failed:", testError);
+            console.warn("Proceeding anyway as model loaded successfully");
+        }
+        
+        // Make tfModel available globally for testing
+        window.tfModel = tfModel;
+        console.log("Model assigned to window.tfModel:", window.tfModel);
+        console.log("=== Model Loading Debug End ===");
+        
         return true;
     } catch (error) {
-        console.warn("Could not load pre-trained graph model. Error object:", error);
+        console.error("=== Model Loading Failed ===");
+        console.error("Could not load pre-trained graph model. Error object:", error);
+        console.error("Error type:", error.constructor.name);
+        console.error("Error message:", error.message);
+        console.error("Error stack:", error.stack);
         console.warn("The Neural Network AI option will be disabled as it requires pre-trained weights to work properly.");
         tfModel = null;
+        window.tfModel = null;
+        console.log("Model loading failed, window.tfModel set to null");
+        console.log("=== Model Loading Debug End ===");
         return false;
     }
 }
@@ -127,6 +224,11 @@ function setupMCTS() {
             verbose: MCTS_VERBOSE,
             logSearchStats: true
         });
+        
+        // Make MCTS objects available globally for testing
+        window.mctsSearch = mctsSearch;
+        window.gameLogic = gameLogic;
+        
         console.log("MCTS initialized with settings:", {
             numSimulations: MCTS_SIMULATIONS,
             cPuct: MCTS_PUCT_CONSTANT,
@@ -138,10 +240,39 @@ function setupMCTS() {
         });
     } else {
         console.warn("MCTS classes not available - MCTS features disabled");
+        window.mctsSearch = null;
+        window.gameLogic = null;
     }
 }
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log("=== DOM Content Loaded ===");
+    console.log("TensorFlow.js available at DOMContentLoaded:", typeof tf !== 'undefined');
+    
+    // Initialize MCTS first
+    setupMCTS();
+    
+    // Add a small delay to allow deferred scripts to finish loading
+    await new Promise(resolve => setTimeout(resolve, 500));
+    console.log("After 500ms delay, TensorFlow.js available:", typeof tf !== 'undefined');
+    
+    // Wait for TensorFlow.js to be available, then load the neural network model
+    try {
+        console.log("Starting TensorFlow.js wait and model loading...");
+        await waitForTensorFlow();
+        console.log("TensorFlow.js ready, starting model load...");
+        const modelLoaded = await loadTFJSModel();
+        console.log("Model loading result:", modelLoaded);
+        console.log("Final window.tfModel state:", window.tfModel);
+    } catch (error) {
+        console.warn("Failed to wait for TensorFlow.js or load model:", error);
+        console.warn("Error details:", error.message, error.stack);
+        window.tfModel = null;
+    }
+    
+    // Initialize the game
+    console.log("Initializing game...");
     initGame();
+    console.log("Game initialization complete");
 });
 
 // --- Game Initialization ---
@@ -397,15 +528,130 @@ function updateMCTSControlsVisibility() {
     const mctsOnlyElements = document.querySelectorAll('.mcts-only');
     if (aiDifficultySelect && aiDifficultySelect.value === 'hard_ai') {
         mctsOnlyElements.forEach(el => el.style.display = '');
+        // Enable MCTS by default when switching to hard_ai
+        MCTS_ENABLED = true;
     } else {
         mctsOnlyElements.forEach(el => el.style.display = 'none');
+        // Disable MCTS when not in AI Agent mode
+        MCTS_ENABLED = false;
     }
+    // Update UI to reflect the MCTS_ENABLED state
+    updateMCTSUI();
 }
 if (aiDifficultySelect) {
-    aiDifficultySelect.addEventListener('change', updateMCTSControlsVisibility);
+    aiDifficultySelect.addEventListener('change', () => {
+        // Update AI_DIFFICULTY variable
+        AI_DIFFICULTY = aiDifficultySelect.value;
+        console.log(`AI Difficulty changed to: ${AI_DIFFICULTY}`);
+        
+        // Update MCTS controls visibility
+        updateMCTSControlsVisibility();
+    });
     // Run once on load
     updateMCTSControlsVisibility();
 }
+
+// --- MCTS Slider Event Listeners ---
+function setupMCTSSliders() {
+    const mctsSimulationsSlider = document.getElementById('mcts-simulations');
+    const mctsSimulationsValue = document.getElementById('mcts-simulations-value');
+    const mctsTemperatureSlider = document.getElementById('mcts-temperature');
+    const mctsTemperatureValue = document.getElementById('mcts-temperature-value');
+    const mctsEnabledCheckbox = document.getElementById('mcts-enabled');
+    const mctsVerboseCheckbox = document.getElementById('mcts-verbose');
+    const mctsResetBtn = document.getElementById('mcts-reset-defaults');
+
+    // Simulations slider
+    if (mctsSimulationsSlider && mctsSimulationsValue) {
+        mctsSimulationsSlider.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            MCTS_SIMULATIONS = Math.max(1, Math.min(200, value));
+            mctsSimulationsValue.textContent = MCTS_SIMULATIONS;
+            // Update MCTS instance if it exists
+            if (mctsSearch) {
+                mctsSearch.setNumSimulations(MCTS_SIMULATIONS);
+            }
+        });
+    }
+
+    // Temperature slider
+    if (mctsTemperatureSlider && mctsTemperatureValue) {
+        mctsTemperatureSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            MCTS_TEMPERATURE = Math.max(0.0, Math.min(2.0, value));
+            mctsTemperatureValue.textContent = MCTS_TEMPERATURE.toFixed(2);
+            // Update MCTS instance if it exists
+            if (mctsSearch) {
+                mctsSearch.setTemperature(MCTS_TEMPERATURE);
+            }
+        });
+    }
+
+    // MCTS enabled checkbox
+    if (mctsEnabledCheckbox) {
+        mctsEnabledCheckbox.addEventListener('change', (e) => {
+            if (aiDifficultySelect && aiDifficultySelect.value === 'hard_ai') {
+                MCTS_ENABLED = e.target.checked;
+                if (mctsSearch) {
+                    mctsSearch.setEnabled(MCTS_ENABLED);
+                }
+            } else {
+                // Force disable if not in AI Agent mode
+                e.target.checked = false;
+                MCTS_ENABLED = false;
+            }
+        });
+    }
+
+    // Verbose logging checkbox
+    if (mctsVerboseCheckbox) {
+        mctsVerboseCheckbox.addEventListener('change', (e) => {
+            MCTS_VERBOSE = e.target.checked;
+            if (mctsSearch) {
+                mctsSearch.verbose = MCTS_VERBOSE;
+            }
+        });
+    }
+
+    // Reset to defaults button
+    if (mctsResetBtn) {
+        mctsResetBtn.addEventListener('click', () => {
+            MCTS_ENABLED = true;
+            MCTS_SIMULATIONS = 50;
+            MCTS_TEMPERATURE = 0.1; // Better default for gameplay
+            MCTS_VERBOSE = false;
+            
+            // Update UI elements
+            updateMCTSUI();
+            
+            // Reinitialize MCTS with new settings
+            setupMCTS();
+        });
+    }
+}
+
+// --- Update MCTS UI Elements ---
+function updateMCTSUI() {
+    const mctsEnabledCheckbox = document.getElementById('mcts-enabled');
+    const mctsSimulationsSlider = document.getElementById('mcts-simulations');
+    const mctsSimulationsValue = document.getElementById('mcts-simulations-value');
+    const mctsTemperatureSlider = document.getElementById('mcts-temperature');
+    const mctsTemperatureValue = document.getElementById('mcts-temperature-value');
+    const mctsVerboseCheckbox = document.getElementById('mcts-verbose');
+
+    if (mctsEnabledCheckbox) mctsEnabledCheckbox.checked = MCTS_ENABLED;
+    if (mctsSimulationsSlider) mctsSimulationsSlider.value = MCTS_SIMULATIONS;
+    if (mctsSimulationsValue) mctsSimulationsValue.textContent = MCTS_SIMULATIONS;
+    if (mctsTemperatureSlider) mctsTemperatureSlider.value = MCTS_TEMPERATURE;
+    if (mctsTemperatureValue) mctsTemperatureValue.textContent = MCTS_TEMPERATURE.toFixed(2);
+    if (mctsVerboseCheckbox) mctsVerboseCheckbox.checked = MCTS_VERBOSE;
+}
+
+// Initialize MCTS sliders when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    setupMCTSSliders();
+    updateMCTSUI();
+});
 
 // --- MCTS Button Image Update ---
 function updateMCTSButtonImage() {
@@ -746,25 +992,18 @@ window.SwitcharooGlobals = {
     hideOverlay,
     hideAllOverlays,
     initGame,
-    analyzeHistoricalMove: () => analyzeHistoricalMove(
-        moveHistory,
-        currentHistoryIndex,
-        tfModel,
-        AI_DIFFICULTY,
-        AI_DEPTH,
-        MCTS_ENABLED,
-        MCTS_SIMULATIONS,
-        mctsSearch,
-        gameLogic
-    ),
     findBestAIMove,
     moveToActionIndex,
     calculateLegalMovesForState,
     allowsOpponentWin,
     evaluateBoardState,
     countFriendlyNeighbors,
-    checkWinConditionForState
+    checkWinConditionForState,
+    analyzeHistoricalMove
 };
+
+// --- Expose analyzeHistoricalMove to console ---
+window.analyzeHistoricalMove = analyzeHistoricalMove;
 
 // --- Patch: Only highlight win path if viewing the final (winning) position
 // This requires passing a flag to renderBoard to indicate if win path should be shown
@@ -777,4 +1016,35 @@ function renderBoardWithWinPath(options) {
         showWinPath,
         boardElement // PATCH: always pass boardElement
     });
+}
+
+// --- Historical Move Analysis Function ---
+async function analyzeHistoricalMove() {
+    if (currentHistoryIndex !== undefined && currentHistoryIndex > 0) {
+        const historicalBoard = moveHistory[currentHistoryIndex - 1].boardAfter;
+
+        // Determine whose turn it is for this historical board state
+        // The boardAfter represents the state after a move was made
+        // So the next player to move is the opposite of who made that move
+        const playerWhoMadePreviousMove = moveHistory[currentHistoryIndex - 1].player;
+        const playerToMoveNext = playerWhoMadePreviousMove === PLAYER_A ? PLAYER_B : PLAYER_A;
+
+        ANALYSIS_MODE = true;
+        const bestMove = await findBestAIMove(
+            historicalBoard, 
+            playerToMoveNext, 
+            AI_DIFFICULTY, 
+            AI_DEPTH, 
+            true, // analysisMode
+            MCTS_ENABLED, 
+            MCTS_SIMULATIONS, 
+            tfModel, 
+            mctsSearch, 
+            gameLogic
+        );
+        ANALYSIS_MODE = false;
+        console.log(`Best move for this board state (Player ${playerToMoveNext}'s turn):`, bestMove);
+    } else {
+        console.log('No historical move selected.');
+    }
 }

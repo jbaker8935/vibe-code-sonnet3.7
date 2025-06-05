@@ -24,7 +24,6 @@ export function parseStartingPosition(positionStr) {
 
 export function cloneBoard(boardState) {
     const cloned = (typeof structuredClone === 'function') ? structuredClone(boardState) : JSON.parse(JSON.stringify(boardState));
-    console.log("Cloned board:", cloned);
     return cloned;
 }
 

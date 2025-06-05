@@ -73,11 +73,10 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     let AI_DEPTH = 1; // Will be set based on difficulty
     let ANALYSIS_MODE = true; // Ensure this is true for detailed NN logging
     let tfModel = null; // TensorFlow.js model    let startingPosition = null; // Starting position for the game
-    let startingPositionIndex = 0; // Index for the initial position in the array
-    // MCTS Configuration
+    let startingPositionIndex = 0; // Index for the initial position in the array    // MCTS Configuration
     let MCTS_ENABLED = false; // Enable/disable MCTS for performance comparison - disabled by default for easy mode
     let MCTS_SIMULATIONS = 50; // Number of MCTS simulations per move (1-1000)
-    let MCTS_TEMPERATURE = 0.01; // Temperature for action selection (0.0-2.0)
+    let MCTS_TEMPERATURE = 0.1; // Temperature for action selection (0.0-2.0) - better default for gameplay
     let MCTS_PUCT_CONSTANT = 1.0; // PUCT exploration constant
     let MCTS_DIRICHLET_ALPHA = 0.3; // Dirichlet noise alpha
     let MCTS_DIRICHLET_EPSILON = 0.25; // Dirichlet noise epsilon
@@ -719,38 +718,38 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     function switchPlayer() {
         currentPlayer = (currentPlayer === PLAYER_A) ? PLAYER_B : PLAYER_A;
         updateStatusMessage();
-        console.log(`Turn switched. Player ${currentPlayer}'s turn.`);
-    }
+        console.log(`Turn switched. Player ${currentPlayer}'s turn.`);    }
 
     // --- Win Condition ---
 
     function checkWinCondition(player) {
-        // REVERSED ORIENTATION: Define start/target based on player and new orientation
-        const startRow = (player === PLAYER_A) ? ROWS - 2 : 1; // A starts near bottom (idx 6), B near top (idx 1)
-        const targetRow = (player === PLAYER_A) ? 1 : ROWS - 2; // A targets near top (idx 1), B targets near bottom (idx 6)
+        // Define starting and target areas for each player
+        const startRows = (player === PLAYER_A) ? [ROWS - 2, ROWS - 1] : [0, 1];  // A: rows 6,7; B: rows 0,1
+        const targetRows = (player === PLAYER_A) ? [0, 1] : [ROWS - 2, ROWS - 1]; // A: rows 0,1; B: rows 6,7
 
         const visited = Array(ROWS).fill(null).map(() => Array(COLS).fill(false));
         const queue = []; // Queue for BFS: stores {row, col, path}
 
-        // Find starting pieces for the player in their designated 'start' row
-        for (let c = 0; c < COLS; c++) {
-            if (board[startRow] && board[startRow][c] && board[startRow][c].player === player) {
-                queue.push({
-                    row: startRow,
-                    col: c,
-                    path: [{ row: startRow, col: c }]
-                });
-                visited[startRow][c] = true;
+        // Find all pieces in the starting area and add them to the queue
+        for (const startRow of startRows) {
+            for (let c = 0; c < COLS; c++) {
+                if (board[startRow] && board[startRow][c] && board[startRow][c].player === player) {
+                    queue.push({
+                        row: startRow,
+                        col: c,
+                        path: [{ row: startRow, col: c }]
+                    });
+                    visited[startRow][c] = true;
+                }
             }
         }
-
 
         while (queue.length > 0) {
             const current = queue.shift();
             const { row, col, path } = current;
 
-            // Check if we reached the target row
-            if (row === targetRow) {
+            // Check if we reached any target row
+            if (targetRows.includes(row)) {
                 console.log(`Win detected for Player ${player}. Path:`, path);
                 return { win: true, path: path }; // Found a path
             }
@@ -1614,26 +1613,26 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             }
         }
         return moves;
-    }
-
-    // Helper to check win condition for a given board state - UPDATED start/target rows
+    }    // Helper to check win condition for a given board state - UPDATED start/target rows
     function checkWinConditionForState(boardState, player) {
-        // REVERSED ORIENTATION: Define start/target based on player and new orientation
-        const startRow = (player === PLAYER_A) ? ROWS - 2 : 1; // A starts near bottom (idx 6), B near top (idx 1)
-        const targetRow = (player === PLAYER_A) ? 1 : ROWS - 2; // A targets near top (idx 1), B targets near bottom (idx 6)
+        // Define starting and target areas for each player
+        const startRows = (player === PLAYER_A) ? [ROWS - 2, ROWS - 1] : [0, 1];  // A: rows 6,7; B: rows 0,1
+        const targetRows = (player === PLAYER_A) ? [0, 1] : [ROWS - 2, ROWS - 1]; // A: rows 0,1; B: rows 6,7
 
         const visited = Array(ROWS).fill(null).map(() => Array(COLS).fill(false));
         const queue = []; // Queue for BFS: stores {row, col, path}
 
-        // Find starting pieces for the player in their designated 'start' row
-        for (let c = 0; c < COLS; c++) {
-            if (boardState[startRow] && boardState[startRow][c] && boardState[startRow][c].player === player) {
-                queue.push({
-                    row: startRow,
-                    col: c,
-                    path: [{ row: startRow, col: c }]
-                });
-                visited[startRow][c] = true;
+        // Find all pieces in the starting area and add them to the queue
+        for (const startRow of startRows) {
+            for (let c = 0; c < COLS; c++) {
+                if (boardState[startRow] && boardState[startRow][c] && boardState[startRow][c].player === player) {
+                    queue.push({
+                        row: startRow,
+                        col: c,
+                        path: [{ row: startRow, col: c }]
+                    });
+                    visited[startRow][c] = true;
+                }
             }
         }
 
@@ -1641,8 +1640,8 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
             const current = queue.shift();
             const { row, col, path } = current;
 
-            // Check if we reached the target row
-            if (row === targetRow) {
+            // Check if we reached any target row
+            if (targetRows.includes(row)) {
                 console.log(`Win detected for Player ${player}. Path:`, path);
                 return { win: true, path: path }; // Found a path
             }
@@ -2259,7 +2258,7 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         mctsResetBtn.addEventListener('click', () => {
             MCTS_ENABLED = true;
             MCTS_SIMULATIONS = 50;
-            MCTS_TEMPERATURE = 0.01;
+            MCTS_TEMPERATURE = 0.1; // Better default for gameplay
             MCTS_VERBOSE = false; // Reset verbose to disabled by default
             updateMCTSSettings();
             updateMCTSUI(); // Update all UI elements including sliders
@@ -2298,52 +2297,53 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
     updateMCTSButtonImage();
 
     // --- Debugging and Analysis Tools ---
-    window.DEBUG = DEBUG;
-    window.tfModel = tfModel;
-    window.AI_DIFFICULTY = AI_DIFFICULTY;
-    window.AI_DEPTH = AI_DEPTH;
-    window.MCTS_ENABLED = MCTS_ENABLED;
-    window.MCTS_SIMULATIONS = MCTS_SIMULATIONS;
-    window.MCTS_TEMPERATURE = MCTS_TEMPERATURE;
-    window.MCTS_PUCT_CONSTANT = MCTS_PUCT_CONSTANT;
-    window.MCTS_DIRICHLET_ALPHA = MCTS_DIRICHLET_ALPHA;
-    window.MCTS_DIRICHLET_EPSILON = MCTS_DIRICHLET_EPSILON;
-    window.MCTS_VERBOSE = MCTS_VERBOSE;
-    window.moveHistory = moveHistory;
-    window.currentPlayer = currentPlayer;
-    window.board = board;
-    window.selectPiece = selectPiece;
-    window.deselectPiece = deselectPiece;
-    window.makeMove = makeMove;
-    window.triggerAIMove = triggerAIMove;
-    window.findBestAIMove = findBestAIMove;
-    window.neuralNetworkPredict = neuralNetworkPredict;
-    window.allowsOpponentWin = allowsOpponentWin;
-    window.checkWinCondition = checkWinCondition;
-    window.serializeBoardState = serializeBoardState;
-    window.convertBoardToBinaryJS = convertBoardToBinaryJS;
-    window.cloneBoard = cloneBoard;
-    window.boardToKey = boardToKey;
-    window.parseStartingPosition = parseStartingPosition;
-    window.initGame = initGame;
-    window.renderBoard = renderBoard;
-    window.updateScoreDisplay = updateScoreDisplay; window.displayMoveHistory = displayMoveHistory;
-    window.navigateHistory = navigateHistory;
-    window.toggleMCTS = toggleMCTS;
-    window.setMCTSSimulations = setMCTSSimulations;
-    window.setMCTSTemperature = setMCTSTemperature;
-    window.analyzeHistoricalMove = analyzeHistoricalMove;
-    window.setupTestPosition = setupTestPosition; window.startSelfPlay = startSelfPlay;
-    window.stopSelfPlay = stopSelfPlay;
-
-    // Convenience toggle function
-    window.selfPlay = function () {
-        if (isInSelfPlay) {
-            stopSelfPlay();
-        } else {
-            startSelfPlay();
-        }
-    };
+    window.DEBUG = DEBUG;    // DISABLED: Legacy script.js global variables - using modular system instead
+    // window.tfModel = tfModel;
+    // window.AI_DIFFICULTY = AI_DIFFICULTY;
+    // window.AI_DEPTH = AI_DEPTH;
+    // window.MCTS_ENABLED = MCTS_ENABLED;
+    // window.MCTS_SIMULATIONS = MCTS_SIMULATIONS;
+    // window.MCTS_TEMPERATURE = MCTS_TEMPERATURE;
+    // window.MCTS_PUCT_CONSTANT = MCTS_PUCT_CONSTANT;
+    // window.MCTS_DIRICHLET_ALPHA = MCTS_DIRICHLET_ALPHA;
+    // window.MCTS_DIRICHLET_EPSILON = MCTS_DIRICHLET_EPSILON;
+    // window.MCTS_VERBOSE = MCTS_VERBOSE;
+    // DISABLED: Legacy script.js global functions - using modular system instead
+    // window.moveHistory = moveHistory;
+    // window.currentPlayer = currentPlayer;
+    // window.board = board;
+    // window.selectPiece = selectPiece;
+    // window.deselectPiece = deselectPiece;
+    // window.makeMove = makeMove;
+    // window.triggerAIMove = triggerAIMove;
+    // window.findBestAIMove = findBestAIMove;
+    // window.neuralNetworkPredict = neuralNetworkPredict;
+    // window.allowsOpponentWin = allowsOpponentWin;
+    // window.checkWinCondition = checkWinCondition;
+    // window.serializeBoardState = serializeBoardState;
+    // window.convertBoardToBinaryJS = convertBoardToBinaryJS;
+    // window.cloneBoard = cloneBoard;
+    // window.boardToKey = boardToKey;
+    // window.parseStartingPosition = parseStartingPosition;
+    // window.initGame = initGame;
+    // window.renderBoard = renderBoard;
+    // window.updateScoreDisplay = updateScoreDisplay;
+    // window.displayMoveHistory = displayMoveHistory;
+    // window.navigateHistory = navigateHistory;
+    // window.toggleMCTS = toggleMCTS;
+    // window.setMCTSSimulations = setMCTSSimulations;
+    // window.setMCTSTemperature = setMCTSTemperature;
+    // window.analyzeHistoricalMove = analyzeHistoricalMove;
+    // window.setupTestPosition = setupTestPosition;
+    // window.startSelfPlay = startSelfPlay;
+    // window.stopSelfPlay = stopSelfPlay;    // Convenience toggle function - DISABLED
+    // window.selfPlay = function () {
+    //     if (isInSelfPlay) {
+    //         stopSelfPlay();
+    //     } else {
+    //         startSelfPlay();
+    //     }
+    // };
 
     // --- Self-Play Functions ---
     function startSelfPlay() {
@@ -2401,11 +2401,9 @@ document.addEventListener('DOMContentLoaded', async () => {    // Try best avail
         } catch (error) {
             console.error("Error during self-play move:", error); stopSelfPlay();
         }
-    }
-
-    // Console commands info
-    console.log("🎮 Self-play console commands available:");
-    console.log("  startSelfPlay() - Start AI vs AI self-play");
-    console.log("  stopSelfPlay()  - Stop AI vs AI self-play");
-    console.log("  selfPlay()      - Toggle self-play on/off");
+    }    // Console commands info - DISABLED (using modular system)
+    // console.log("🎮 Self-play console commands available:");
+    // console.log("  startSelfPlay() - Start AI vs AI self-play");
+    // console.log("  stopSelfPlay()  - Stop AI vs AI self-play");
+    // console.log("  selfPlay()      - Toggle self-play on/off");
 });

@@ -167,22 +167,25 @@ class SwitcharooGameLogic {
      * @returns {Object} - {win: boolean, path: Array}
      */
     checkWinConditionForPlayer(boardState, player) {
-        const startRow = (player === this.PLAYER_A) ? this.ROWS - 2 : 1;
-        const targetRow = (player === this.PLAYER_A) ? 1 : this.ROWS - 2;
+        // Define starting and target areas for each player
+        const startRows = (player === this.PLAYER_A) ? [this.ROWS - 2, this.ROWS - 1] : [0, 1];  // A: rows 6,7; B: rows 0,1
+        const targetRows = (player === this.PLAYER_A) ? [0, 1] : [this.ROWS - 2, this.ROWS - 1]; // A: rows 0,1; B: rows 6,7
 
         const visited = Array(this.ROWS).fill(null).map(() => Array(this.COLS).fill(false));
         const queue = [];
 
-        // Find starting pieces
-        for (let c = 0; c < this.COLS; c++) {
-            if (boardState[startRow] && boardState[startRow][c] && 
-                boardState[startRow][c].player === player) {
-                queue.push({
-                    row: startRow,
-                    col: c,
-                    path: [{ row: startRow, col: c }]
-                });
-                visited[startRow][c] = true;
+        // Find all pieces in the starting area and add them to the queue
+        for (const startRow of startRows) {
+            for (let c = 0; c < this.COLS; c++) {
+                if (boardState[startRow] && boardState[startRow][c] && 
+                    boardState[startRow][c].player === player) {
+                    queue.push({
+                        row: startRow,
+                        col: c,
+                        path: [{ row: startRow, col: c }]
+                    });
+                    visited[startRow][c] = true;
+                }
             }
         }
 
@@ -190,7 +193,8 @@ class SwitcharooGameLogic {
             const current = queue.shift();
             const { row, col, path } = current;
 
-            if (row === targetRow) {
+            // Check if we reached any target row
+            if (targetRows.includes(row)) {
                 return { win: true, path: path };
             }
 

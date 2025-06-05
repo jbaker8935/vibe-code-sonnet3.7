@@ -24,8 +24,7 @@
                 <img src="images/happy-outline.svg" alt="AI">
             </button>
             <button id="start-btn" title="Starting Board" type="button">
-                <img src="images/location-outline.svg" alt="Starting Board">
-            </button>            <button id="history-btn" title="Move History" disabled type="button">
+                <img src="images/location-outline.svg" alt="Starting Board">            </button>            <button id="history-btn" title="Move History" disabled type="button">
                 <img src="images/list-circle-outline.svg" alt="History">
             </button>
             <div id="score-display">
@@ -117,7 +116,7 @@
                     <select id="ai-difficulty-select">
                         <option value="easy" selected>Easy</option>
                         <option value="hard1">Look-ahead 3</option>
-                        <option value="hard_ai">AI Agent</option>
+                        <option value="hard_ai">Neural Network</option>
                     </select>
                     <span class="help-text">Choose AI difficulty level</span>
                 </div>
@@ -133,10 +132,9 @@
                     <span id="mcts-simulations-value">50</span>
                     <span class="help-text">More simulations = stronger play but slower (AI Agent + MCTS only)</span>
                 </div>
-                
-                <div class="control-group mcts-only">                    <label for="mcts-temperature">Temperature:</label>
-                    <input type="range" id="mcts-temperature" min="0" max="2" value="0.01" step="0.01">
-                    <span id="mcts-temperature-value">0.01</span>
+                  <div class="control-group mcts-only">                    <label for="mcts-temperature">Temperature:</label>
+                    <input type="range" id="mcts-temperature" min="0" max="2" value="0.1" step="0.01">
+                    <span id="mcts-temperature-value">0.10</span>
                     <span class="help-text">Lower = more deterministic, Higher = more exploration (AI Agent + MCTS only)</span>
                 </div>
                   <div class="control-group mcts-only">

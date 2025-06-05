@@ -48,18 +48,32 @@ export async function neuralNetworkPredict(tfModel, nnInput) {
     try {
         inputTensor = tf.tensor2d([nnInput]);
         const inputNodeName = tfModel.inputs[0].name;
-        console.log("Running neural network prediction with input:", nnInput);
-        outputTensors = await tfModel.executeAsync({[inputNodeName]: inputTensor});
+        outputTensors = tfModel.execute({[inputNodeName]: inputTensor});
         if (outputTensors.length < 2) throw new Error(`Expected 2 output tensors (value, policy), got ${outputTensors.length}`);
-        const valueOutputTensor = outputTensors[0];
-        const policyOutputTensor = outputTensors[1];
-        const valueData = await valueOutputTensor.array();
-        const policyData = await policyOutputTensor.array();
+        
+        // Correct assignment based on model.json and runtime tensor shapes:
+        // tfModel.outputs[0] is "Identity_1" (value, shape [?, 1]) -> maps to outputTensors[0]
+        // tfModel.outputs[1] is "Identity" (policy, shape [?, 256]) -> maps to outputTensors[1]
+        // TensorFlow.js returns tensors in the order they are defined in the model's signature.
+        const valueOutputTensor = outputTensors[0];  // Value is first (Identity_1)
+        const policyOutputTensor = outputTensors[1]; // Policy is second (Identity)
+        
+        // Validate shapes
+        const policyShape = policyOutputTensor.shape;
+        const valueShape = valueOutputTensor.shape;
+        if (policyShape[1] !== 256) {
+            console.error(`ERROR: Policy tensor has wrong shape [${policyShape}], expected [1, 256]`);
+        }
+        if (valueShape[1] !== 1) {
+            console.error(`ERROR: Value tensor has wrong shape [${valueShape}], expected [1, 1]`);
+        }
+        
+        const valueData = valueOutputTensor.arraySync();
+        const policyData = policyOutputTensor.arraySync();
         const value = valueData[0][0];
         const policy = policyData[0];
         inputTensor.dispose();
         outputTensors.forEach(tensor => tensor.dispose());
-        console.log("Neural network prediction result:", { value, policy });
         return { value, policy };
     } catch (error) {
         if (inputTensor && !inputTensor.isDisposed) inputTensor.dispose();
