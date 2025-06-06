@@ -57,7 +57,7 @@ let MCTS_TEMPERATURE = 0.1; // Better default for gameplay (was 0.01)
 let MCTS_PUCT_CONSTANT = 1.0;
 let MCTS_DIRICHLET_ALPHA = 0.3;
 let MCTS_DIRICHLET_EPSILON = 0.25;
-let MCTS_VERBOSE = false;
+let MCTS_VERBOSE = false; // Can be enabled via browser console: window.MCTS_VERBOSE = true
 let mctsSearch = null;
 let gameLogic = null;
 const transpositionTable = new Map();
@@ -558,7 +558,6 @@ function setupMCTSSliders() {
     const mctsTemperatureSlider = document.getElementById('mcts-temperature');
     const mctsTemperatureValue = document.getElementById('mcts-temperature-value');
     const mctsEnabledCheckbox = document.getElementById('mcts-enabled');
-    const mctsVerboseCheckbox = document.getElementById('mcts-verbose');
     const mctsResetBtn = document.getElementById('mcts-reset-defaults');
 
     // Simulations slider
@@ -603,16 +602,6 @@ function setupMCTSSliders() {
         });
     }
 
-    // Verbose logging checkbox
-    if (mctsVerboseCheckbox) {
-        mctsVerboseCheckbox.addEventListener('change', (e) => {
-            MCTS_VERBOSE = e.target.checked;
-            if (mctsSearch) {
-                mctsSearch.verbose = MCTS_VERBOSE;
-            }
-        });
-    }
-
     // Reset to defaults button
     if (mctsResetBtn) {
         mctsResetBtn.addEventListener('click', () => {
@@ -637,14 +626,12 @@ function updateMCTSUI() {
     const mctsSimulationsValue = document.getElementById('mcts-simulations-value');
     const mctsTemperatureSlider = document.getElementById('mcts-temperature');
     const mctsTemperatureValue = document.getElementById('mcts-temperature-value');
-    const mctsVerboseCheckbox = document.getElementById('mcts-verbose');
 
     if (mctsEnabledCheckbox) mctsEnabledCheckbox.checked = MCTS_ENABLED;
     if (mctsSimulationsSlider) mctsSimulationsSlider.value = MCTS_SIMULATIONS;
     if (mctsSimulationsValue) mctsSimulationsValue.textContent = MCTS_SIMULATIONS;
     if (mctsTemperatureSlider) mctsTemperatureSlider.value = MCTS_TEMPERATURE;
     if (mctsTemperatureValue) mctsTemperatureValue.textContent = MCTS_TEMPERATURE.toFixed(2);
-    if (mctsVerboseCheckbox) mctsVerboseCheckbox.checked = MCTS_VERBOSE;
 }
 
 // Initialize MCTS sliders when DOM is ready
