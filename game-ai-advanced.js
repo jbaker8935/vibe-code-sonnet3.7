@@ -546,6 +546,9 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
     if (aiDifficulty === 'hard1') {
         let bestMove = null;
         let bestScore = -Infinity;
+        let safeMoves = [];
+        let allMoves = [];
+        
         for (const move of possibleMoves) {
             const tempBoard = cloneBoard(boardState);
             const { start, end } = move;
@@ -563,23 +566,80 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
 
             // Evaluate the board state after the hypothetical move
             const score = evaluateBoardState(tempBoard, player);
+            
+            // Track all moves for fallback
+            allMoves.push({ move, score });
 
-            // Penalize moves that allow opponent to win immediately
-            if (allowsOpponentWin(tempBoard, player === PLAYER_A ? PLAYER_B : PLAYER_A, 1, 'easy')) {
-                continue; // Skip this move, it's not safe
+            // Check if move allows opponent to win immediately
+            const allowsWin = allowsOpponentWin(tempBoard, player === PLAYER_A ? PLAYER_B : PLAYER_A, 1, 'easy');
+            
+            if (!allowsWin) {
+                // Safe move - consider it for best move selection
+                safeMoves.push({ move, score });
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMove = move;
+                }
             }
+        }
 
-            if (score > bestScore) {
-                bestScore = score;
-                bestMove = move;
+        // If no safe moves exist, pick the best move from all available moves
+        if (safeMoves.length === 0 && allMoves.length > 0) {
+            if (analysisMode) {
+                console.log("Hard1 AI: No safe moves available, selecting best move from all options");
             }
+            allMoves.sort((a, b) => b.score - a.score);
+            bestMove = allMoves[0].move;
+            bestScore = allMoves[0].score;
         }
 
         if (bestMove && analysisMode) {
-            console.log(`Hard1 heuristic selected move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (score: ${bestScore})`);
+            console.log(`Hard1 heuristic selected move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (score: ${bestScore}, safe moves: ${safeMoves.length}/${allMoves.length})`);
         }
 
         return bestMove;
+    }
+
+    // For easy difficulty: simple random selection with basic safety checks
+    if (aiDifficulty === 'easy') {
+        // Filter out moves that allow immediate opponent win
+        let safeMoves = [];
+        const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
+        
+        for (const move of possibleMoves) {
+            const tempBoard = cloneBoard(boardState);
+            const { start, end } = move;
+            const movingPiece = tempBoard[start.row][start.col];
+            const targetPiece = tempBoard[end.row][end.col];
+
+            if (!targetPiece) {
+                tempBoard[end.row][end.col] = { ...movingPiece };
+                tempBoard[start.row][start.col] = null;
+                unmarkPlayerSwapped(player, tempBoard);
+            } else {
+                tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
+                tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
+            }
+
+            // Check if this move allows opponent to win immediately
+            if (!allowsOpponentWin(tempBoard, opponent, 1, 'easy')) {
+                safeMoves.push(move);
+            }
+        }
+
+        if (analysisMode) {
+            console.log(`Easy AI: Found ${safeMoves.length} safe moves out of ${possibleMoves.length} total moves`);
+        }
+
+        // Choose from safe moves if available, otherwise pick any move
+        const movesToChoose = safeMoves.length > 0 ? safeMoves : possibleMoves;
+        const selectedMove = movesToChoose[Math.floor(Math.random() * movesToChoose.length)];
+
+        if (selectedMove && analysisMode) {
+            console.log(`Easy AI selected move: ${selectedMove.start.row},${selectedMove.start.col} to ${selectedMove.end.row},${selectedMove.end.col}`);
+        }
+
+        return selectedMove;
     }
 
     return null;

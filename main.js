@@ -697,6 +697,7 @@ if (boardElement) {
             if (legalMoves.some(move => move.row === row && move.col === col)) {
                 // Make the move
                 const prevSelected = selectedPiece;
+                const playerWhoMoved = currentPlayer; // Capture the player making the move before switching
                 const boardBefore = cloneBoard(board);
                 board = makeMove(selectedPiece.row, selectedPiece.col, row, col, board, selectedPiece, legalMoves, currentPlayer);
                 recordMoveHistory(currentPlayer, selectedPiece, { row, col }, boardBefore, board);
@@ -746,7 +747,7 @@ if (boardElement) {
                     currentPlayer
                 });
                 updateScoreDisplay();
-                console.log(`Player ${currentPlayer} moved from (${prevSelected.row},${prevSelected.col}) to (${row},${col})`);
+                console.log(`Player ${playerWhoMoved} moved from (${prevSelected.row},${prevSelected.col}) to (${row},${col})`);
             } else if (row === selectedPiece.row && col === selectedPiece.col) {
                 // Deselect
                 selectedPiece = null;
@@ -895,6 +896,25 @@ async function triggerAIMove() {
         });
         updateScoreDisplay();
         console.log(`AI (Player B) moved from (${bestMove.start.row},${bestMove.start.col}) to (${bestMove.end.row},${bestMove.end.col})`);
+    } else {
+        // AI has no valid moves - switch turn back to human player
+        console.log("AI (Player B) has no valid moves. Switching turn to Player A.");
+        currentPlayer = switchPlayer(currentPlayer);
+        renderBoardWithWinPath({
+            board,
+            selectedPiece,
+            legalMoves,
+            gameOver,
+            winner,
+            winPath,
+            moveHistory,
+            currentHistoryIndex,
+            playerAScore,
+            playerBScore,
+            boardElement,
+            currentPlayer
+        });
+        updateScoreDisplay();
     }
 }
 
