@@ -36,15 +36,17 @@ function testBundle() {
         process.exit(1);
     }
     
-    // Check for essential constants
+    // Check for essential constants (handle both development and minified versions)
     const requiredConstants = [
-        'window.ROWS = 8',
-        'window.COLS = 4', 
-        'window.PLAYER_A',
-        'window.PLAYER_B'
+        { name: 'ROWS = 8', patterns: ['window.ROWS = 8', 'window.ROWS=8'] },
+        { name: 'COLS = 4', patterns: ['window.COLS = 4', 'window.COLS=4'] },
+        { name: 'PLAYER_A', patterns: ['window.PLAYER_A'] },
+        { name: 'PLAYER_B', patterns: ['window.PLAYER_B'] }
     ];
     
-    const missingConstants = requiredConstants.filter(constant => !bundleContent.includes(constant));
+    const missingConstants = requiredConstants.filter(constant => 
+        !constant.patterns.some(pattern => bundleContent.includes(pattern))
+    ).map(constant => constant.name);
     
     if (missingConstants.length > 0) {
         console.error('❌ Missing constants in bundle:', missingConstants);
