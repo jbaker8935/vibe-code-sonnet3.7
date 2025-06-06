@@ -1,0 +1,556 @@
+/* Basic Reset & Global Styles */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box; /* Keep this global rule */
+}
+
+body {
+    font-family: sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #f0f0f0;
+    padding: 10px; /* Add padding for smaller screens */
+}
+
+/* Game Container Layout */
+.game-container {
+    display: flex;
+    flex-direction: column; /* Default: mobile portrait */
+    align-items: center;
+    gap: 10px; /* Reduced from 20px */
+    width: 100%;
+    max-width: 900px; /* Limit max width on desktop */
+    padding: 10px;
+}
+
+#game-board {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    /* Make board size relative to viewport width/height */
+    width: min(85vw, 45vh); /* Reduced from 90vw, 50vh */
+    height: min(170vw, 90vh); /* Reduced from 180vw, 100vh */
+    max-width: 280px; /* Reduced from 300px */
+    max-height: 560px; /* Reduced from 600px */
+    border: 2px solid #333;
+    aspect-ratio: 4 / 8; /* 4 columns / 8 rows */
+    box-sizing: content-box; /* Changed from border-box to content-box */
+    position: relative;
+}
+
+.cell {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative; /* For piece positioning/highlights */
+    aspect-ratio: 1 / 1; /* Ensure cells are square */
+    /* box-sizing: border-box; */ /* Included in global '*' */
+}
+
+.cell.win-path {
+    background-color: rgba(255, 215, 0, 0.7) !important; /* Gold highlight with increased opacity */
+}
+
+.cell.win-path-second {
+    background-color: rgba(0, 191, 255, 0.7) !important; /* Blue highlight with increased opacity */
+}
+
+/* Ensure these have higher specificity than the checkerboard pattern */
+.cell.light.win-path,
+.cell.dark.win-path {
+    background-color: rgba(255, 215, 0, 0.7) !important;
+}
+
+.cell.light.win-path-second,
+.cell.dark.win-path-second {
+    background-color: rgba(0, 191, 255, 0.7) !important;
+}
+
+/* Checkerboard Pattern */
+.cell.light { background-color: #e0e0e0; }
+.cell.dark { background-color: #a0a0a0; }
+
+/* Pieces */
+.cell img.piece {
+    width: 85%;
+    height: 85%;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    cursor: pointer;
+    border-radius: 50%;
+    transition: transform 0.1s ease-out, box-shadow 0.1s ease-out;
+}
+
+.cell.selected img.piece {
+    transform: scale(1.1);
+    box-shadow: 0 0 10px 3px gold;
+}
+
+/* Highlights */
+.cell.legal-move::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 30%;
+    height: 30%;
+    background-color: rgba(0, 255, 0, 0.5);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none; /* Allow clicks through the highlight */
+}
+.cell.legal-move.swap-target::after {
+     background-color: rgba(255, 165, 0, 0.6); /* Orange for swap */
+}
+
+.cell.win-path {
+    background-color: rgba(255, 215, 0, 0.5) !important; /* Gold highlight */
+}
+
+/* Controls */
+#controls {
+    display: flex;
+    flex-direction: row; /* Default: mobile portrait */
+    justify-content: center;
+    gap: 10px; /* Reduced from 15px */
+    padding: 8px; /* Reduced from 10px */
+    background-color: #d0d0d0;
+    border-radius: 8px;
+    width: 85%; /* Reduced from 90% */
+    max-width: 280px; /* Match board width roughly */
+    align-items: center; /* Added to align items vertically */
+}
+
+#controls button {
+    width: 36px; /* Reduced from 40px */
+    height: 36px; /* Reduced from 40px to maintain 1:1 ratio */
+    background: #f8f8f8;
+    border: 1px solid #ccc;
+    border-radius: 50%;
+    padding: 6px; /* Reduced from 8px */
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: background-color 0.2s ease;
+}
+
+#controls button:hover:not(:disabled) {
+    background-color: #e8e8e8;
+}
+
+#controls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#controls button img {
+    width: 22px; /* Reduced from 24px */
+    height: 22px; /* Reduced from 24px */
+    display: block;
+}
+
+.rules-icon {
+    height: 1em;
+    width: 1em;
+}
+
+/* Overlays */
+.overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    display: none; /* Hidden by default */
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.overlay.active {
+    display: flex;
+}
+
+.overlay-content {
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 8px;
+    position: relative;
+    max-width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.overlay-content h2 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    text-align: center;
+    color: #333;
+}
+
+.overlay-content ul {
+    list-style-position: inside;
+    padding-left: 0;
+}
+.overlay-content li {
+    margin-bottom: 8px;
+    color: #555;
+}
+
+.close-overlay-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 5px;
+}
+
+.close-overlay-btn img {
+    width: 24px;
+    height: 24px;
+    display: block;
+}
+
+/* History List */
+#history-list {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+#history-list div {
+    padding: 8px 12px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+#history-list div:hover {
+    background-color: #f0f0f0;
+}
+
+#history-list div:last-child {
+    border-bottom: none;
+}
+
+.history-move {
+    cursor: pointer;
+    padding: 5px;
+    transition: background-color 0.2s;
+}
+
+.history-move:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.history-move.selected-move {
+    background-color: rgba(255, 255, 255, 0.2);
+    font-weight: bold;
+}
+
+/* Win Overlay Specific */
+#win-overlay .overlay-content {
+    text-align: center;
+}
+
+#ai-spinner-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: auto;
+    height: auto;
+    align-items: center;
+    justify-content: center;
+    padding-top: 0;
+    color: white;
+    background: transparent;
+    pointer-events: none;
+    z-index: 1000;
+}
+
+#ai-spinner-overlay .spinner-content {
+    background: rgba(0, 0, 0, 0.8);
+    padding: 15px;
+    border-radius: 8px;
+    border: 2px solid white;
+}
+
+.spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid rgba(0, 0, 0, 0.1);
+    border-top: 3px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.spinner-text {
+    font-size: 0.9em;
+    color: #ffffff;
+}
+
+/* Score Display */
+#score-display {
+    display: flex;
+    flex-direction: column;  
+    gap: 5px;
+    font-size: 0.9em;
+    min-width: 36px; /* Reduced from 40px */
+    justify-content: center;
+    height: 36px; /* Match new button height */
+}
+
+.score-item {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.2; /* Adjusted for better vertical spacing */
+    height: 18px; /* Half of new parent height */
+}
+
+.move-counter {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+#game-board {
+    position: relative; /* Ensure move counter is positioned relative to board */
+}
+
+.score-display {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    font-size: 14px;
+}
+
+/* Jam Link */
+.jam-link {
+    font-family: 'system-ui', sans-serif;
+    position: fixed;
+    bottom: -1px;
+    right: -1px;
+    padding: 7px;
+    font-size: 14px;
+    font-weight: bold;
+    background: #fff;
+    color: #000;
+    text-decoration: none;
+    border-top-left-radius: 12px;
+    z-index: 10000;
+    border: 1px solid #fff;
+}
+
+.github-link {
+    font-family: 'system-ui', sans-serif;
+    position: fixed;
+    bottom: -1px;
+    left: -1px;
+    padding: 7px;
+    font-size: 14px;
+    font-weight: bold;
+    background: #fff;
+    color: #000;
+    text-decoration: none;
+    border-top-right-radius: 12px;
+    z-index: 10000;
+    border: 1px solid #fff;
+}
+
+/* Adjust link position in portrait mode for phones */
+@media (max-width: 600px) {
+    .jam-link {
+        bottom: 0px; /* Adjust this value based on your controls height */
+    }
+    .github-link {
+        bottom: 0px; /* Adjust this value based on your controls height */
+    }    
+}
+
+/* --- Responsiveness --- */
+
+/* Mobile Landscape & Desktop/Widescreen */
+@media (min-width: 600px) and (min-aspect-ratio: 1/1), (min-width: 768px) {
+    .game-container {
+        flex-direction: row; /* Side-by-side */
+        align-items: flex-start;
+        justify-content: center;
+    }
+
+    #game-board {
+        /* Adjust size constraints if needed */
+         width: min(40vw, 350px);
+         height: min(80vw, 700px);
+         max-width: 350px;
+         max-height: 700px;
+    }
+
+    #controls {
+        flex-direction: column; /* Vertical buttons */
+        width: auto; /* Fit content */
+        max-width: none;
+        padding: 15px 10px;
+    }
+}
+
+/* Larger Screens - More spacing if needed */
+@media (min-width: 1024px) {
+    .game-container {
+        gap: 30px;
+    }
+     #controls {
+        gap: 20px;
+    }
+}
+
+/* Difficulty Options in Info Overlay */
+.difficulty-options {
+    margin-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.difficulty-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #555;
+}
+
+.difficulty-item img {
+    width: 20px;
+    height: 20px;
+}
+
+/* MCTS Configuration Overlay */
+.mcts-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-width: 300px;
+}
+
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.control-group label {
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 4px;
+}
+
+.control-group input[type="range"] {
+    width: 100%;
+    margin: 4px 0;
+}
+
+.control-group input[type="checkbox"] {
+    margin-right: 8px;
+    transform: scale(1.2);
+}
+
+.control-group span:not(.help-text) {
+    font-weight: bold;
+    color: #2c3e50;
+    background: #ecf0f1;
+    padding: 2px 8px;
+    border-radius: 4px;
+    display: inline-block;
+    min-width: 40px;
+    text-align: center;
+}
+
+.help-text {
+    font-size: 0.85em;
+    color: #666;
+    font-style: italic;
+    line-height: 1.3;
+}
+
+.control-group button {
+    padding: 10px 20px;
+    background: #3498db;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: background-color 0.2s;
+}
+
+.control-group button:hover {
+    background: #2980b9;
+}
+
+.control-group button:active {
+    background: #21618c;
+}
+
+.control-group select {
+    padding: 8px 12px;
+    border: 2px solid #bdc3c7;
+    border-radius: 6px;
+    background: white;
+    font-size: 14px;
+    color: #2c3e50;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.control-group select:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+.control-group select:hover {
+    border-color: #7f8c8d;
+}
+
+/* MCTS-only controls - shown/hidden based on AI difficulty */
+.mcts-only {
+    transition: opacity 0.3s ease, max-height 0.3s ease;
+    overflow: hidden;
+}
+
+.mcts-only.disabled {
+    opacity: 0.5;
+    max-height: 0;
+    pointer-events: none;
+    margin: 0;
+    padding: 0;
+}
