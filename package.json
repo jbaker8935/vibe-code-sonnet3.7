@@ -1,0 +1,27 @@
+{
+  "name": "switcharoo-game",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Switcharoo - A strategic board game with AI",
+  "scripts": {
+    "build": "node deploy.js",
+    "build:prod": "node deploy.js --production",
+    "test": "node --experimental-modules test-deployment.js",
+    "serve": "cd dist && python -m http.server 8000",
+    "dev": "python -m http.server 8000",
+    "deploy": "npm run build:prod && npm test",
+    "deploy:pages": "npm run build:prod && gh-pages -d dist"
+  },
+  "keywords": [
+    "game",
+    "ai",
+    "board-game",
+    "tensorflow"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "gh-pages": "^6.3.0",
+    "terser": "^5.41.0"
+  }
+}
