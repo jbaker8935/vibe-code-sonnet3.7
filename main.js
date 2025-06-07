@@ -60,6 +60,9 @@ let MCTS_DIRICHLET_EPSILON = 0.25;
 let MCTS_VERBOSE = false; // Can be enabled via browser console: window.MCTS_VERBOSE = true
 let mctsSearch = null;
 let gameLogic = null;
+
+window.analysisMode = ANALYSIS_MODE; // For compatibility with game_logic_adapter.js
+
 const transpositionTable = new Map();
 
 // DOM references
@@ -831,7 +834,7 @@ async function triggerAIMove() {
         PLAYER_B, 
         AI_DIFFICULTY, 
         AI_DEPTH, 
-        false, // analysisMode
+        window.analysisMode, // analysisMode
         MCTS_ENABLED, 
         MCTS_SIMULATIONS, 
         tfModel, 
