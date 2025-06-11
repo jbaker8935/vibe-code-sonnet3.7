@@ -121,7 +121,7 @@ class SwitcharooGameLogic {
             // Move to empty cell
             newBoard[end.row][end.col] = movingPiece;
             newBoard[start.row][start.col] = null;
-            this.unmarkPlayerSwapped(newBoard, player);
+            this.unmarkSwapped(player);
         } else {
             // Swap move
             if (targetPiece.player === player) {
@@ -364,7 +364,7 @@ class SwitcharooGameLogic {
      * @param {Array} boardState - 2D board array (modified in place)
      * @param {string} player - Player whose pieces to unmark
      */
-    unmarkPlayerSwapped(boardState, player) {
+    unmarkSwapped(player) {
         for (let r = 0; r < this.ROWS; r++) {
             for (let c = 0; c < this.COLS; c++) {
                 if (boardState[r][c] && 

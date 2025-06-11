@@ -9,7 +9,7 @@ import {
     renderBoard, getPieceImage
 } from './game-render.js';
 import {
-    selectPiece, deselectPiece, calculateLegalMoves, makeMove, unmarkPlayerSwapped, switchPlayer, checkWinCondition
+    selectPiece, deselectPiece, calculateLegalMoves, makeMove, unmarkSwapped, switchPlayer, checkWinCondition
 } from './game-logic.js';
 import {
     boardToNNInput, neuralNetworkPredict
@@ -507,6 +507,7 @@ startBtn.addEventListener('click', () => {
     startingPositionIndex = (startingPositionIndex + 1) % initialPosition.length;
     initGame();
 });
+
 overlayCloseButtons.forEach(button => {
     button.addEventListener('click', () => {
         const overlayId = button.getAttribute('data-overlay');
@@ -992,7 +993,7 @@ window.SwitcharooGlobals = {
     deselectPiece,
     calculateLegalMoves,
     makeMove,
-    unmarkPlayerSwapped,
+    unmarkSwapped,
     switchPlayer,
     checkWinCondition,
     boardToNNInput,

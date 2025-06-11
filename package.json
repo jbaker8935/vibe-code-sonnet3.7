@@ -23,5 +23,9 @@
   "devDependencies": {
     "gh-pages": "^6.3.0",
     "terser": "^5.41.0"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-node": "^4.22.0",
+    "js-yaml": "^4.1.0"
   }
 }

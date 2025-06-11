@@ -54,7 +54,7 @@ export function makeMove(startRow, startCol, endRow, endCol, board, selectedPiec
     if (targetPiece === null) {
         board[endRow][endCol] = movingPiece;
         board[startRow][startCol] = null;
-        unmarkPlayerSwapped(currentPlayer, board);
+        unmarkSwapped(board);
     } else {
         board[endRow][endCol] = { ...movingPiece, state: SWAPPED };
         board[startRow][startCol] = { ...targetPiece, state: SWAPPED };
@@ -62,7 +62,7 @@ export function makeMove(startRow, startCol, endRow, endCol, board, selectedPiec
     return board;
 }
 
-export function unmarkPlayerSwapped(player, boardState) {
+export function unmarkSwapped(boardState) {
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
             if (boardState[r][c] && boardState[r][c].state === SWAPPED) {
@@ -78,51 +78,56 @@ export function switchPlayer(currentPlayer) {
     return nextPlayer;
 }
 
-export function checkWinCondition(board, player) {
-    // Define starting and target areas for each player
-    const startRows = (player === PLAYER_A) ? [ROWS - 2, ROWS - 1] : [0, 1];  // A: rows 6,7; B: rows 0,1
-    const targetRows = (player === PLAYER_A) ? [0, 1] : [ROWS - 2, ROWS - 1]; // A: rows 0,1; B: rows 6,7
-    
-    const visited = Array(ROWS).fill(null).map(() => Array(COLS).fill(false));
-    const queue = [];
-    
-    // Find all pieces in the starting area and add them to the queue
-    for (const startRow of startRows) {
-        for (let c = 0; c < COLS; c++) {
-            if (board[startRow] && board[startRow][c] && board[startRow][c].player === player) {
-                queue.push({ row: startRow, col: c, path: [{ row: startRow, col: c }] });
-                visited[startRow][c] = true;
-            }
-        }
-    }
-    
-    while (queue.length > 0) {
-        const current = queue.shift();
-        const { row, col, path } = current;
-        
-        // Check if we reached any target row
-        if (targetRows.includes(row)) {
-            return { win: true, path };
-        }
-        
-        // Explore neighbors
-        for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) {
-                if (dr === 0 && dc === 0) continue;
-                const nr = row + dr;
-                const nc = col + dc;
-                if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS &&
-                    !visited[nr][nc] &&
-                    board[nr] && board[nr][nc] && board[nr][nc].player === player) {
-                    visited[nr][nc] = true;
-                    const newPath = [...path, { row: nr, col: nc }];
-                    queue.push({ row: nr, col: nc, path: newPath });
-                }
-            }
-        }
-    }
-    return { win: false, path: [] };
-}
+export function checkWinCondition(boardState, player) {
+         // REVERSED ORIENTATION: Define start/target based on player and new orientation
+         const startRow = (player === PLAYER_A) ? ROWS - 2 : 1; // A starts near bottom (idx 6), B near top (idx 1)
+         const targetRow = (player === PLAYER_A) ? 1 : ROWS - 2; // A targets near top (idx 1), B targets near bottom (idx 6)
+
+         const visited = Array(ROWS).fill(null).map(() => Array(COLS).fill(false));
+         const queue = []; // Queue for BFS: stores {row, col, path}
+
+         // Find starting pieces for the player in their designated 'start' row
+         for (let c = 0; c < COLS; c++) {
+             if (boardState[startRow] && boardState[startRow][c] && boardState[startRow][c].player === player) {
+                 queue.push({ 
+                     row: startRow, 
+                     col: c, 
+                     path: [{ row: startRow, col: c }] 
+                 });
+                 visited[startRow][c] = true;
+             }
+         }
+
+         while (queue.length > 0) {
+             const current = queue.shift();
+             const { row, col, path } = current;
+
+             // Check if we reached the target row - IMPORTANT: Return the complete path!
+             if (row === targetRow) {
+                 return { win: true, path: path }; // Return the complete winning path
+             }
+
+             // Explore neighbors
+             for (let dr = -1; dr <= 1; dr++) {
+                 for (let dc = -1; dc <= 1; dc++) {
+                     if (dr === 0 && dc === 0) continue;
+                     const nr = row + dr;
+                     const nc = col + dc;
+
+                     // Check bounds, if visited, and if it's the player's piece
+                     if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS &&
+                         !visited[nr][nc] &&
+                         boardState[nr] && boardState[nr][nc] && boardState[nr][nc].player === player)
+                     {
+                         visited[nr][nc] = true;
+                         queue.push({ row: nr, col: nc, path: [...path, { row: nr, col: nc }] }); // Include complete path to current position
+                     }
+                 }
+             }
+         }
+
+         return { win: false, path: [] };
+     }
 
 // Export all logic functions needed by main.js and AI
 

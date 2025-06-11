@@ -19,16 +19,19 @@ import {
 } from './game-ai-advanced.js';
 
 // Test board position string (uppercase = normal, lowercase = swapped)
-// This is the position where AI incorrectly chooses move (1,1) to (1,2)
 const TEST_POSITION = `
-....
-.BA.
-.B.B
-BAaB
-AAbB
-A..A
-B.A.
+A..B
+...B
+AAB.
+A..B
+..BB
+A.BB
+AAA.
 ....`.trim();
+
+const TEST_MOVE = { start: { row: 2, col: 1 }, end: { row: 2, col: 2 } };
+
+const CURRENT_PLAYER = PLAYER_A; // Player B is the one making the move
 
 export async function runBoardPositionTest() {
     console.log("=== Running Board Position Test ===");
@@ -71,11 +74,11 @@ export async function runBoardPositionTest() {
         return false;
     }
     
-    // Test the problematic move: (1,1) to (2,1)
-    console.log("\n=== Testing Problematic Move: (1,1) to (2,1) ===");
+    // Test the problematic move
+    console.log(`\n=== Testing Problematic Move: ${TEST_MOVE} ===`);
     const problematicBoard = testProblematicMove(testBoard);
     
-    // Test the better move: (0,3) to (1,4) - but this might be out of bounds
+    // Test the better moves
     // Let me check what moves are actually available
     console.log("\n=== Testing Better Alternative Moves ===");
     await testBetterMoves(testBoard);
@@ -90,24 +93,37 @@ export async function runBoardPositionTest() {
 function testProblematicMove(originalBoard) {
     const testBoard = cloneBoard(originalBoard);
     
-    // Check if the move (1,1) to (1,2) is even legal
-    const piece = testBoard[1][1];
+    // Check if the move  is even legal
+    const piece = testBoard[TEST_MOVE.start.row][TEST_MOVE.start.col];
     if (!piece) {
-        console.log("No piece at (1,1)");
+        console.log("No piece at start");
+        return null;
+    }
+
+    if (piece.player !== CURRENT_PLAYER) {
+        console.log(`Piece at start belongs to Player ${piece.player}, not current player ${CURRENT_PLAYER}`);
+        return null;
+    }
+    if (TEST_MOVE.end.row < 0 || TEST_MOVE.end.row >= ROWS || TEST_MOVE.end.col < 0 || TEST_MOVE.end.col >= COLS) {
+        console.log("Target position is out of bounds");
+        return null;
+    }
+    if (testBoard[TEST_MOVE.end.row][TEST_MOVE.end.col] && testBoard[TEST_MOVE.end.row][TEST_MOVE.end.col].player === piece.player) {
+        console.log("Target position already occupied by own piece");
         return null;
     }
     
-    console.log(`Piece at (1,1): Player ${piece.player}, State: ${piece.state}`);
+    console.log(`Piece at start: Player ${piece.player}, State: ${piece.state}`);
     
-    // Check target position (1,2)
-    const targetPiece = testBoard[1][2];
-    console.log(`Target at (1,2): ${targetPiece ? `Player ${targetPiece.player}, State: ${targetPiece.state}` : 'Empty'}`);
+    // Check target position
+    const targetPiece = testBoard[TEST_MOVE.end.row][TEST_MOVE.end.col];
+    console.log(`Target at end: ${targetPiece ? `Player ${targetPiece.player}, State: ${targetPiece.state}` : 'Empty'}`);
     
-    // Apply the move (1,1) to (1,2) - this should be a swap move
+    // Apply the move 
     if (!targetPiece) {
         // Move to empty cell
-        testBoard[1][2] = { ...piece };
-        testBoard[1][1] = null;
+        testBoard[TEST_MOVE.end.row][TEST_MOVE.end.col] = { ...piece };
+        testBoard[TEST_MOVE.start.row][TEST_MOVE.start.col] = null;
         // Unmark all swapped pieces (simplified)
         for (let r = 0; r < ROWS; r++) {
             for (let c = 0; c < COLS; c++) {
@@ -118,115 +134,25 @@ function testProblematicMove(originalBoard) {
         }
     } else {
         // Swap move
-        testBoard[1][2] = { ...piece, state: SWAPPED };
-        testBoard[1][1] = { ...targetPiece, state: SWAPPED };
+        testBoard[TEST_MOVE.end.row][TEST_MOVE.end.col] = { ...piece, state: SWAPPED };
+        testBoard[TEST_MOVE.start.row][TEST_MOVE.start.col] = { ...targetPiece, state: SWAPPED };
     }
     
-    console.log("Board after problematic move (1,1) to (1,2):");
+    console.log(`Board after problematic move ${TEST_MOVE}:`);
     logBoardState(testBoard);
     
-    // Check if Player A can now win in one move
-    const playerACanWin = canWinInOneMove(testBoard, PLAYER_A);
-    console.log(`After move - Player A can win in one move: ${playerACanWin.canWin}`);
-    if (playerACanWin.canWin) {
-        console.log("Player A winning move:", playerACanWin.winningMove);
-        console.log("Win condition details:", playerACanWin.winResult);
-        console.log("*** CONFIRMED: This move allows Player A to win in one move! ***");
+    // Check if opponent can now win in one move
+    const opponent = CURRENT_PLAYER === PLAYER_A ? PLAYER_B : PLAYER_A;
+    const opponentCanWin = canWinInOneMove(testBoard, opponent);
+    console.log(`After move - Player ${opponent} can win in one move: ${opponentCanWin.canWin}`);
+    if (opponentCanWin.canWin) {
+        console.log("Opponent winning move:", opponentCanWin.winningMove);
+        console.log("Win condition details:", opponentCanWin.winResult);
+        console.log("*** CONFIRMED: This move allows opponent to win in one move! ***");
         return testBoard;
     }
     
-    // ENHANCED: Check if this leads to a forced loss sequence
-    console.log("\n--- Checking for forced loss sequences ---");
-    
-    // Specifically test if A can play (3,1) to (2,1) to create a forced win position
-    const testBoardAfterA = cloneBoard(testBoard);
-    const aPiece = testBoardAfterA[3][1]; // A piece at (3,1)
-    if (aPiece && aPiece.player === PLAYER_A) {
-        console.log("Testing A's response move: (3,1) to (2,1)");
-        
-        // Apply A's move (3,1) to (2,1)
-        const targetAtMove = testBoardAfterA[2][1];
-        if (!targetAtMove) {
-            testBoardAfterA[2][1] = { ...aPiece };
-            testBoardAfterA[3][1] = null;
-            // Unmark swapped pieces
-            for (let r = 0; r < ROWS; r++) {
-                for (let c = 0; c < COLS; c++) {
-                    if (testBoardAfterA[r][c] && testBoardAfterA[r][c].state === SWAPPED) {
-                        testBoardAfterA[r][c].state = NORMAL;
-                    }
-                }
-            }
-        } else {
-            testBoardAfterA[2][1] = { ...aPiece, state: SWAPPED };
-            testBoardAfterA[3][1] = { ...targetAtMove, state: SWAPPED };
-        }
-        
-        console.log("Board after A's response (3,1) to (2,1):");
-        logBoardState(testBoardAfterA);
-        
-        // Check if A can win immediately after this move
-        const aWinsNow = canWinInOneMove(testBoardAfterA, PLAYER_A);
-        console.log(`A can win immediately: ${aWinsNow.canWin}`);
-        
-        // Check if all B moves now allow A to win (forced loss)
-        console.log("Checking if all B moves now allow A to win...");
-        let bHasSafeMove = false;
-        let safeMoveCount = 0;
-        let totalMoveCount = 0;
-        
-        for (let r = 0; r < ROWS; r++) {
-            for (let c = 0; c < COLS; c++) {
-                if (testBoardAfterA[r][c] && testBoardAfterA[r][c].player === PLAYER_B) {
-                    const moves = calculateLegalMovesForState ? calculateLegalMovesForState(testBoardAfterA, r, c) : [];
-                    for (const move of moves) {
-                        totalMoveCount++;
-                        const tempBoard = cloneBoard(testBoardAfterA);
-                        const movingPiece = tempBoard[r][c];
-                        const targetPiece = tempBoard[move.row][move.col];
-                        
-                        if (!targetPiece) {
-                            tempBoard[move.row][move.col] = { ...movingPiece };
-                            tempBoard[r][c] = null;
-                            // Unmark swapped pieces
-                            for (let rr = 0; rr < ROWS; rr++) {
-                                for (let cc = 0; cc < COLS; cc++) {
-                                    if (tempBoard[rr][cc] && tempBoard[rr][cc].state === SWAPPED) {
-                                        tempBoard[rr][cc].state = NORMAL;
-                                    }
-                                }
-                            }
-                        } else {
-                            tempBoard[move.row][move.col] = { ...movingPiece, state: SWAPPED };
-                            tempBoard[r][c] = { ...targetPiece, state: SWAPPED };
-                        }
-                        
-                        // Check if A can win after this B move
-                        const aCanWinAfterBMove = canWinInOneMove(tempBoard, PLAYER_A);
-                        if (!aCanWinAfterBMove.canWin) {
-                            console.log(`Safe B move found: (${r},${c}) to (${move.row},${move.col})`);
-                            bHasSafeMove = true;
-                            safeMoveCount++;
-                        }
-                    }
-                }
-            }
-        }
-        
-        console.log(`B has ${safeMoveCount} safe moves out of ${totalMoveCount} total moves`);
-        
-        if (!bHasSafeMove && totalMoveCount > 0) {
-            console.log("*** FORCED LOSS DETECTED: After A plays (3,1) to (2,1), ALL B moves allow A to win! ***");
-            console.log("*** This confirms that B's initial move (1,1) to (1,2) leads to a forced loss sequence! ***");
-        } else if (bHasSafeMove) {
-            console.log("B still has safe moves available after A's response");
-        } else {
-            console.log("B has no legal moves (stalemate)");
-        }
-    } else {
-        console.log("*** Player A cannot win in one move after this move ***");
-    }
-    
+   
     return testBoard;
 }
 

@@ -1,0 +1,476 @@
+# Test Positions for Switcharoo Game
+# Format: '.' = empty, 'A' = Player A normal, 'a' = Player A swapped, 'B' = Player B normal, 'b' = Player B swapped
+# Goal: Connect rows 1 and 6 (0-based indexing)
+# Each player must have exactly 8 pieces total
+
+# player_to_move: Which player (A or B) is to move
+# immediate_win: Whether the current player has an immediate winning move
+# allows_win: Whether the position allows a win in one move
+# allows_forced_move: Whether there's a forced move scenario
+# winning_player: For immediate win positions, which player wins
+# test_move: Optional move to evaluate with start and end coordinates {start: [row, col], end: [row, col]}
+#            start: coordinates of the piece being moved (for piece placement, start is empty cell)
+#            end: target coordinates for the move
+#            If present, the test program will evaluate this specific move
+#            If not present, the heuristic or NN will determine the move
+# test_type: A category for the type of test (e.g., "immediate_win", "one_move_win", "forced_move", etc.)
+
+
+# Position 1: Player A immediate win - connected path from row 1 to row 6
+- name: "Position 1: Player A immediate win"
+  description: "Player A has a connected path from row 1 to row 6"
+  board: |
+    BBBB
+    A..B
+    A..B
+    A..B
+    A..B
+    A...
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: true
+  allows_win: true
+  allows_forced_move: false
+  winning_player: A
+  test_type: "immediate_win"
+
+# Position 2: Player B immediate win - connected path
+- name: "Position 2: Player B immediate win"
+  description: "Player B has a connected path"
+  board: |
+    ....
+    .BBB
+    ...B
+    ...B
+    ...B
+    ...B
+    ..BA
+    AAAA
+  player_to_move: B
+  immediate_win: true
+  allows_win: true
+  allows_forced_move: false
+  winning_player: B
+  test_type: "immediate_win"
+
+# Position 3: Player A one move from win - can move to create winning path
+- name: "Position 3: Player A one move from win"
+  description: "Player A can move to create a winning connection"
+  board: |
+    BBBB
+    ...B
+    AA.B
+    A..B
+    A...
+    A...
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: true
+  allows_win: true
+  allows_forced_move: false
+  winning_player: A
+  test_type: "immediate_win"
+
+# Position 4: Player B one move from win - diagonal connection needed
+- name: "Position 4: Player B one move from win"
+  description: "Player B needs diagonal connection to win"
+  board: |
+    .B..
+    B...
+    .B..
+    ABBA
+    .A.B
+    .ABB
+    AAAA
+    ....
+  player_to_move: B
+  immediate_win: true
+  allows_win: true
+  allows_forced_move: false
+  test_type: "one_move_win"
+
+# Position 5: Forced move - Player A must block Player B's winning threat
+- name: "Position 5: Forced move scenario"
+  description: "Player A must block Player B's winning threat"
+  board: |
+    A..B
+    ...B
+    AAB.
+    A..B
+    ..BB
+    A.BB
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: false
+  test_type: "forced_move"
+
+# Position 6: Complex blocking scenario with swapped pieces
+- name: "Position 6: Complex blocking with swapped pieces"
+  description: "Complex scenario involving swapped pieces for blocking"
+  board: |
+    BBBb
+    Ba..
+    B...
+    b...
+    A...
+    aB..
+    AAA.
+    A...
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: false
+  test_type: "complex_position"
+
+# Position 7: Player A wins with swapped pieces in path
+- name: "Position 7: Player A wins with swapped pieces"
+  description: "Player A has winning path using swapped pieces"
+  board: |
+    BBBB
+    a..B
+    A..B
+    a..B
+    A...
+    A...
+    AAa.
+    ....
+  player_to_move: A
+  immediate_win: true
+  allows_win: true
+  allows_forced_move: false
+  winning_player: A
+  test_type: "immediate_win_swapped"
+
+# Position 8: Mutual blocking - both players threatening
+- name: "Position 8: Mutual blocking scenario"
+  description: "Both players are threatening, requiring careful play"
+  board: |
+    .BBB
+    bb..
+    aa..
+    AB..
+    AB..
+    ABA.
+    AAB.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: false
+  test_type: "mutual_threat"
+
+# Position 9: Player A forces win despite Player B blocking attempt
+- name: "Position 9: Player A forces win"
+  description: "Player A can force a win despite Player B's blocking"
+  board: |
+    BBBB
+    A...
+    AB..
+    A...
+    A...
+    A...
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: true
+  allows_forced_move: false
+  test_type: "forced_win"
+
+# Position 10: Player B creates winning diagonal path
+- name: "Position 10: Player B diagonal win"
+  description: "Player B creates a winning diagonal path"
+  board: |
+    .B..
+    BAA.
+    .BA.
+    A.B.
+    .BB.
+    ..A.
+    AAAB
+    ....
+  player_to_move: B
+  immediate_win: true
+  allows_win: false
+  allows_forced_move: false
+  test_type: "one_move_win"
+
+# Position 11: Complex position with multiple swapped pieces
+- name: "Position 11: Multiple swapped pieces"
+  description: "Complex position featuring multiple swapped pieces"
+  board: |
+    .BBA
+    bA..
+    B.a.
+    .ba.
+    Ab..
+    a.Bb
+    ..aa
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: false
+  test_type: "complex_swapped"
+
+# Position 12: Player A near win, Player B must swap to block
+- name: "Position 12: Near win requiring swap block"
+  description: "Player A near win, Player B must use swap to block"
+  board: |
+    BBBB
+    A...
+    A...
+    AB..
+    A...
+    AA..
+    BBB.
+    ..AA
+  player_to_move: B
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: true
+  test_type: "swap_to_block"
+
+# Position 13: Stalemate-like position with heavy blocking
+- name: "Position 13: Heavy blocking scenario"
+  description: "Stalemate-like position with extensive blocking"
+  board: |
+    ab..
+    ....
+    baba
+    ab..
+    baba
+    ..ab
+    ....
+    ba..
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: false
+  test_type: "stalemate_like"
+
+# Position 14: Player A zigzag winning path
+- name: "Position 14: Zigzag winning path"
+  description: "Player A can create a zigzag winning path"
+  board: |
+    ABBB
+    B...
+    BABB
+    A...
+    .ABB
+    A...
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: true
+  allows_win: true
+  allows_forced_move: false
+  winning_player: A
+  test_type: "immediate_win"
+
+# Position 15: Player B wins with mixed normal and swapped pieces
+- name: "Position 15: Player B mixed pieces win"
+  description: "Player B wins using both normal and swapped pieces"
+  board: |
+    .BBA
+    ba..
+    Ba..
+    BA..
+    b...
+    BB..
+    AAAA
+    ....
+  player_to_move: B
+  immediate_win: true
+  allows_win: true
+  allows_forced_move: false
+  winning_player: B
+  test_type: "immediate_win_swapped"
+
+# Position 16: Forced swap scenario - Player A must swap to advance
+- name: "Position 16: Forced swap to advance"
+  description: "Player A must use swap to advance position"
+  board: |
+    BBBB
+    a...
+    Bb..
+    ab..
+    ab..
+    aba.
+    aaa.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: true
+  test_type: "forced_swap"
+
+# Position 17: Player A threatens multiple winning paths
+- name: "Position 17: Multiple threat paths"
+  description: "Player A threatens multiple winning paths"
+  board: |
+    BBBB
+    AA..
+    A...
+    A...
+    A...
+    AA..
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: true
+  allows_forced_move: false
+  test_type: "multiple_threats"
+
+# Position 18: Player B blocks with strategic swaps
+- name: "Position 18: Strategic swap blocking"
+  description: "Player B uses strategic swaps to block Player A"
+  board: |
+    BBBb
+    A...
+    aB..
+    A...
+    Ab..
+    A...
+    AAA.
+    ....
+  player_to_move: B
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: false
+  test_type: "strategic_swaps"
+
+# Position 19: Complex endgame with both players close to winning
+- name: "Position 19: Complex endgame"
+  description: "Both players are close to winning in this complex endgame"
+  board: |
+    BBBB
+    AB..
+    BA..
+    AB..
+    BA..
+    AB..
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: false
+  test_type: "complex_endgame"
+
+# Position 20: Player A wins by connecting through center
+- name: "Position 20: Center connection win"
+  description: "Player A wins by connecting through the center"
+  board: |
+    BBBB
+    ..A.
+    .A..
+    A...
+    .A..
+    ..A.
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: true
+  allows_win: true
+  allows_forced_move: false
+  winning_player: A
+  test_type: "immediate_win"
+
+# Position 21: Player B defensive position with swapped pieces blocking
+- name: "Position 21: Defensive swapped pieces"
+  description: "Player B uses swapped pieces defensively to block"
+  board: |
+    BBBb
+    A...
+    bA..
+    B...
+    bA..
+    A...
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: false
+  test_type: "defensive_swaps"
+
+# Position 22: Race condition - both players one move from win
+- name: "Position 22: Race condition"
+  description: "Both players are one move away from winning"
+  board: |
+    BBBB
+    AB..
+    A.B.
+    A...
+    A.B.
+    AB..
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: true
+  allows_forced_move: false
+  test_move: {start: [3, 1], end: [3, 1]}  # Test placing piece at (3,1) to advance A's path
+  test_type: "race_condition"
+
+# Position 23: Player A forced to make suboptimal move due to Player B threat
+- name: "Position 23: Forced suboptimal move"
+  description: "Player A must make suboptimal move due to Player B threat"
+  board: |
+    BBBb
+    BA..
+    A...
+    A...
+    A...
+    AB..
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: true
+  test_type: "forced_suboptimal"
+
+# Position 24: Final complex position with multiple strategic elements
+- name: "Position 24: Complex strategic position"
+  description: "Final position with multiple strategic elements including swaps"
+  board: |
+    BBBb
+    aB..
+    Ab..
+    bA..
+    Ba..
+    .AB.
+    AAA.
+    ....
+  player_to_move: A
+  immediate_win: false
+  allows_win: false
+  allows_forced_move: false
+  test_type: "complex_strategic"
+
+# Position 25: A sets up a forced win (fork)
+- name: "Position 25: A sets up a forced win (fork)"
+  description: "A's move M_A1 (1,2->2,2) is not an immediate win. All of B's subsequent moves allow A to win on A's next turn."
+  board: |
+    bBB.
+    aAA.
+    A.B.
+    B...
+    AB..
+    ab..
+    abA.
+    ....
+  player_to_move: A
+  immediate_win: false # M_A1 itself should not be a win for A. Initial board is not a win for B.
+  allows_win: true     # A can ultimately win
+  allows_forced_move: true # After M_A1, B is in a state where any move leads to A's win
+  test_type: "forced_win_setup"
+  test_move: {start: [1, 2], end: [2, 2]} # M_A1: A(1,2) moves to (2,2)

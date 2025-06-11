@@ -8,7 +8,7 @@ import {
     cloneBoard
 } from './game-board.js';
 import {
-    calculateLegalMoves, unmarkPlayerSwapped, checkWinCondition
+    calculateLegalMoves, unmarkSwapped, checkWinCondition
 } from './game-logic.js';
 import {
     boardToNNInput, neuralNetworkPredict
@@ -75,6 +75,10 @@ export function calculateLegalMovesForState(boardState, row, col) {
 
 // Helper function to check if a player can win in one move
 export function canWinInOneMove(boardState, player) {
+    // console.log(`[canWinInOneMove] Checking for player: ${player}`);
+    // console.log('[canWinInOneMove] Initial boardState:');
+    // logBoardForDebug(boardState);
+
     // Check all possible moves for the player
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
@@ -85,20 +89,32 @@ export function canWinInOneMove(boardState, player) {
                     const movingPiece = tempBoard[r][c];
                     const targetPiece = tempBoard[move.row][move.col];
                     
+                    // console.log(`[canWinInOneMove] Player ${player} trying move from (${r},${c}) to (${move.row},${move.col})`);
+
                     if (!targetPiece) {
                         // Move to empty cell
                         tempBoard[move.row][move.col] = { ...movingPiece };
                         tempBoard[r][c] = null;
-                        unmarkPlayerSwapped(player, tempBoard);
+                        unmarkSwapped(tempBoard);
                     } else {
                         // Swap move
                         tempBoard[move.row][move.col] = { ...movingPiece, state: SWAPPED };
                         tempBoard[r][c] = { ...targetPiece, state: SWAPPED };
                     }
                     
+                    // console.log('[canWinInOneMove] Board before checkWinCondition:');
+                    // logBoardForDebug(tempBoard);
+                    
                     // Check if this move results in a win
                     const winResult = checkWinCondition(tempBoard, player);
+                    // console.log(`[canWinInOneMove] winResult for move (${r},${c})->(${move.row},${move.col}):`, JSON.stringify(winResult));
+
+                    
                     if (winResult.win) {
+                        // console.log(`[canWinInOneMove] WIN DETECTED for player ${player} with move from (${r},${c}) to (${move.row},${move.col})`);
+                        // console.log('[canWinInOneMove] Winning board state:');
+                        // logBoardForDebug(tempBoard);
+                        // console.log('[canWinInOneMove] Win path:', JSON.stringify(winResult.path));
                         return {
                             canWin: true,
                             winningMove: {
@@ -113,39 +129,28 @@ export function canWinInOneMove(boardState, player) {
             }
         }
     }
+
+    
     return { canWin: false };
 }
 
 // Helper function to check if a move allows opponent to win (immediate or next move)
 export function allowsOpponentWin(boardState, opponent, aiDifficulty = 'hard1') {
+
+
     // 1. Immediate win check
-    if (canWinInOneMove(boardState, opponent).canWin) {
+    const immediateWin = canWinInOneMove(boardState, opponent);
+    if (immediateWin.canWin) {
+
         return true;
     }
-    // 2. One-move threat: can opponent win on their next move?
-    for (let r = 0; r < ROWS; r++) {
-        for (let c = 0; c < COLS; c++) {
-            if (boardState[r][c] && boardState[r][c].player === opponent) {
-                const moves = calculateLegalMovesForState(boardState, r, c);
-                for (const move of moves) {
-                    const tempBoard = cloneBoard(boardState);
-                    const movingPiece = tempBoard[r][c];
-                    const targetPiece = tempBoard[move.row][move.col];
-                    if (!targetPiece) {
-                        tempBoard[move.row][move.col] = { ...movingPiece };
-                        tempBoard[r][c] = null;
-                        unmarkPlayerSwapped(opponent, tempBoard);
-                    } else {
-                        tempBoard[move.row][move.col] = { ...movingPiece, state: SWAPPED };
-                        tempBoard[r][c] = { ...targetPiece, state: SWAPPED };
-                    }
-                    if (canWinInOneMove(tempBoard, opponent).canWin) {
-                        return true;
-                    }
-                }
-            }
-        }
+
+    // For 'easy' mode, if the opponent cannot win immediately, the move is considered safe.
+    // Deeper checks are skipped for 'easy' difficulty.
+    if (aiDifficulty === 'easy') {
+        return false;
     }
+
     // For hard1/hard_ai: check for forced loss (all responses unsafe)
     if (aiDifficulty === 'hard1' || aiDifficulty === 'hard_ai') {
         const currentPlayer = opponent === PLAYER_A ? PLAYER_B : PLAYER_A;
@@ -161,12 +166,17 @@ export function allowsOpponentWin(boardState, opponent, aiDifficulty = 'hard1') 
                         if (!targetPiece) {
                             tempBoard[move.row][move.col] = { ...movingPiece };
                             tempBoard[r][c] = null;
-                            unmarkPlayerSwapped(opponent, tempBoard);
+                            unmarkSwapped(tempBoard);
                         } else {
                             tempBoard[move.row][move.col] = { ...movingPiece, state: SWAPPED };
                             tempBoard[r][c] = { ...targetPiece, state: SWAPPED };
                         }
                         if (allCurrentPlayerMovesUnsafe(tempBoard, currentPlayer, opponent)) {
+                            console.log("Testing Board State:");
+                            logBoardForDebug(boardState);
+                            console.log(`[allowsOpponentWin] Opponent can create a forced move (all responses unsafe) after: (${r},${c}) -> (${move.row},${move.col})`);
+                            logBoardForDebug(tempBoard);
+
                             return true;
                         }
                     }
@@ -174,11 +184,13 @@ export function allowsOpponentWin(boardState, opponent, aiDifficulty = 'hard1') 
             }
         }
     }
+
     return false;
 }
 
 // Helper: are all current player's moves unsafe (allow immediate or next-move win by opponent)?
 function allCurrentPlayerMovesUnsafe(boardState, currentPlayer, opponent) {
+
     let foundSafe = false;
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
@@ -191,7 +203,7 @@ function allCurrentPlayerMovesUnsafe(boardState, currentPlayer, opponent) {
                     if (!targetPiece) {
                         tempBoard[move.row][move.col] = { ...movingPiece };
                         tempBoard[r][c] = null;
-                        unmarkPlayerSwapped(currentPlayer, tempBoard);
+                        unmarkSwapped(tempBoard);
                     } else {
                         tempBoard[move.row][move.col] = { ...movingPiece, state: SWAPPED };
                         tempBoard[r][c] = { ...targetPiece, state: SWAPPED };
@@ -208,6 +220,24 @@ function allCurrentPlayerMovesUnsafe(boardState, currentPlayer, opponent) {
     }
     return !foundSafe;
 }
+
+// It's assumed logBoardForDebug is defined elsewhere or should be added/imported.
+// Example placeholder if not defined:
+/*
+function logBoardForDebug(board) {
+    let out = '';
+    for (let r = 0; r < ROWS; r++) {
+        let rowStr = '';
+        for (let c = 0; c < COLS; c++) {
+            const piece = board[r][c];
+            if (!piece) { rowStr += '.'; }
+            else { rowStr += piece.player; }
+        }
+        out += rowStr + '\\n';
+    }
+    console.log(out);
+}
+*/
 
 // Helper function to evaluate board state heuristically
 export function evaluateBoardState(boardState, player, lastMove = null) {
@@ -277,7 +307,7 @@ function hasValidDefensiveResponse(boardState, currentPlayer, opponent, depth) {
                     if (!targetPiece) {
                         tempBoard[move.row][move.col] = { ...movingPiece };
                         tempBoard[r][c] = null;
-                        unmarkPlayerSwapped(currentPlayer, tempBoard);
+                        unmarkSwapped(tempBoard);
                     } else {
                         tempBoard[move.row][move.col] = { ...movingPiece, state: SWAPPED };
                         tempBoard[r][c] = { ...targetPiece, state: SWAPPED };
@@ -324,7 +354,7 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
         if (!targetPiece) {
             tempBoard[end.row][end.col] = { ...movingPiece };
             tempBoard[start.row][start.col] = null;
-            unmarkPlayerSwapped(player, tempBoard);
+            unmarkSwapped(tempBoard);
         } else {
             tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
             tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
@@ -389,12 +419,12 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
                         if (!targetPiece) {
                             tempBoard[end.row][end.col] = { ...movingPiece };
                             tempBoard[start.row][start.col] = null;
-                            unmarkPlayerSwapped(player, tempBoard);
+                            unmarkSwapped(tempBoard);
                         } else {
                             tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                             tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
                         }
-                        return !allowsOpponentWin(tempBoard, opponent, aiDepth, aiDifficulty);
+                        return !allowsOpponentWin(tempBoard, opponent, aiDifficulty);
                     });
 
                     // Select move based on MCTS action probabilities, but only among safe moves if any
@@ -429,8 +459,11 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
         }
 
         // Fallback to heuristic evaluation for move selection
+        const opponent = player === PLAYER_A ? PLAYER_B : PLAYER_A;
+        let safeMoves = [];
         let bestMove = null;
         let bestScore = -Infinity;
+        
         for (const move of possibleMoves) {
             const tempBoard = cloneBoard(boardState);
             const { start, end } = move;
@@ -440,7 +473,7 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
             if (!targetPiece) {
                 tempBoard[end.row][end.col] = { ...movingPiece };
                 tempBoard[start.row][start.col] = null;
-                unmarkPlayerSwapped(player, tempBoard);
+                unmarkSwapped(tempBoard);
             } else {
                 tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
@@ -448,14 +481,33 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
 
             // Evaluate the board state after the hypothetical move
             const score = evaluateBoardState(tempBoard, player);
+            
+            // Check if this move is safe (doesn't allow opponent to win)
+            const isSafe = !allowsOpponentWin(tempBoard, opponent, aiDifficulty);
+            
+            if (isSafe) {
+                safeMoves.push({ move, score });
+            }
+            
             if (score > bestScore) {
                 bestScore = score;
                 bestMove = move;
             }
         }
-
-        if (bestMove && analysisMode) {
-            console.log(`Heuristic selected move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (score: ${bestScore})`);
+        
+        // Prefer safe moves if any are available
+        if (safeMoves.length > 0) {
+            const bestSafeScore = Math.max(...safeMoves.map(m => m.score));
+            const bestSafeMoves = safeMoves.filter(m => m.score === bestSafeScore);
+            bestMove = bestSafeMoves[Math.floor(Math.random() * bestSafeMoves.length)].move;
+            
+            if (analysisMode) {
+                console.log(`hard_ai selected safe move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (score: ${bestSafeScore}, ${safeMoves.length} safe moves available)`);
+            }
+        } else {
+            if (analysisMode) {
+                console.log(`hard_ai no safe moves found, selecting best heuristic move: ${bestMove.start.row},${bestMove.start.col} to ${bestMove.end.row},${bestMove.end.col} (score: ${bestScore})`);
+            }
         }
 
         return bestMove;
@@ -473,35 +525,26 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
             if (!targetPiece) {
                 tempBoard[end.row][end.col] = { ...movingPiece };
                 tempBoard[start.row][start.col] = null;
-                unmarkPlayerSwapped(player, tempBoard);
+                unmarkSwapped(tempBoard);
             } else {
                 tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                 tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
             }
             let isSafe = false;
             if (aiDifficulty === 'easy') {
-                isSafe = !allowsOpponentWin(tempBoard, opponent, 'easy');
+                isSafe = !allowsOpponentWin(tempBoard, opponent, aiDifficulty);
             } else if (aiDifficulty === 'hard1') {
-                isSafe = !allowsOpponentWin(tempBoard, opponent, 'hard1');
+                isSafe = !allowsOpponentWin(tempBoard, opponent, aiDifficulty);
             }
             if (isSafe) {
                 const score = evaluateBoardState(tempBoard, player);
                 safeMoves.push({ move, score });
-                if (aiDifficulty === 'easy' && analysisMode) {
-                    console.log(`[EASY DEBUG] Safe move: ${move.start.row},${move.start.col} -> ${move.end.row},${move.end.col}, score: ${score}`);
-                }
-            } else if (aiDifficulty === 'easy' && analysisMode) {
-                const score = evaluateBoardState(tempBoard, player);
-                console.log(`[EASY DEBUG] UNSAFE move: ${move.start.row},${move.start.col} -> ${move.end.row},${move.end.col}, score: ${score}`);
+
             }
         }
         if (analysisMode) {
             console.log(`${aiDifficulty} AI: Found ${safeMoves.length} safe moves out of ${possibleMoves.length} total moves`);
-            if (aiDifficulty === 'easy') {
-                safeMoves.forEach(m => {
-                    console.log(`[EASY DEBUG] Candidate: ${m.move.start.row},${m.move.start.col} -> ${m.move.end.row},${m.move.end.col}, score: ${m.score}`);
-                });
-            }
+
         }
         if (safeMoves.length > 0) {
             let bestScore = Math.max(...safeMoves.map(m => m.score));
@@ -524,7 +567,7 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
                 if (!targetPiece) {
                     tempBoard[end.row][end.col] = { ...movingPiece };
                     tempBoard[start.row][start.col] = null;
-                    unmarkPlayerSwapped(player, tempBoard);
+                    unmarkSwapped(tempBoard);
                 } else {
                     tempBoard[end.row][end.col] = { ...movingPiece, state: SWAPPED };
                     tempBoard[start.row][start.col] = { ...targetPiece, state: SWAPPED };
@@ -545,4 +588,23 @@ export async function findBestAIMove(boardState, player = PLAYER_B, aiDifficulty
     }
 
     return null;
+}
+
+// Helper: log board for debug
+export function logBoardForDebug(board) {
+    let out = '';
+    for (let r = 0; r < ROWS; r++) {
+        let rowStr = '';
+        for (let c = 0; c < COLS; c++) {
+            const piece = board[r][c];
+            if (!piece) {
+                rowStr += '.';
+            } else {
+                const char = piece.player === PLAYER_A ? 'A' : 'B';
+                rowStr += piece.state === SWAPPED ? char.toLowerCase() : char;
+            }
+        }
+        out += rowStr + '\n';
+    }
+    console.log(out);
 }
