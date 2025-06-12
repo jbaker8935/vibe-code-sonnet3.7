@@ -242,29 +242,28 @@ function logBoardForDebug(board) {
 // Helper function to evaluate board state heuristically
 export function evaluateBoardState(boardState, player, lastMove = null) {
     let score = 0;
-    
+    let occupiedRows = new Map();
     // Basic positional scoring: advancing pieces get higher scores
     for (let r = 0; r < ROWS; r++) {
         for (let c = 0; c < COLS; c++) {
             const piece = boardState[r][c];
             if (piece && piece.player === player) {
-                if (player === PLAYER_A) {
-                    // Player A wants to advance (lower row numbers, top of the board)
-                    score += (ROWS - r) * 10;
-                } else {
-                    // Player B wants to advance (higher row numbers, bottom of the board)
-                    score += r * 10;
+                if (r >= 1 && r <= 6) {
+                    occupiedRows.set(r, true); // Track occupied rows by this player
                 }
                 
                 // Bonus for pieces in center columns
                 const centerDistance = Math.abs(c - Math.floor(COLS / 2));
-                score += Math.max(0, 3 - centerDistance) * 5;
+                score += Math.max(0, 3 - centerDistance);
                 
                 // Count friendly neighbors for formation bonus
                 score += countFriendlyNeighbors(boardState, r, c, player);
             }
         }
     }
+    // Bonus for occupying more rows
+    const occupiedRowCount = occupiedRows.size;
+    score += occupiedRowCount * 10; // 10 points per occupied row
     
     return score;
 }

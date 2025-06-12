@@ -181,7 +181,7 @@ def _evaluate_board_jit(board, player_id):
     # Calculate row occupancy score
     occupied_rows = np.unique(piece_positions[0])
     rows_in_range = np.sum((occupied_rows >= 1) & (occupied_rows <= 6))
-    row_occupancy_score = rows_in_range * 1.5  # Weight for row occupancy
+    row_occupancy_score = rows_in_range * 4.0  # Increased weight for row occupancy
 
     # Check for pieces on start_row and target_row
     has_piece_on_start_row = start_row in piece_positions[0]
@@ -198,7 +198,7 @@ def _evaluate_board_jit(board, player_id):
     opponent_legal_moves_count = len(opponent_moves)
     opponent_moves_penalty = opponent_legal_moves_count * -0.5  # Penalty for opponent's legal moves
 
-    return (row_occupancy_score +  # Add row occupancy score
+    return (row_occupancy_score +  # Add row occupancy score (increased weight)
             start_row_bonus +      # Add bonus for having a piece on start_row
             target_row_bonus +     # Add bonus for having a piece on target_row
             swapped_bonus +        # Add bonus for swapped pieces

@@ -63,7 +63,6 @@ let gameLogic = null;
 
 window.analysisMode = ANALYSIS_MODE; // For compatibility with game_logic_adapter.js
 
-const transpositionTable = new Map();
 
 // DOM references
 const boardElement = document.getElementById('game-board');
@@ -307,7 +306,7 @@ function initGame() {
         currentPlayer
     });
     hideAllOverlays();
-    transpositionTable.clear();
+
     console.log("Game Initialized. Player A's turn (Bottom).");
 }
 
@@ -832,7 +831,7 @@ async function triggerAIMove() {
     // Use the sophisticated AI from the advanced module
     const bestMove = await findBestAIMove(
         board, 
-        PLAYER_B, 
+        currentPlayer, 
         AI_DIFFICULTY, 
         AI_DEPTH, 
         window.analysisMode, // analysisMode
@@ -845,8 +844,8 @@ async function triggerAIMove() {
 
     if (bestMove) {
         const boardBefore = cloneBoard(board);
-        board = makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col, board, bestMove.start, [bestMove.end], PLAYER_B);
-        recordMoveHistory(PLAYER_B, bestMove.start, bestMove.end, boardBefore, board);
+        board = makeMove(bestMove.start.row, bestMove.start.col, bestMove.end.row, bestMove.end.col, board, bestMove.start, [bestMove.end], currentPlayer);
+        recordMoveHistory(currentPlayer, bestMove.start, bestMove.end, boardBefore, board);
         // Check for win
         const winA = checkWinCondition(board, PLAYER_A);
         const winB = checkWinCondition(board, PLAYER_B);
@@ -886,10 +885,10 @@ async function triggerAIMove() {
             currentPlayer
         });
         updateScoreDisplay();
-        console.log(`AI (Player B) moved from (${bestMove.start.row},${bestMove.start.col}) to (${bestMove.end.row},${bestMove.end.col})`);
+        console.log(`AI (Player ${switchPlayer(currentPlayer)}) moved from (${bestMove.start.row},${bestMove.start.col}) to (${bestMove.end.row},${bestMove.end.col})`);
     } else {
-        // AI has no valid moves - switch turn back to human player
-        console.log("AI (Player B) has no valid moves. Switching turn to Player A.");
+        // AI has no valid moves - switch turn back to other player
+        console.log(`AI (Player ${currentPlayer}) has no valid moves. Switching turn.`);
         currentPlayer = switchPlayer(currentPlayer);
         renderBoardWithWinPath({
             board,
@@ -981,7 +980,7 @@ window.SwitcharooGlobals = {
     MCTS_VERBOSE,
     mctsSearch,
     gameLogic,
-    transpositionTable,
+
     parseStartingPosition,
     cloneBoard,
     serializeBoardState,
@@ -1010,7 +1009,9 @@ window.SwitcharooGlobals = {
     evaluateBoardState,
     countFriendlyNeighbors,
     checkWinConditionForState,
-    analyzeHistoricalMove
+    analyzeHistoricalMove, 
+    startSelfPlay,
+    stopSelfPlay
 };
 
 // --- Expose analyzeHistoricalMove to console ---
@@ -1057,5 +1058,63 @@ async function analyzeHistoricalMove() {
         console.log(`Best move for this board state (Player ${playerToMoveNext}'s turn):`, bestMove);
     } else {
         console.log('No historical move selected.');
+    }
+}
+
+// --- Self-Play Functions ---
+function startSelfPlay() {
+    if (gameOver) {
+        console.log("Cannot start self-play: game is over");
+        return;
+    }
+
+    isInSelfPlay = true;
+    console.log("Self-play started");
+
+    // Start the self-play loop
+    scheduleSelfPlayMove();
+}
+
+function stopSelfPlay() {
+    isInSelfPlay = false;
+
+    // Clear any pending self-play move
+    if (selfPlayTimeoutId) {
+        clearTimeout(selfPlayTimeoutId);
+        selfPlayTimeoutId = null;
+    }
+    console.log("Self-play stopped");
+}
+
+function scheduleSelfPlayMove() {
+    if (!isInSelfPlay || gameOver) {
+        return;
+    }
+
+    // 500ms pause between player moves for better visualization
+    const delay = 500; // 500ms between moves
+
+    selfPlayTimeoutId = setTimeout(() => {
+        makeSelfPlayMove();
+    }, delay);
+}
+
+async function makeSelfPlayMove() {
+    if (!isInSelfPlay || gameOver) {
+        return;
+    }
+
+    try {
+        // Make an AI move for the current player
+        await triggerAIMove();
+
+        // Schedule the next move if game is still ongoing
+        if (!gameOver && isInSelfPlay) {
+            scheduleSelfPlayMove();
+        } else if (gameOver) {
+            stopSelfPlay();
+        }
+    } catch (error) {
+        console.error("Error during self-play move:", error); stopSelfPlay();
     }
 }

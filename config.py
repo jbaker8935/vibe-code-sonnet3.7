@@ -97,7 +97,7 @@ AZ_CURRICULUM_SCHEDULE = {
     # Phase 2: Gradual dual position learning (was 41-80, now 81-140) 
     'phase_2': {
         'iterations': (81, 140),         # FIXED: Sequential start after phase 1 ends
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD],
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1],
         'target_policy_accuracy': 0.55,  # ADJUSTED: Reduced from 0.60 for realistic dual-position target
         'description': 'Gradual dual position learning'
     },
