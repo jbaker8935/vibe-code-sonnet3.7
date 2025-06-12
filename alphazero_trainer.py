@@ -901,18 +901,25 @@ class AlphaZeroTrainer:
         avg_value_mae = value_mae_this_iteration / num_steps_processed if num_steps_processed > 0 else 0
         
         current_lr_val = 0.0
+        # Robustly get the current learning rate for logging
         try:
-            # Try to get LR from the optimizer directly
-            current_lr_val = self.candidate_nn.model.optimizer.learning_rate(self.candidate_nn.model.optimizer.iterations).numpy()
-        except AttributeError: # Optimizer might not be Keras Adam or iterations not tracked that way
+            # Try if learning_rate is a callable (schedule)
+            lr_obj = self.candidate_nn.model.optimizer.learning_rate
+            step = self.candidate_nn.model.optimizer.iterations
+            if callable(lr_obj):
+                current_lr_val = lr_obj(step).numpy()
+            elif hasattr(lr_obj, 'numpy'):
+                current_lr_val = lr_obj.numpy()
+            else:
+                current_lr_val = float(lr_obj)
+        except Exception as e:
             try:
-                current_lr_val = self.lr_scheduler(tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32)).numpy()
-            except Exception: # Fallback if everything else fails
-                 current_lr_val = AZ_LEARNING_RATE # Default to initial config if dynamic LR cannot be fetched
-        except Exception: # Catch any other errors during LR fetching
-            current_lr_val = AZ_LEARNING_RATE
-
-
+                # Try to get from the scheduler directly
+                step = tf.cast(self.candidate_nn.model.optimizer.iterations, tf.float32)
+                current_lr_val = self.lr_scheduler(step).numpy()
+            except Exception as e2:
+                current_lr_val = AZ_LEARNING_RATE
+        
         print(f"Network training finished. Avg Total Loss: {avg_total_loss:.4f} (P: {avg_policy_loss:.4f}, V: {avg_value_loss:.4f}, P_Acc: {avg_policy_accuracy:.4f}, V_MAE: {avg_value_mae:.4f}), LR: {current_lr_val:.2e}")
 
         # Diagnostics: after training

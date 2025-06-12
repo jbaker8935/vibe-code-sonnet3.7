@@ -2,7 +2,7 @@ import numpy as np
 # --- Constants ---
 ROWS = 8
 COLS = 4
-MAX_STEPS_PER_EPISODE = 300  # Maximum steps before forcing a draw
+MAX_STEPS_PER_EPISODE = 150  # Maximum steps before forcing a draw
 HISTORY_LENGTH = 4  # Store 2 moves per player (reduced from 8)
 EARLY_GAME_MOVES = 40  # First 20 moves by each player
 MID_GAME_MOVES = 60   # Next 10 moves by each player

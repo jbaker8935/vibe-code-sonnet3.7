@@ -4,7 +4,7 @@ import os
 # Training Phases Configuration
 PHASE1_EPISODES = 50000      # Episodes for Phase 1 (random opponent)
 PHASE2_EPISODES = 50000     # Episodes for Phase 2 (self-play)
-MAX_STEPS_PER_EPISODE = 175  # Slight increase from 150 for strategic depth in extended training
+MAX_STEPS_PER_EPISODE = 150  # Maximum steps per episode
 REPLAY_FREQUENCY = 2         # Frequency of replay buffer sampling
 
 # Learning rate decay and opponent epsilon cap configuration
@@ -92,6 +92,7 @@ AZ_CURRICULUM_SCHEDULE = {
         'iterations': (1, 80),           # AGGRESSIVE: Further extended for better foundation (was 60)
         'positions': [POSITION_ADVANCED_CENTER],
         'target_policy_accuracy': 0.70,  # AGGRESSIVE: Higher target (was 0.65)
+        'learning_rate': 2e-5,
         'description': 'Extended foundation mastery'
     },
     # Phase 2: Gradual dual position learning (was 41-80, now 81-140) 
@@ -99,6 +100,7 @@ AZ_CURRICULUM_SCHEDULE = {
         'iterations': (81, 140),         # FIXED: Sequential start after phase 1 ends
         'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1],
         'target_policy_accuracy': 0.55,  # ADJUSTED: Reduced from 0.60 for realistic dual-position target
+        'learning_rate': 2e-5,
         'description': 'Gradual dual position learning'
     },
     # Phase 3: Controlled three-position mastery (was 81-140, now 141-200)
@@ -107,6 +109,7 @@ AZ_CURRICULUM_SCHEDULE = {
         'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
                      POSITION_INTERMEDIATE_1],  # IMPROVED: Only 3 positions
         'target_policy_accuracy': 0.50,  # REALISTIC: Lowered target for complex learning
+        'learning_rate': 2e-5,
         'description': 'Extended three-position mastery with stability focus'
     },
     # Phase 4: Full complexity with realistic targets (was 141-180, now 261-320)
@@ -115,6 +118,7 @@ AZ_CURRICULUM_SCHEDULE = {
         'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
                      POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
         'target_policy_accuracy': 0.48,  # REALISTIC: Lowered for four-position complexity
+        'learning_rate': 2e-5,
         'description': 'Full strategic mastery with stability focus'
     },
     # Phase 5: Ultra-mastery and fine-tuning (321-400)
@@ -123,6 +127,7 @@ AZ_CURRICULUM_SCHEDULE = {
         'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
                      POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
         'target_policy_accuracy': 0.52,  # AMBITIOUS: Higher target based on Phase 4's 87.4% success
+        'learning_rate': 8e-6,
         'description': 'Ultra-precision mastery and tournament-level refinement'
     }
 }
@@ -140,15 +145,14 @@ AZ_CURRICULUM_LOGGING = True          # Enable detailed curriculum logging
 AZ_POSITION_SPECIFIC_METRICS = True   # Track metrics per starting position
 
 # --- AlphaZero MCTS Configuration ---
-# MCTS Parameters - PHASE 4 OPTIMIZATION FOR 4-POSITION MASTERY
 # Enhanced for complex multi-position strategic learning
-NUM_SIMULATIONS_PER_MOVE = 60    # INCREASED: More simulations for 4-position complexity evaluation
+NUM_SIMULATIONS_PER_MOVE = 50    # INCREASED: More simulations for 4-position complexity evaluation
 C_PUCT_CONSTANT = 1.2           # INCREASED: Enhanced exploration for position variety
 
-# Temperature schedule - PHASE 4 ENHANCED FOR STRATEGIC DIVERSITY
+
 TEMPERATURE_START = 1.6         # INCREASED: Higher exploration for new position types
 TEMPERATURE_END = 0.4           # MAINTAINED: Quality decision making
-TEMPERATURE_ANNEAL_STEPS = 3500 # EXTENDED: Longer annealing for 4-position learning
+TEMPERATURE_ANNEAL_STEPS = 10000 
 
 DIRICHLET_ALPHA = 0.25          # OPTIMIZED: Balanced noise for position diversity
 DIRICHLET_EPSILON = 0.18       # INCREASED: More noise for exploration across positions
@@ -156,7 +160,7 @@ DIRICHLET_EPSILON = 0.18       # INCREASED: More noise for exploration across po
 # AlphaZero Training Loop Parameters - PHASE 4 FULL MASTERY (JIT-OPTIMIZED)
 # Building on Phase 3's excellent results: 94.9% policy accuracy, 23/39 model updates
 AZ_ITERATIONS = 400             # PHASE 5: Ultra-mastery and fine-tuning (321-400)
-AZ_GAMES_PER_ITERATION = 25      # INCREASED: More experience per iteration for 4-position complexity
+AZ_GAMES_PER_ITERATION = 25      
 AZ_TRAINING_STEPS_PER_ITERATION = 1200   # INCREASED: Deeper learning for complex positions
 AZ_REPLAY_BUFFER_SIZE = 20000    # EXPANDED: Larger buffer for 4-position diversity
 AZ_BATCH_SIZE = 144              # OPTIMIZED: Memory-efficient batch size
@@ -177,12 +181,12 @@ AZ_NN_RESIDUAL_BLOCKS = 4      # MAINTAINED: Proven effective architecture
 AZ_NN_FILTERS = 64            # MAINTAINED: Stable complexity
 AZ_NN_POLICY_HEAD_UNITS = 192  # MAINTAINED: Effective policy head size
 AZ_NN_VALUE_HEAD_UNITS = 96    # MAINTAINED: Effective value head size
-AZ_LEARNING_RATE = 8e-6  # REDUCED: Finer learning for 4-position mastery
 AZ_L2_REGULARIZATION = 1.5e-5    # INCREASED: Better generalization across positions
 AZ_VALUE_LOSS_WEIGHT = 0.25     # FURTHER REDUCED: Focus on policy learning for complex positions
 AZ_POLICY_LOSS_WEIGHT = 6.0    # INCREASED: Stronger policy learning emphasis
 AZ_POLICY_HEAD_TYPE = "default"  # Added: Specifies the type of policy head
 AZ_VALUE_HEAD_TYPE = "default"   # Added: Specifies the type of value head
+AZ_LEARNING_RATE = 2e-5  
 
 # Advanced Training Parameters for Emergent Strategy Development
 # AZ_CURRICULUM_LEARNING = True      # Enable progressive difficulty (UNUSED)
@@ -196,7 +200,7 @@ AZ_LR_DECAY_SCHEDULE = {
     'type': 'cosine',               # Cosine annealing for smooth convergence
     'initial_lr': 1e-5,             # STABILIZED: Reduced to prevent instability
     'min_lr': 1e-6,                 # CONSERVATIVE: Lower minimum for stable learning
-    'decay_steps': 30000            # EXTENDED: Slower decay for stability
+    'decay_steps': AZ_CURRICULUM_SCHEDULE['phase_4']['iterations'][1] * AZ_TRAINING_STEPS_PER_ITERATION  # Dynamically set: LR reaches min at start of phase 5
 }
 
 # Temperature Schedule Enhancements for 12-Hour Training
@@ -226,7 +230,7 @@ AZ_EVALUATION_TIMEOUT = 120      # Longer eval timeout for thorough assessment
 AZ_GRADIENT_CLIP_NORM = 0.3      # TIGHTENED: Prevent gradient explosion causing NaN
 AZ_INFERENCE_BATCH_SIZE = 64     # Larger batch size for efficiency
 AZ_EARLY_STOP_SLOW_EVAL = False  # Allow slower games for quality learning
-AZ_MAX_GAME_LENGTH = 125         # Slight increase from 100 for strategic depth in extended training
+
 
 # TRAINING MODE FLAGS - CONTINUATION MODE
 AZ_RECOVERY_MODE = False         # Normal training mode
@@ -300,3 +304,10 @@ AZ_LEARNING_RATE_SCHEDULING = True     # Enable sophisticated LR scheduling
 # AZ_PHASE_1_TEMPERATURE = 1.2      # Higher temperature for exploration
 # AZ_PHASE_2_TEMPERATURE = 0.8      # Moderate temperature for learning
 # AZ_PHASE_3_TEMPERATURE = 0.3      # Lower temperature for refinement
+
+# Utility to get the learning rate for a given phase from the curriculum schedule
+def get_az_learning_rate_for_phase(phase_name):
+    """Return the AZ learning rate for the given curriculum phase from AZ_CURRICULUM_SCHEDULE."""
+    return AZ_CURRICULUM_SCHEDULE[phase_name].get('learning_rate', 2e-5)
+
+# Note: AZ_LEARNING_RATE is now phase-dependent and set in AZ_CURRICULUM_SCHEDULE. Use get_az_learning_rate_for_phase(phase_name) or access the schedule directly.
