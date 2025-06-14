@@ -22,8 +22,7 @@ from config import (
     AZ_MODEL_UPDATE_WIN_RATE, AZ_BEST_MODEL_FILE, AZ_CANDIDATE_MODEL_FILE,
     AZ_CHECKPOINT_FILE_PATTERN, NUM_SIMULATIONS_PER_MOVE, C_PUCT_CONSTANT,
     DIRICHLET_ALPHA, DIRICHLET_EPSILON, TEMPERATURE_START, TEMPERATURE_END,
-    TEMPERATURE_ANNEAL_STEPS, AZ_LEARNING_RATE, AZ_L2_REGULARIZATION,
-    AZ_VALUE_LOSS_WEIGHT, AZ_POLICY_LOSS_WEIGHT, WANDB_PROJECT, WANDB_ENTITY,
+    TEMPERATURE_ANNEAL_STEPS, AZ_LEARNING_RATE, AZ_LR_DECAY_SCHEDULE, WANDB_PROJECT, WANDB_ENTITY,
     USE_NUMBA, MAX_STEPS_PER_EPISODE, initial_position,
     AZ_RECOVERY_MODE, AZ_RESET_OPTIMIZER, AZ_CLEAR_REPLAY_BUFFER, AZ_DISABLE_ATTENTION,
     AZ_OVERFIT_TEST_REQUIRED,
@@ -73,74 +72,54 @@ def get_curriculum_aware_temperature(total_game_steps, iteration):
     Returns:
         float: Temperature value optimized for current curriculum phase
     """
-    
-    # Base temperature from original schedule
     base_temp = get_temperature(total_game_steps)
-    
-    # If curriculum is disabled, use base temperature
     if not AZ_PROGRESSIVE_CURRICULUM:
         return base_temp
-    
-    # Get current curriculum phase
+
     current_phase_name = None
     current_phase_config = None
-    
     for phase_name, phase_config in AZ_CURRICULUM_SCHEDULE.items():
-        start_iter, end_iter = phase_config['iterations']
-        if start_iter <= iteration <= end_iter:
+        phase_start, phase_end = phase_config['iterations']
+        if phase_start <= iteration <= phase_end:
             current_phase_name = phase_name
             current_phase_config = phase_config
             break
-    
+
     if not current_phase_config:
         return base_temp
-    
-    # Phase-specific temperature adjustments
+
     phase_start, phase_end = current_phase_config['iterations']
     phase_length = phase_end - phase_start + 1
     phase_progress = (iteration - phase_start) / phase_length  # 0.0 to 1.0
-    
+
+    # Phase-specific temperature annealing
     if current_phase_name == 'phase_1':
-        # Phase 1: Standard annealing (single position) with exploration floor
-        return max(base_temp, 0.05)  # Minimum floor for basic exploration
-        
+        phase_min_temp = 0.1
+        phase_max_temp = 1.0
     elif current_phase_name == 'phase_2':
-        # Phase 2: Boost for 2 positions, gradual annealing within phase
-        phase_min_temp = 0.15  # Higher minimum for 2-position exploration
-        phase_max_temp = 0.6   # Reset exploration at phase start
-        
-        # Anneal within the phase
-        phase_temp = phase_max_temp * (1 - phase_progress) + phase_min_temp * phase_progress
-        return max(base_temp, phase_temp)
-        
+        phase_min_temp = 0.05
+        phase_max_temp = 0.7
     elif current_phase_name == 'phase_3':
-        # Phase 3: Extended boost for 3 positions with slower annealing
-        phase_min_temp = 0.30  # Higher minimum for sustained 3-position exploration  
-        phase_max_temp = 0.85  # Strong reset for maximum exploration
-        
-        # Much slower annealing within the phase for complex positions
-        phase_temp = phase_max_temp * (1 - phase_progress**0.8) + phase_min_temp * (phase_progress**0.8)
-        return max(base_temp, phase_temp)
-        
+        phase_min_temp = 0.02
+        phase_max_temp = 0.5
     elif current_phase_name == 'phase_4':
-        # Phase 4: Maximum exploration for 4 positions, very slow annealing
-        phase_min_temp = 0.35  # Very high minimum for 4-position exploration
-        phase_max_temp = 0.9   # Maximum reset for ultimate exploration
-        
-        # Ultra-slow annealing for the most complex phase
-        phase_temp = phase_max_temp * (1 - phase_progress**0.9) + phase_min_temp * (phase_progress**0.9)
-        return max(base_temp, phase_temp)
-        
+        phase_min_temp = 0.01
+        phase_max_temp = 0.25
     elif current_phase_name == 'phase_5':
-        # Phase 5: Ultra-precision mastery with minimal exploration
-        phase_min_temp = 0.05  # Very low minimum for ultra-precise play
-        phase_max_temp = 0.25  # Minimal reset for final mastery
-        
-        # Very conservative annealing for ultra-precision
-        phase_temp = phase_max_temp * (1 - phase_progress**0.3) + phase_min_temp * (phase_progress**0.3)
-        return max(base_temp, phase_temp)
-    
-    return base_temp
+        phase_min_temp = 0.01
+        phase_max_temp = 0.1
+    else:
+        phase_min_temp = TEMPERATURE_END
+        phase_max_temp = TEMPERATURE_START
+
+    # Anneal temperature within phase, with last 10% at min temp
+    anneal_portion = 0.9  # 90% of phase for annealing, last 10% at min temp
+    if phase_progress < anneal_portion:
+        local_progress = phase_progress / anneal_portion
+        phase_temp = phase_max_temp * (1 - local_progress) + phase_min_temp * local_progress
+    else:
+        phase_temp = phase_min_temp
+    return phase_temp
 
 # Progressive Curriculum Helper Functions
 def get_current_curriculum_phase(iteration):
@@ -222,17 +201,17 @@ class AlphaZeroTrainer:
         # First create warmup schedule
         warmup_steps = 5000
         warmup_lr = tf.keras.optimizers.schedules.PolynomialDecay(
-            initial_learning_rate=AZ_LEARNING_RATE * 0.1,
+            initial_learning_rate=AZ_LR_DECAY_SCHEDULE['initial_lr'] * 0.1,
             decay_steps=warmup_steps,
-            end_learning_rate=AZ_LEARNING_RATE,
+            end_learning_rate=AZ_LR_DECAY_SCHEDULE['initial_lr'],
             power=1.0  # Linear warmup
         )
         
         # Then create main cosine decay schedule
         cosine_decay_lr = tf.keras.optimizers.schedules.CosineDecay(
-            initial_learning_rate=AZ_LEARNING_RATE,
-            decay_steps=150000,
-            alpha=0.05  # Minimum learning rate factor
+            initial_learning_rate=AZ_LR_DECAY_SCHEDULE['initial_lr'],
+            decay_steps=AZ_LR_DECAY_SCHEDULE['decay_steps'],
+            alpha=AZ_LR_DECAY_SCHEDULE['min_lr']/AZ_LR_DECAY_SCHEDULE['initial_lr']  # Minimum learning rate factor
         )
         
         # Combine schedules using a proper LearningRateSchedule class

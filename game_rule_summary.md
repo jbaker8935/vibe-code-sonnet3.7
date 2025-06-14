@@ -9,3 +9,4 @@ you are a game developer that is prototyping a two player game for a vibe coding
 8. while a piece is marked swapped it cannot be the target of a swap moves.  however, a swapped piece can swap positions with an opponent's adjacent normal piece.
 9. when either player moves a piece to an empty cell, then all swapped pieces are unmarked and can be a target of a swap on a subsequent move.
 10. the game ends when either player has created a connected path of pieces between rows 1 and 6 (note: 0 based row numbering). 
+

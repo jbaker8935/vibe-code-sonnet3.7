@@ -4,7 +4,7 @@ import os
 # Training Phases Configuration
 PHASE1_EPISODES = 50000      # Episodes for Phase 1 (random opponent)
 PHASE2_EPISODES = 50000     # Episodes for Phase 2 (self-play)
-MAX_STEPS_PER_EPISODE = 150  # Maximum steps per episode
+MAX_STEPS_PER_EPISODE = 110  # Maximum steps per episode
 REPLAY_FREQUENCY = 2         # Frequency of replay buffer sampling
 
 # Learning rate decay and opponent epsilon cap configuration
@@ -52,23 +52,42 @@ AAAA
 AAAA"""
 
 POSITION_INTERMEDIATE_1 = """\
-....
 BBBB
-BBBB
+.BB.
 ....
+B..B
+A..A
 ....
-AAAA
-AAAA
-...."""
+.AA.
+AAAA"""
 
 POSITION_INTERMEDIATE_2 = """\
 BBBB
+.B.B
+.B..
+b...
+a...
+.A..
+..AA
+AAAA"""
+
+POSITION_INTERMEDIATE_3 = """\
+.BBB
+B..B
+BBB.
 ....
+....
+AAA.
+A..A
+.AAA"""
+POSITION_INTERMEDIATE_4 = """\
 BBBB
-....
-....
-AAAA
-....
+..BB
+.B..
+A...
+B...
+.A..
+..AA
 AAAA"""
 
 # All available positions for reference
@@ -76,7 +95,9 @@ initial_position_base = [
     POSITION_ADVANCED_CENTER,
     POSITION_STANDARD,
     POSITION_INTERMEDIATE_1,
-    POSITION_INTERMEDIATE_2
+    POSITION_INTERMEDIATE_2,
+    POSITION_INTERMEDIATE_3,
+    POSITION_INTERMEDIATE_4
 ]
 
 # Default position set (will be overridden by curriculum)
@@ -98,7 +119,8 @@ AZ_CURRICULUM_SCHEDULE = {
     # Phase 2: Gradual dual position learning (was 41-80, now 81-140) 
     'phase_2': {
         'iterations': (81, 140),         # FIXED: Sequential start after phase 1 ends
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1],
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1,
+                      POSITION_INTERMEDIATE_2],  # IMPROVED: Added more positions for dual learning
         'target_policy_accuracy': 0.55,  # ADJUSTED: Reduced from 0.60 for realistic dual-position target
         'learning_rate': 2e-5,
         'description': 'Gradual dual position learning'
@@ -106,8 +128,9 @@ AZ_CURRICULUM_SCHEDULE = {
     # Phase 3: Controlled three-position mastery (was 81-140, now 141-200)
     'phase_3': {
         'iterations': (141, 260),        # EXTENDED: More time for three-position mastery
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
-                     POSITION_INTERMEDIATE_1],  # IMPROVED: Only 3 positions
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1,
+                      POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3,
+                      POSITION_INTERMEDIATE_4],  # IMPROVED: Only 3 positions
         'target_policy_accuracy': 0.50,  # REALISTIC: Lowered target for complex learning
         'learning_rate': 2e-5,
         'description': 'Extended three-position mastery with stability focus'
@@ -115,8 +138,10 @@ AZ_CURRICULUM_SCHEDULE = {
     # Phase 4: Full complexity with realistic targets (was 141-180, now 261-320)
     'phase_4': {
         'iterations': (261, 320),        # ADJUSTED: Sequential start after phase 3 ends
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
-                     POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD,
+                      POSITION_INTERMEDIATE_1,
+                      POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3,
+                      POSITION_INTERMEDIATE_4],
         'target_policy_accuracy': 0.48,  # REALISTIC: Lowered for four-position complexity
         'learning_rate': 2e-5,
         'description': 'Full strategic mastery with stability focus'
@@ -124,8 +149,7 @@ AZ_CURRICULUM_SCHEDULE = {
     # Phase 5: Ultra-mastery and fine-tuning (321-400)
     'phase_5': {
         'iterations': (321, 400),        # ADVANCED: Building on Phase 4's ELO 1774 success
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, 
-                     POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
+        'positions': [POSITION_STANDARD],
         'target_policy_accuracy': 0.52,  # AMBITIOUS: Higher target based on Phase 4's 87.4% success
         'learning_rate': 8e-6,
         'description': 'Ultra-precision mastery and tournament-level refinement'
@@ -134,10 +158,12 @@ AZ_CURRICULUM_SCHEDULE = {
 
 # Position-specific weights for balanced training
 AZ_POSITION_WEIGHTS = {
-    POSITION_ADVANCED_CENTER: 0.5,    # IMPROVED: Emphasize best-performing position
-    POSITION_STANDARD: 0.3,           # Stable weight
-    POSITION_INTERMEDIATE_1: 0.1,     # IMPROVED: Reduced complexity weight
-    POSITION_INTERMEDIATE_2: 0.1      # IMPROVED: Reduced complexity weight
+    POSITION_ADVANCED_CENTER: 1,    # IMPROVED: Emphasize best-performing position
+    POSITION_STANDARD: 5,           # Stable weight
+    POSITION_INTERMEDIATE_1: 1,     # IMPROVED: Reduced complexity weight
+    POSITION_INTERMEDIATE_2: 1,     # IMPROVED: Reduced complexity weight
+    POSITION_INTERMEDIATE_3: 1,     # IMPROVED: Reduced complexity weight
+    POSITION_INTERMEDIATE_4: 1      # IMPROVED: Reduced complexity weight    
 }
 
 # Curriculum monitoring
@@ -151,7 +177,7 @@ C_PUCT_CONSTANT = 1.2           # INCREASED: Enhanced exploration for position v
 
 
 TEMPERATURE_START = 1.6         # INCREASED: Higher exploration for new position types
-TEMPERATURE_END = 0.4           # MAINTAINED: Quality decision making
+TEMPERATURE_END = 0.01           # Lower minimum temperature for deeper exploitation
 TEMPERATURE_ANNEAL_STEPS = 10000 
 
 DIRICHLET_ALPHA = 0.25          # OPTIMIZED: Balanced noise for position diversity
@@ -198,8 +224,8 @@ AZ_MODEL_ENSEMBLE_SIZE = 5          # Larger ensemble for robust evaluation in e
 # Learning Rate Schedule - STABILITY OPTIMIZED TO PREVENT NaN
 AZ_LR_DECAY_SCHEDULE = {
     'type': 'cosine',               # Cosine annealing for smooth convergence
-    'initial_lr': 1e-5,             # STABILIZED: Reduced to prevent instability
-    'min_lr': 1e-6,                 # CONSERVATIVE: Lower minimum for stable learning
+    'initial_lr': 2e-5,             # STABILIZED: Reduced to prevent instability
+    'min_lr': 8e-6,                 # CONSERVATIVE: Lower minimum for stable learning
     'decay_steps': AZ_CURRICULUM_SCHEDULE['phase_4']['iterations'][1] * AZ_TRAINING_STEPS_PER_ITERATION  # Dynamically set: LR reaches min at start of phase 5
 }
 
