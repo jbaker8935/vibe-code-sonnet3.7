@@ -60,6 +60,7 @@ let MCTS_DIRICHLET_EPSILON = 0.25;
 let MCTS_VERBOSE = false; // Can be enabled via browser console: window.MCTS_VERBOSE = true
 let mctsSearch = null;
 let gameLogic = null;
+let AI_PLAYS_FIRST = false;
 
 window.analysisMode = ANALYSIS_MODE; // For compatibility with game_logic_adapter.js
 
@@ -271,6 +272,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.tfModel = null;
     }
     
+    // Set up AI plays first checkbox
+    const aiPlaysFirstCheckbox = document.getElementById('ai-plays-first');
+    if (aiPlaysFirstCheckbox) {
+        aiPlaysFirstCheckbox.checked = AI_PLAYS_FIRST;
+        aiPlaysFirstCheckbox.addEventListener('change', () => {
+            AI_PLAYS_FIRST = aiPlaysFirstCheckbox.checked;
+            console.log('AI plays first:', AI_PLAYS_FIRST);
+        });
+    }
+    
     // Initialize the game
     console.log("Initializing game...");
     initGame();
@@ -307,7 +318,31 @@ function initGame() {
     });
     hideAllOverlays();
 
-    console.log("Game Initialized. Player A's turn (Bottom).");
+    // If AI plays first is enabled, and no moves have been made, trigger AI move as Player B
+    if (AI_PLAYS_FIRST && moveHistory.length === 0) {
+        currentPlayer = PLAYER_B;
+        setTimeout(async () => {
+            await triggerAIMove();
+            // After AI move, set currentPlayer to Player A for human
+            currentPlayer = PLAYER_A;
+            renderBoard({
+                board,
+                selectedPiece,
+                legalMoves,
+                gameOver,
+                winner,
+                winPath,
+                moveHistory,
+                currentHistoryIndex,
+                playerAScore,
+                playerBScore,
+                boardElement,
+                currentPlayer
+            });
+        }, 300); // Small delay for UI
+    }
+
+    console.log("Game Initialized. Player A's turn (Bottom). AI plays first?", AI_PLAYS_FIRST);
 }
 
 // --- Score Display Update ---
@@ -508,9 +543,36 @@ startBtn.addEventListener('click', () => {
 });
 
 overlayCloseButtons.forEach(button => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
         const overlayId = button.getAttribute('data-overlay');
-        hideOverlay(document.getElementById(overlayId));
+        const overlayElem = document.getElementById(overlayId);
+        hideOverlay(overlayElem);
+        // If closing the MCTS overlay, AI plays first is checked, and no moves have been made, trigger AI move for Player B
+        if (
+            overlayId === 'mcts-overlay' &&
+            typeof AI_PLAYS_FIRST !== 'undefined' && AI_PLAYS_FIRST &&
+            Array.isArray(moveHistory) && moveHistory.length === 0 &&
+            typeof currentPlayer !== 'undefined' && currentPlayer === PLAYER_A
+        ) {
+            // Set currentPlayer to Player B, let AI move, then set back to Player A
+            currentPlayer = PLAYER_B;
+            await triggerAIMove();
+            currentPlayer = PLAYER_A;
+            renderBoard({
+                board,
+                selectedPiece,
+                legalMoves,
+                gameOver,
+                winner,
+                winPath,
+                moveHistory,
+                currentHistoryIndex,
+                playerAScore,
+                playerBScore,
+                boardElement,
+                currentPlayer
+            });
+        }
     });
 });
 overlays.forEach(overlay => {

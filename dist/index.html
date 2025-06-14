@@ -111,7 +111,15 @@
             <button class="close-overlay-btn" data-overlay="mcts-overlay" type="button">
                 <img src="images/close-circle-outline.svg" alt="Close">
             </button>            <h2>AI Configuration</h2>
-            <div class="mcts-controls">                <div class="control-group">
+            <div class="mcts-controls">
+                <div class="control-group">
+                    <label for="ai-plays-first">
+                        <input type="checkbox" id="ai-plays-first">
+                        AI plays first move
+                    </label>
+                    <span class="help-text">If checked, AI will make the first move as Player B when a new game starts.</span>
+                </div>
+                <div class="control-group">
                     <label for="ai-difficulty-select">AI Difficulty:</label>
                     <select id="ai-difficulty-select">
                         <option value="easy" selected>Easy</option>
