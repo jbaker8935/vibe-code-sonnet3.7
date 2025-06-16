@@ -252,9 +252,11 @@ export function evaluateBoardState(boardState, player, lastMove = null) {
                     occupiedRows.set(r, true); // Track occupied rows by this player
                 }
                 
-                // Bonus for pieces in center columns
-                const centerDistance = Math.abs(c - Math.floor(COLS / 2));
-                score += Math.max(0, 3 - centerDistance);
+                // Bonus for pieces in center columns some of the time
+                if (Math.random() < 0.5) {
+                    const centerDistance = Math.abs(c - Math.floor(COLS / 2));
+                    score += Math.max(0, 3 - centerDistance);
+                }
                 
                 // Count friendly neighbors for formation bonus
                 score += countFriendlyNeighbors(boardState, r, c, player);

@@ -1180,3 +1180,16 @@ async function makeSelfPlayMove() {
         console.error("Error during self-play move:", error); stopSelfPlay();
     }
 }
+
+// --- DEBUG: Log current board state ---
+import { logBoardForDebug } from './game-ai-advanced.js';
+
+// Expose a function to print the current board state in text format from the browser console
+window.printBoardState = function() {
+    if (typeof board === 'undefined') {
+        console.warn("Global board variable is not defined.");
+        return;
+    }
+    logBoardForDebug(board);
+    return board;
+};
