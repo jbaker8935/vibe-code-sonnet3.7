@@ -28,10 +28,10 @@ B_SWAPPED = 4 # PLAYER_B_ID, STATE_SWAPPED
 
 # Mappings for convenience
 PIECE_MAP = {
-    A_NORMAL: {'player': PLAYER_A, 'player_id': PLAYER_A_ID, 'state': STATE_NORMAL, 'char': 'AN'},
-    A_SWAPPED: {'player': PLAYER_A, 'player_id': PLAYER_A_ID, 'state': STATE_SWAPPED, 'char': 'AS'},
-    B_NORMAL: {'player': PLAYER_B, 'player_id': PLAYER_B_ID, 'state': STATE_NORMAL, 'char': 'BN'},
-    B_SWAPPED: {'player': PLAYER_B, 'player_id': PLAYER_B_ID, 'state': STATE_SWAPPED, 'char': 'BS'},
+    A_NORMAL: {'player': PLAYER_A, 'player_id': PLAYER_A_ID, 'state': STATE_NORMAL, 'char': 'A'},
+    A_SWAPPED: {'player': PLAYER_A, 'player_id': PLAYER_A_ID, 'state': STATE_SWAPPED, 'char': 'a'},
+    B_NORMAL: {'player': PLAYER_B, 'player_id': PLAYER_B_ID, 'state': STATE_NORMAL, 'char': 'B'},
+    B_SWAPPED: {'player': PLAYER_B, 'player_id': PLAYER_B_ID, 'state': STATE_SWAPPED, 'char': 'b'},
     EMPTY_CELL: None
 }
 PLAYER_ID_MAP = {PLAYER_A: PLAYER_A_ID, PLAYER_B: PLAYER_B_ID}

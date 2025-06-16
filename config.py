@@ -52,43 +52,43 @@ AAAA
 AAAA"""
 
 POSITION_INTERMEDIATE_1 = """\
-BBBB
+B..B
 .BB.
-....
+.BB.
 B..B
 A..A
-....
 .AA.
-AAAA"""
+.AA.
+A..A"""
 
 POSITION_INTERMEDIATE_2 = """\
-BBBB
-.B.B
-.B..
-b...
-a...
-.A..
-..AA
-AAAA"""
-
-POSITION_INTERMEDIATE_3 = """\
-.BBB
-B..B
-BBB.
-....
-....
-AAA.
-A..A
-.AAA"""
-POSITION_INTERMEDIATE_4 = """\
-BBBB
+B.BB
 ..BB
 .B..
-A...
-B...
+b.a.
+a.b.
 .A..
 ..AA
-AAAA"""
+A.AA"""
+
+POSITION_INTERMEDIATE_3 = """\
+.B..
+B..B
+BBb.
+..Ba
+..Ab
+AAa.
+A..A
+.A.."""
+POSITION_INTERMEDIATE_4 = """\
+....
+..BB
+.baB
+A.ba
+B.ab
+.abA
+..AA
+...."""
 
 # All available positions for reference
 initial_position_base = [
@@ -149,7 +149,10 @@ AZ_CURRICULUM_SCHEDULE = {
     # Phase 5: Ultra-mastery and fine-tuning (321-400)
     'phase_5': {
         'iterations': (321, 400),        # ADVANCED: Building on Phase 4's ELO 1774 success
-        'positions': [POSITION_STANDARD],
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD,
+                      POSITION_INTERMEDIATE_1,
+                      POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3,
+                      POSITION_INTERMEDIATE_4],
         'target_policy_accuracy': 0.52,  # AMBITIOUS: Higher target based on Phase 4's 87.4% success
         'learning_rate': 8e-6,
         'description': 'Ultra-precision mastery and tournament-level refinement'
@@ -159,7 +162,7 @@ AZ_CURRICULUM_SCHEDULE = {
 # Position-specific weights for balanced training
 AZ_POSITION_WEIGHTS = {
     POSITION_ADVANCED_CENTER: 1,    # IMPROVED: Emphasize best-performing position
-    POSITION_STANDARD: 5,           # Stable weight
+    POSITION_STANDARD: 3,           # Stable weight
     POSITION_INTERMEDIATE_1: 1,     # IMPROVED: Reduced complexity weight
     POSITION_INTERMEDIATE_2: 1,     # IMPROVED: Reduced complexity weight
     POSITION_INTERMEDIATE_3: 1,     # IMPROVED: Reduced complexity weight

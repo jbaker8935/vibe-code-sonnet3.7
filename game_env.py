@@ -13,12 +13,14 @@ from env_util import (_get_legal_moves_batch, _get_legal_moves_jit,
 
 # --- Numba JIT Helper Functions ---
 
-def parse_initial_position(position_str, a_normal, b_normal, empty_cell):
+def parse_initial_position(position_str, a_normal, a_swapped, b_normal, b_swapped, empty_cell):
     """Parses the initial position string into a numerical board representation.
     Args:
         position_str: String representation of the board with A for player A, B for player B, and . for empty
         a_normal: Integer code for player A normal piece
         b_normal: Integer code for player B normal piece
+        a_swapped: Integer code for player A swapped piece
+        b_swapped: Integer code for player B swapped piece
         empty_cell: Integer code for empty cell
         
     Returns:
@@ -49,8 +51,12 @@ def parse_initial_position(position_str, a_normal, b_normal, empty_cell):
             char = row[c]
             if char == 'A':
                 board[r, c] = a_normal
+            elif char == 'a':
+                board[r, c] = a_swapped
             elif char == 'B':
                 board[r, c] = b_normal
+            elif char == 'b':
+                board[r, c] = b_swapped
             else:  # Default to empty cell for any other character
                 board[r, c] = empty_cell
                 
@@ -93,7 +99,7 @@ class SwitcharooEnv:
             self.board = np.copy(board_state_array)
         elif starting_position:
             # Parse string representation
-            self.board = parse_initial_position(starting_position, A_NORMAL, B_NORMAL, EMPTY_CELL)  
+            self.board = parse_initial_position(starting_position, A_NORMAL, A_SWAPPED, B_NORMAL, B_SWAPPED, EMPTY_CELL)  
         else:
             # Default initialization
             for r in range(ROWS):
@@ -305,18 +311,19 @@ class SwitcharooEnv:
 
     def render(self):
         """Prints the board to the console."""
-        print("-" * (COLS * 4 + 1))
-        for r in range(ROWS):
-            row_str = "|"
-            for c in range(COLS):
-                piece_code = self.board[r, c]
-                piece_info = PIECE_MAP[piece_code]
-                if piece_info:
-                    row_str += f" {piece_info['char']} |" # Use pre-defined char
-                else:
-                    row_str += "    |"
+        print("-" * COLS)
+        for r_idx in range(ROWS):
+            row_str = ""
+            for c_idx in range(COLS):
+                piece_code = self._env_jit.board[r_idx, c_idx]
+                # PIECE_MAP is imported from env_const
+                piece_info = PIECE_MAP.get(piece_code)
+                if piece_info and 'char' in piece_info: # Check if piece_info is not None and has 'char'
+                    row_str += f"{piece_info['char']}"
+                else: # Handle EMPTY_CELL or unexpected codes gracefully
+                    row_str += "." # Adjusted spacing for empty
             print(row_str)
-            print("-" * (COLS * 4 + 1))
+        print("-" * (COLS))
         print(f"Current Player: {self.current_player} (ID: {self.current_player_id})")
         if self.winner:
             print(f"Winner: {self.winner}")

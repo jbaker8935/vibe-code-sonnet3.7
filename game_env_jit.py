@@ -268,7 +268,7 @@ class SwitcharooEnvJitWrapper:
             parsed_board_for_jit = np.array(board_state_array, dtype=np.int8)
         elif starting_position:
             # Use the original Python parser from game_env.py
-            parsed_board_for_jit = parse_initial_position(starting_position, A_NORMAL, B_NORMAL, EMPTY_CELL)
+            parsed_board_for_jit = parse_initial_position(starting_position, A_NORMAL, A_SWAPPED, B_NORMAL, B_SWAPPED, EMPTY_CELL)
         
         # Determine the player to start
         player_to_start_id = PLAYER_A_ID if specific_player_to_start is None else specific_player_to_start
@@ -385,6 +385,11 @@ class SwitcharooEnvJitWrapper:
     def _get_state(self): # To match original API if called directly
         return self._env_jit._get_state_internal()
     
+    def _action_index_to_move(self, action_index):
+        """Converts an action index to a move tuple (start_r, start_c, end_r, end_c)."""
+        return self._env_jit._action_index_to_move_internal(action_index)
+
+
     def _get_state_for_nn(self):
         """Returns state representation in the format expected by the neural network.
         This is an alias for _get_state() to maintain compatibility with both MCTS implementations."""
@@ -392,19 +397,19 @@ class SwitcharooEnvJitWrapper:
 
     def render(self):
         """Prints the board to the console. This logic remains in Python."""
-        print("-" * (COLS * 4 + 1))
+        print("-" * COLS)
         for r_idx in range(ROWS):
-            row_str = "|"
+            row_str = ""
             for c_idx in range(COLS):
                 piece_code = self._env_jit.board[r_idx, c_idx]
                 # PIECE_MAP is imported from env_const
                 piece_info = PIECE_MAP.get(piece_code)
                 if piece_info and 'char' in piece_info: # Check if piece_info is not None and has 'char'
-                    row_str += f" {piece_info['char']} |"
+                    row_str += f"{piece_info['char']}"
                 else: # Handle EMPTY_CELL or unexpected codes gracefully
-                    row_str += "   |" # Adjusted spacing for empty
+                    row_str += "." # Adjusted spacing for empty
             print(row_str)
-            print("-" * (COLS * 4 + 1))
+        print("-" * (COLS))
         
         current_player_str = self.current_player # Use property
         print(f"Current Player: {current_player_str} (ID: {self.current_player_id})")

@@ -12,6 +12,7 @@ import psutil   # Added: For memory monitoring
 import gc       # Added: For garbage collection
 
 from game_env import SwitcharooEnv, PLAYER_A_ID, PLAYER_B_ID # Keep game_env specific imports
+from game_env_jit import SwitcharooEnvJitWrapper
 from env_const import ROWS, COLS, NUM_PIECES, MAX_MOVES_PER_PIECE, NUM_ACTIONS # Import constants from env_const
 from az_network import AlphaZeroNetwork
 from mcts import MCTS, MCTSNode  # Python MCTS
@@ -34,7 +35,6 @@ from config import (
     AZ_PROGRESSIVE_CURRICULUM, AZ_CURRICULUM_SCHEDULE, AZ_POSITION_WEIGHTS,
     AZ_CURRICULUM_LOGGING, AZ_POSITION_SPECIFIC_METRICS
 )
-
 # Helper function for temperature decay
 def get_temperature(total_game_steps):
     """
@@ -183,10 +183,11 @@ class AlphaZeroTrainer:
                 print(f"⚠️  GPU Memory Growth setting failed: {e}")
         
         if use_jit_env:
-            from game_env_jit import SwitcharooEnvJitWrapper
-            self.game_env = SwitcharooEnvJitWrapper()
+            self.game_env_class = SwitcharooEnvJitWrapper
+            self.game_env = self.game_env_class()
         else:
-            self.game_env = SwitcharooEnv()
+            self.game_env_class = SwitcharooEnv
+            self.game_env = self.game_env_class()
 
         # --- Step 1.3: Static Dataset Handling ---
         if AZ_GENERATE_STATIC_DATASET:
@@ -487,7 +488,7 @@ class AlphaZeroTrainer:
                 if USE_NUMBA:
                     # print("Using Numba-optimized MCTS implementation.")
                     mcts_handler = MCTSNumba(neural_network=self.current_nn, 
-                                             game_env_class=SwitcharooEnv, 
+                                             game_env_class=self.game_env_class, 
                                              config=self.mcts_config)
                     # Ensure board is copied and C-contiguous for Numba
                     board_copy_for_mcts = np.ascontiguousarray(self.game_env.board)
@@ -513,7 +514,7 @@ class AlphaZeroTrainer:
                     # print("Using Python MCTS implementation.")
                     root_node = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id)
                     mcts_handler = MCTS(neural_network=self.current_nn, 
-                                        game_env_class=SwitcharooEnv, 
+                                        game_env_class=self.game_env_class, 
                                         config=self.mcts_config)
                     mcts_handler.run_mcts_simulations(
                         root_node,
@@ -982,7 +983,7 @@ class AlphaZeroTrainer:
         eval_temperature = 0.01  # Further reduced for even more deterministic evaluation play
 
         for game_idx in tqdm(range(AZ_EVALUATION_GAMES_COUNT), desc="Evaluation Games"):  # Added tqdm
-            eval_env = SwitcharooEnv()
+            eval_env = self.game_env_class()
             
             # Use curriculum-based position selection for evaluation
             if AZ_PROGRESSIVE_CURRICULUM:
@@ -991,7 +992,7 @@ class AlphaZeroTrainer:
             else:
                 # Original random selection
                 starting_position_str = random.choice(initial_position)
-            
+            # print(f"Starting Evaluation Game {game_idx+1}/{AZ_EVALUATION_GAMES_COUNT} with starting position:\n{starting_position_str}")
             eval_env.reset(starting_position=starting_position_str)
             done = False
             game_step_count_eval = 0  # Initialize step counter for evaluation game
@@ -1011,7 +1012,7 @@ class AlphaZeroTrainer:
                     # print("Using Numba-optimized MCTS implementation.")
                     mcts_eval = MCTSNumba(
                         neural_network=active_model,
-                        game_env_class=SwitcharooEnv,
+                        game_env_class=self.game_env_class,
                         config=self.mcts_config
                     )
                     # Get current state representation for NN prediction
@@ -1036,7 +1037,7 @@ class AlphaZeroTrainer:
                     root_eval = MCTSNode(parent=None, prior_p=0.0, player_id=current_player_id_eval)
                     mcts_eval = MCTS(
                         neural_network=active_model,
-                        game_env_class=SwitcharooEnv,
+                        game_env_class=self.game_env_class,
                         config=self.mcts_config
                     )
                     mcts_eval.run_mcts_simulations(
@@ -1064,7 +1065,10 @@ class AlphaZeroTrainer:
                     if not done:
                         print(f"Warning: Eval Game {game_idx+1} reached MAX_STEPS_PER_EPISODE ({MAX_STEPS_PER_EPISODE}). Ending game.")
                     done = True
-
+                if game_step_count_eval < args.log_first_n:
+                    start_r, start_c, end_r, end_c = eval_env._action_index_to_move(action_eval)
+                    print(f"Player {current_player_id_eval} ({current_names[current_player_id_eval]}) took action ({start_r}, {start_c}) -> ({end_r}, {end_c})")
+                    eval_env.render()
             
             game_winner_id = eval_env.winner_id
             # --- Draw logic fix ---
@@ -1218,6 +1222,8 @@ if __name__ == '__main__':
     parser.add_argument('--disable-xla', action='store_true', help="Disable XLA JIT compilation")
     parser.add_argument('--diagnostics', action='store_true', help="Enable extra diagnostics and debugging output.")
     parser.add_argument('--start-iteration', type=int, default=1, help="Starting iteration number for training (default: 1)")
+    parser.add_argument('--log-first-n', type=int, default=0, help="Log the first N items for debugging/inspection (default: 0)")
+    
     args = parser.parse_args()
 
     # Enable TensorFlow debug logging for numerical issues
