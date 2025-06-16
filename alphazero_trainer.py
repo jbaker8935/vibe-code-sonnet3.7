@@ -107,13 +107,16 @@ def get_curriculum_aware_temperature(total_game_steps, iteration):
         phase_max_temp = 0.25
     elif current_phase_name == 'phase_5':
         phase_min_temp = 0.01
+        phase_max_temp = 0.15
+    elif current_phase_name == 'phase_6':
+        phase_min_temp = 0.01
         phase_max_temp = 0.1
     else:
         phase_min_temp = TEMPERATURE_END
         phase_max_temp = TEMPERATURE_START
 
     # Anneal temperature within phase, with last 10% at min temp
-    anneal_portion = 0.9  # 90% of phase for annealing, last 10% at min temp
+    anneal_portion = 0.85  # 85% of phase for annealing, last 15% at min temp
     if phase_progress < anneal_portion:
         local_progress = phase_progress / anneal_portion
         phase_temp = phase_max_temp * (1 - local_progress) + phase_min_temp * local_progress

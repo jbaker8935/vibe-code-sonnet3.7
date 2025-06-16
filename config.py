@@ -1,6 +1,8 @@
 """Configuration settings for the Switcharoo game training."""
 import os
 
+from example_openings import (openings);
+
 # Training Phases Configuration
 PHASE1_EPISODES = 50000      # Episodes for Phase 1 (random opponent)
 PHASE2_EPISODES = 50000     # Episodes for Phase 2 (self-play)
@@ -156,7 +158,15 @@ AZ_CURRICULUM_SCHEDULE = {
         'target_policy_accuracy': 0.52,  # AMBITIOUS: Higher target based on Phase 4's 87.4% success
         'learning_rate': 8e-6,
         'description': 'Ultra-precision mastery and tournament-level refinement'
-    }
+    },
+    # Phase 6: Openings (401-500) - NEW: Focus on opening strategies
+    'phase_6': {
+        'iterations': (401, 500),        
+        'positions': openings,
+        'target_policy_accuracy': 0.52,  # AMBITIOUS: Higher target based on Phase 4's 87.4% success
+        'learning_rate': 8e-6,
+        'description': 'Opening strategies mastery'
+    }    
 }
 
 # Position-specific weights for balanced training
@@ -168,6 +178,8 @@ AZ_POSITION_WEIGHTS = {
     POSITION_INTERMEDIATE_3: 1,     # IMPROVED: Reduced complexity weight
     POSITION_INTERMEDIATE_4: 1      # IMPROVED: Reduced complexity weight    
 }
+for position in openings:
+    AZ_POSITION_WEIGHTS[position] = 1  # Ensure all openings have a base weight
 
 # Curriculum monitoring
 AZ_CURRICULUM_LOGGING = True          # Enable detailed curriculum logging
@@ -188,7 +200,7 @@ DIRICHLET_EPSILON = 0.18       # INCREASED: More noise for exploration across po
 
 # AlphaZero Training Loop Parameters - PHASE 4 FULL MASTERY (JIT-OPTIMIZED)
 # Building on Phase 3's excellent results: 94.9% policy accuracy, 23/39 model updates
-AZ_ITERATIONS = 400             # PHASE 5: Ultra-mastery and fine-tuning (321-400)
+AZ_ITERATIONS = 500             
 AZ_GAMES_PER_ITERATION = 25      
 AZ_TRAINING_STEPS_PER_ITERATION = 1200   # INCREASED: Deeper learning for complex positions
 AZ_REPLAY_BUFFER_SIZE = 20000    # EXPANDED: Larger buffer for 4-position diversity
