@@ -10,6 +10,10 @@ import os
 from tensorflow import keras
 import argparse
 from time import sleep
+import glob
+from az_network import AlphaZeroNetwork
+from game_env_jit import SwitcharooEnvJitWrapper
+from env_const import NUM_ACTIONS
 
 def create_agent_variant(base_agent, noise_scale=NOISE_SCALE, epsilon=0.0):
     """Create a variant of the base agent by adding Gaussian noise to its weights."""
@@ -197,14 +201,130 @@ def run_pretrained_tournament(models_dir, matches_per_pair=10, max_steps=MAX_STE
     print(f"Winner: {sorted_scores[0][0]} with {sorted_scores[0][1]} points")
     return sorted_scores
 
+def get_az_model_paths(models_dir=".", pattern="switcharoo_az_checkpoint_iter*.weights.h5"):
+    search_path = os.path.join(models_dir, pattern)
+    return sorted(glob.glob(search_path))
+
+def play_az_game(model_a, model_b, verbose=False):
+    env = SwitcharooEnvJitWrapper()
+    state = env.reset()
+    done = False
+    current_player = 0  # 0: model_a, 1: model_b
+    while not done:
+        if current_player == 0:
+            policy, _ = model_a.predict(state)
+        else:
+            policy, _ = model_b.predict(state)
+        legal_moves = env.get_legal_action_indices()
+        policy_masked = policy.copy()
+        mask = np.zeros_like(policy_masked)
+        mask[legal_moves] = 1
+        policy_masked *= mask
+        if policy_masked.sum() == 0:
+            action = np.random.choice(legal_moves)
+        else:
+            policy_masked /= policy_masked.sum()
+            action = np.random.choice(len(policy_masked), p=policy_masked)
+        state, reward, done, info = env.step(action)
+        current_player = 1 - current_player
+        if verbose:
+            env.render()
+    return info['winner']
+
+def run_az_tournament(model_paths, games_per_pair=2):
+    n = len(model_paths)
+    results = np.zeros((n, n), dtype=int)
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            print(f"\nMatch: {model_paths[i]} vs {model_paths[j]}")
+            model_a = AlphaZeroNetwork(model_path=model_paths[i])
+            model_b = AlphaZeroNetwork(model_path=model_paths[j])
+            wins_a = 0
+            wins_b = 0
+            draws = 0
+            for g in range(games_per_pair):
+                if g % 2 == 0:
+                    winner = play_az_game(model_a, model_b)
+                else:
+                    winner = play_az_game(model_b, model_a)
+                    if winner == 'A':
+                        winner = 'B'
+                    elif winner == 'B':
+                        winner = 'A'
+                if winner == 'A':
+                    wins_a += 1
+                elif winner == 'B':
+                    wins_b += 1
+                else:
+                    draws += 1
+            print(f"  {model_paths[i]} wins: {wins_a}, {model_paths[j]} wins: {wins_b}, Draws: {draws}")
+            results[i, j] = wins_a
+    return results, model_paths
+
+def calculate_elo(results, games_per_pair=2, initial_elo=1500, k=32):
+    n = results.shape[0]
+    elos = np.full(n, initial_elo, dtype=float)
+    total_games = games_per_pair * 2
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            wins_i = results[i, j]
+            wins_j = results[j, i]
+            draws = total_games - wins_i - wins_j
+            for _ in range(wins_i):
+                expected_i = 1 / (1 + 10 ** ((elos[j] - elos[i]) / 400))
+                elos[i] += k * (1 - expected_i)
+                elos[j] += k * (0 - (1 - expected_i))
+            for _ in range(wins_j):
+                expected_j = 1 / (1 + 10 ** ((elos[i] - elos[j]) / 400))
+                elos[j] += k * (1 - expected_j)
+                elos[i] += k * (0 - (1 - expected_j))
+            for _ in range(draws):
+                expected_i = 1 / (1 + 10 ** ((elos[j] - elos[i]) / 400))
+                elos[i] += k * (0.5 - expected_i)
+                elos[j] += k * (0.5 - (1 - expected_i))
+    return elos
+
+def print_az_results(results, model_paths, elos=None):
+    n = len(model_paths)
+    print("\nAlphaZero Round Robin Results (entries = wins as Player A):")
+    header = [p for p in model_paths]
+    print("\t" + "\t".join(header))
+    for i in range(n):
+        row = [model_paths[i]] + [str(results[i, j]) for j in range(n)]
+        print("\t".join(row))
+    if elos is not None:
+        print("\nELO Ratings:")
+        sorted_indices = np.argsort(-elos)
+        for rank, idx in enumerate(sorted_indices, 1):
+            print(f"{rank}. {model_paths[idx]}: {elos[idx]:.1f}")
+        print(f"\nTop model: {model_paths[sorted_indices[0]]} (ELO {elos[sorted_indices[0]]:.1f})")
+
+def run_alphazero_tournament(models_dir=".", games_per_pair=2):
+    model_paths = get_az_model_paths(models_dir)
+    if len(model_paths) < 2:
+        print(f"Not enough AlphaZero models found for tournament in {models_dir}.")
+        return
+    results, model_paths = run_az_tournament(model_paths, games_per_pair=games_per_pair)
+    elos = calculate_elo(results, games_per_pair=games_per_pair)
+    print_az_results(results, model_paths, elos=elos)
+
+# Add CLI option for AlphaZero tournament
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Switcharoo Tournament Runner")
     parser.add_argument('--pretrained_tournament', action='store_true', help='Run round-robin tournament between all .h5 agents in a directory')
     parser.add_argument('--models_dir', type=str, default='.', help='Directory containing .h5 agent files')
     parser.add_argument('--matches_per_pair', type=int, default=10, help='Matches per agent pair (per side)')
+    parser.add_argument('--alphazero_tournament', action='store_true', help='Run round-robin tournament between all AlphaZeroNetwork models in the workspace')
+    parser.add_argument('--az_games_per_pair', type=int, default=2, help='Games per AlphaZero model pair (per side)')
     args = parser.parse_args()
 
     if args.pretrained_tournament:
         run_pretrained_tournament(args.models_dir, args.matches_per_pair)
+    elif args.alphazero_tournament:
+        run_alphazero_tournament(models_dir=args.models_dir, games_per_pair=args.az_games_per_pair)
     else:
-        print("No mode selected. Use --pretrained_tournament to run a round-robin tournament.")
+        print("No mode selected. Use --pretrained_tournament or --alphazero_tournament to run a round-robin tournament.")
