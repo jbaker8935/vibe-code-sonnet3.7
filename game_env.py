@@ -74,6 +74,9 @@ class SwitcharooEnv:
         self.step_count = 0  # Add step counter
         self.move_history_a = None
         self.move_history_b = None
+        # For history tracking (to match JIT wrapper)
+        self._prev_board_1 = np.zeros((ROWS, COLS), dtype=np.int8)
+        self._prev_board_2 = np.zeros((ROWS, COLS), dtype=np.int8)
         self.reset()
 
     def reset(self, starting_position=None, board_state_array=None, specific_player_to_start=None):
@@ -115,98 +118,9 @@ class SwitcharooEnv:
             PLAYER_B_ID: np.sum((self.board[0:2, :] == B_NORMAL) | (self.board[0:2, :] == B_SWAPPED)),
         }
 
+        self._prev_board_1 = np.zeros((ROWS, COLS), dtype=np.int8)
+        self._prev_board_2 = np.zeros((ROWS, COLS), dtype=np.int8)
         return self._get_state()
-
-    def _get_state(self):
-        """
-        Returns a 6-channel binary representation of the board state and current player.
-        Channel 0: Player A Normal pieces (A_NORMAL) (1.0 if present, 0.0 otherwise)
-        Channel 1: Player A Swapped pieces (A_SWAPPED)
-        Channel 2: Player B Normal pieces (B_NORMAL)
-        Channel 3: Player B Swapped pieces (B_SWAPPED)
-        Channel 4: Empty cells (EMPTY_CELL)
-        Channel 5: Current player (all 0.0 for Player A, all 1.0 for Player B)
-
-        Each channel is a flattened ROWS x COLS board.
-        Total state size: 6 * ROWS * COLS.
-        """
-        flat_board_size = ROWS * COLS
-
-        # Board state channels
-        channel_a_normal = (self.board == A_NORMAL).astype(np.float32).flatten()
-        channel_a_swapped = (self.board == A_SWAPPED).astype(np.float32).flatten()
-        channel_b_normal = (self.board == B_NORMAL).astype(np.float32).flatten()
-        channel_b_swapped = (self.board == B_SWAPPED).astype(np.float32).flatten()
-        channel_empty = (self.board == EMPTY_CELL).astype(np.float32).flatten()
-
-        # Player channel
-        player_channel = np.zeros(flat_board_size, dtype=np.float32)
-        if self.current_player_id == PLAYER_B_ID:
-            player_channel.fill(1.0)
-
-        # Concatenate all channels
-        state = np.concatenate([
-            channel_a_normal,
-            channel_a_swapped,
-            channel_b_normal,
-            channel_b_swapped,
-            channel_empty,
-            player_channel
-        ])
-        return state
-
-    def _get_state_for_nn(self):
-        """Returns state representation in the format expected by the neural network.
-        This is an alias for _get_state() to maintain compatibility with both MCTS implementations."""
-        return self._get_state()
-
-    # _is_valid is now a JIT function
-
-    # _unmark_all_swapped is now a JIT function (operates on board passed to it)
-
-    def get_legal_moves(self, player=None):
-        """Calculates all legal moves for the given player (A or B)."""
-        player_id = PLAYER_ID_MAP[player] if player else self.current_player_id
-        # Call the JIT compiled function
-        return _get_legal_moves_jit(self.board, player_id)
-
-    def get_legal_action_indices(self, player=None):
-        """Returns a list of valid action indices for the current player."""
-        legal_moves = self.get_legal_moves(player)  # Uses JIT function internally
-        return _calculate_action_indices_jit(legal_moves, DIRECTIONS)
-
-    def _action_index_to_move(self, action_index):
-        """Converts an action index back to (start_r, start_c, end_r, end_c)."""
-        if not (0 <= action_index < NUM_ACTIONS):
-            return None # Invalid index
-
-        direction_index = action_index % NUM_DIRECTIONS
-        start_cell_index = action_index // NUM_DIRECTIONS
-
-        start_r = start_cell_index // COLS
-        start_c = start_cell_index % COLS
-
-        dr, dc = DIRECTIONS[direction_index]
-        end_r, end_c = start_r + dr, start_c + dc
-
-        # Basic validation (coordinate check)
-        if not _is_valid(start_r, start_c) or not _is_valid(end_r, end_c):
-             # print(f"Warning: Action index {action_index} results in invalid coords.")
-             return None # Should ideally not happen if action index is from legal list
-
-        return start_r, start_c, end_r, end_c
-
-    def check_win_condition(self, player=None):
-        """Checks if the given player (A or B) has won and returns the winning path if any."""
-        player_id = PLAYER_ID_MAP[player] if player else self.current_player_id
-        
-        # First use the faster win check to see if there's a win at all
-        if _check_win_condition_jit(self.board, player_id):
-            # If a win is detected, call the path-finding function to get the actual path
-            win_path = _find_winning_path_jit(self.board, player_id)
-            return True, win_path
-        
-        return False, []
 
     def step(self, action_index):
         """
@@ -290,7 +204,92 @@ class SwitcharooEnv:
         info = {'winner': winner_player, 'move_type': move_type}
         if not is_legal:
             info['error'] = 'Illegal move'
+        # After applying the move, update history
+        self._prev_board_2 = np.copy(self._prev_board_1)
+        self._prev_board_1 = np.copy(self.board)
         return next_state, reward, done, info
+
+    def _get_state(self):
+        """
+        Returns a 6-channel binary representation of the board state and current player,
+        for current + 2 prior board states, stacked as (8, 4, 18) for tfjs compatibility.
+        """
+        def encode_board(board, player_id):
+            # Returns (6, 8, 4): channels, rows, cols
+            channel_a_normal = (board == A_NORMAL).astype(np.float32)
+            channel_a_swapped = (board == A_SWAPPED).astype(np.float32)
+            channel_b_normal = (board == B_NORMAL).astype(np.float32)
+            channel_b_swapped = (board == B_SWAPPED).astype(np.float32)
+            channel_empty = (board == EMPTY_CELL).astype(np.float32)
+            player_channel = np.zeros((ROWS, COLS), dtype=np.float32)
+            if player_id == PLAYER_B_ID:
+                player_channel.fill(1.0)
+            # Stack channels: (6, 8, 4)
+            return np.stack([
+                channel_a_normal, channel_a_swapped, channel_b_normal,
+                channel_b_swapped, channel_empty, player_channel
+            ], axis=0)
+        current = encode_board(self.board, self.current_player_id)  # (6, 8, 4)
+        opponent_player_id = PLAYER_B_ID if self.current_player_id == PLAYER_A_ID else PLAYER_A_ID
+        prev1 = encode_board(self._prev_board_1, opponent_player_id)  # (6, 8, 4)
+        prev2 = encode_board(self._prev_board_2, self.current_player_id)  # (6, 8, 4)
+        # Stack history on channel axis: (18, 8, 4)
+        stacked = np.concatenate([current, prev1, prev2], axis=0)
+        # Transpose to (8, 4, 18) for tfjs (channels last)
+        state = np.transpose(stacked, (1, 2, 0))
+        return state
+
+    def _get_state_for_nn(self):
+        """Returns state representation in the format expected by the neural network (8, 4, 18)."""
+        return self._get_state()
+
+    # _is_valid is now a JIT function
+
+    # _unmark_all_swapped is now a JIT function (operates on board passed to it)
+
+    def get_legal_moves(self, player=None):
+        """Calculates all legal moves for the given player (A or B)."""
+        player_id = PLAYER_ID_MAP[player] if player else self.current_player_id
+        # Call the JIT compiled function
+        return _get_legal_moves_jit(self.board, player_id)
+
+    def get_legal_action_indices(self, player=None):
+        """Returns a list of valid action indices for the current player."""
+        legal_moves = self.get_legal_moves(player)  # Uses JIT function internally
+        return _calculate_action_indices_jit(legal_moves, DIRECTIONS)
+
+    def _action_index_to_move(self, action_index):
+        """Converts an action index back to (start_r, start_c, end_r, end_c)."""
+        if not (0 <= action_index < NUM_ACTIONS):
+            return None # Invalid index
+
+        direction_index = action_index % NUM_DIRECTIONS
+        start_cell_index = action_index // NUM_DIRECTIONS
+
+        start_r = start_cell_index // COLS
+        start_c = start_cell_index % COLS
+
+        dr, dc = DIRECTIONS[direction_index]
+        end_r, end_c = start_r + dr, start_c + dc
+
+        # Basic validation (coordinate check)
+        if not _is_valid(start_r, start_c) or not _is_valid(end_r, end_c):
+             # print(f"Warning: Action index {action_index} results in invalid coords.")
+             return None # Should ideally not happen if action index is from legal list
+
+        return start_r, start_c, end_r, end_c
+
+    def check_win_condition(self, player=None):
+        """Checks if the given player (A or B) has won and returns the winning path if any."""
+        player_id = PLAYER_ID_MAP[player] if player else self.current_player_id
+        
+        # First use the faster win check to see if there's a win at all
+        if _check_win_condition_jit(self.board, player_id):
+            # If a win is detected, call the path-finding function to get the actual path
+            win_path = _find_winning_path_jit(self.board, player_id)
+            return True, win_path
+        
+        return False, []
 
     @property
     def current_player(self):

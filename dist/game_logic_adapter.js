@@ -121,7 +121,7 @@ class SwitcharooGameLogic {
             // Move to empty cell
             newBoard[end.row][end.col] = movingPiece;
             newBoard[start.row][start.col] = null;
-            this.unmarkSwapped(player);
+            this.unmarkSwapped(newBoard, player);
         } else {
             // Swap move
             if (targetPiece.player === player) {
@@ -224,54 +224,67 @@ class SwitcharooGameLogic {
     }
 
     /**
-     * Convert board state to neural network input format
-     * @param {Array} boardState - 2D board array
+     * Convert board state (or history) to neural network input format (history stacking)
+     * @param {Array} historyBoards - Array of up to 3 board states (oldest first, newest last), or a single board
      * @param {string} currentPlayer - Current player
      * @returns {Float32Array} - Neural network input
      */
-    boardToNNInput(boardState, currentPlayer) {
-        const flatBoardSize = this.ROWS * this.COLS; // 32
-        const totalSize = 6 * flatBoardSize; // 192
-        const nnInput = new Float32Array(totalSize);
-
-        // Initialize all channels to 0
-        for (let i = 0; i < totalSize; i++) {
-            nnInput[i] = 0.0;
+    boardToNNInput(historyBoards, currentPlayer) {
+        // If a single board is provided, wrap it in an array for backward compatibility
+        if (!Array.isArray(historyBoards) || (historyBoards.length && !Array.isArray(historyBoards[0]))) {
+            historyBoards = [historyBoards];
         }
-
-        // Process each cell
-        for (let r = 0; r < this.ROWS; r++) {
-            for (let c = 0; c < this.COLS; c++) {
-                const pos = r * this.COLS + c;
-                const pieceData = boardState[r][c];
-
-                if (pieceData) {
-                    if (pieceData.player === this.PLAYER_A) {
-                        if (pieceData.state === this.NORMAL) {
-                            nnInput[0 * flatBoardSize + pos] = 1.0; // Channel 0: A normal
+        const flatBoardSize = this.ROWS * this.COLS; // 32
+        const singleBoardSize = 192; // 6 * 32
+        const totalSize = 576; // 3 * 192
+        const nnInput = new Float32Array(totalSize);
+        for (let h = 0; h < 3; h++) {
+            const board = historyBoards[h] ? historyBoards[h] : this._createEmptyBoard();
+            const offset = h * singleBoardSize;
+            for (let r = 0; r < this.ROWS; r++) {
+                for (let c = 0; c < this.COLS; c++) {
+                    const pos = r * this.COLS + c;
+                    const pieceData = board[r][c];
+                    if (pieceData) {
+                        if (pieceData.player === this.PLAYER_A) {
+                            if (pieceData.state === this.NORMAL) {
+                                nnInput[offset + pos] = 1.0;
+                            } else {
+                                nnInput[offset + flatBoardSize + pos] = 1.0;
+                            }
                         } else {
-                            nnInput[1 * flatBoardSize + pos] = 1.0; // Channel 1: A swapped
+                            if (pieceData.state === this.NORMAL) {
+                                nnInput[offset + 2 * flatBoardSize + pos] = 1.0;
+                            } else {
+                                nnInput[offset + 3 * flatBoardSize + pos] = 1.0;
+                            }
                         }
                     } else {
-                        if (pieceData.state === this.NORMAL) {
-                            nnInput[2 * flatBoardSize + pos] = 1.0; // Channel 2: B normal
-                        } else {
-                            nnInput[3 * flatBoardSize + pos] = 1.0; // Channel 3: B swapped
-                        }
+                        nnInput[offset + 4 * flatBoardSize + pos] = 1.0;
                     }
-                } else {
-                    nnInput[4 * flatBoardSize + pos] = 1.0; // Channel 4: Empty
+                }
+            }
+            // Player channel for this board (for current board only)
+            if (h === 2) {
+                const playerValue = (currentPlayer === this.PLAYER_A) ? 0.0 : 1.0;
+                for (let pos = 0; pos < flatBoardSize; pos++) {
+                    nnInput[offset + 5 * flatBoardSize + pos] = playerValue;
                 }
             }
         }
-
-        // Channel 5: Current player
-        const playerValue = (currentPlayer === this.PLAYER_A) ? 0.0 : 1.0;
-        for (let pos = 0; pos < flatBoardSize; pos++) {
-            nnInput[5 * flatBoardSize + pos] = playerValue;
-        }
-
         return nnInput;
+    }
+
+    _createEmptyBoard() {
+        const board = [];
+        for (let r = 0; r < this.ROWS; r++) {
+            const row = [];
+            for (let c = 0; c < this.COLS; c++) {
+                row.push(null);
+            }
+            board.push(row);
+        }
+        return board;
     }
 
     /**
@@ -364,13 +377,13 @@ class SwitcharooGameLogic {
      * @param {Array} boardState - 2D board array (modified in place)
      * @param {string} player - Player whose pieces to unmark
      */
-    unmarkSwapped(player) {
+    unmarkSwapped(board, player) {
         for (let r = 0; r < this.ROWS; r++) {
             for (let c = 0; c < this.COLS; c++) {
-                if (boardState[r][c] && 
-                    boardState[r][c].player === player && 
-                    boardState[r][c].state === this.SWAPPED) {
-                    boardState[r][c].state = this.NORMAL;
+                if (board[r][c] && 
+                    board[r][c].player === player && 
+                    board[r][c].state === this.SWAPPED) {
+                    board[r][c].state = this.NORMAL;
                 }
             }
         }

@@ -4,6 +4,8 @@
  * Compatible with TensorFlow.js models and existing game logic
  */
 
+import { boardToNNInput } from './game-ai.js';
+
 class MCTSNode {
     constructor(parent = null, priorP = 0.0, playerId = null) {
         this.parent = parent;
@@ -126,22 +128,38 @@ class MCTSSearch {
      * @param {string} currentPlayer - PLAYER_A or PLAYER_B
      * @param {Function} neuralNetworkPredict - Function that takes board state and returns {policy, value}
      * @param {Function} gameLogic - Object with game logic functions
+     * @param {Array} boardHistory - Array of up to 3 board states (oldest first, newest last)
      * @returns {Array} - Action probabilities array
      */
-    async search(boardState, currentPlayer, neuralNetworkPredict, gameLogic) {
+    async search(boardState, currentPlayer, neuralNetworkPredict, gameLogic, boardHistory = null) {
+        // Helper to get last 3 boards for history stacking
+        function getHistoryArray(current, historyArr) {
+            // historyArr: array of previous boards, oldest first, newest last (excluding current)
+            // Returns array of 3 boards: [oldest, ..., current]
+            const arr = [];
+            if (historyArr && Array.isArray(historyArr)) {
+                // Take up to last 2 from historyArr
+                const len = historyArr.length;
+                if (len >= 2) arr.push(historyArr[len-2]);
+                if (len >= 1) arr.push(historyArr[len-1]);
+            }
+            // Pad with nulls if needed
+            while (arr.length < 2) arr.unshift(null);
+            arr.push(current); // Current board is always last
+            return arr;
+        }
+        const historyArr = boardHistory || [];
+        const nnHistory = getHistoryArray(boardState, historyArr);
         if (!this.enabled) {
             // Fall back to direct neural network policy
-            const nnInput = gameLogic.boardToNNInput(boardState, currentPlayer);
+            const nnInput = boardToNNInput(nnHistory, currentPlayer);
             const prediction = await neuralNetworkPredict(nnInput);
             return this.applyTemperatureToPolicy(prediction.policy);
         }
-
         const rootNode = new MCTSNode(null, 0.0, currentPlayer);
-        
         // Get initial neural network prediction for root
-        const nnInput = gameLogic.boardToNNInput(boardState, currentPlayer);
+        const nnInput = boardToNNInput(nnHistory, currentPlayer);
         const rootPrediction = await neuralNetworkPredict(nnInput);
-        
         // Get legal actions
         const legalActions = gameLogic.getLegalActions(boardState, currentPlayer);
         if (legalActions.length === 0) {
@@ -260,9 +278,8 @@ class MCTSSearch {
                 
                 if (legalActions.length > 0) {
                     // Get neural network prediction
-                    const nnInput = gameLogic.boardToNNInput(simBoard, currentPlayer);
+                    const nnInput = boardToNNInput([simBoard], currentPlayer);
                     const prediction = await neuralNetworkPredict(nnInput);
-                    
                     // Expand the leaf node
                     currentNode.expand(prediction.policy, legalActions);
                     value = prediction.value;
@@ -273,7 +290,7 @@ class MCTSSearch {
                 }
             } else {
                 // Already expanded, use neural network value
-                const nnInput = gameLogic.boardToNNInput(simBoard, currentPlayer);
+                const nnInput = boardToNNInput(simBoard, currentPlayer);
                 const prediction = await neuralNetworkPredict(nnInput);
                 value = prediction.value;
             }
@@ -440,3 +457,5 @@ class MCTSSearch {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { MCTSNode, MCTSSearch };
 }
+
+export { MCTSNode, MCTSSearch };

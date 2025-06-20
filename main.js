@@ -27,6 +27,7 @@ import {
 import {
     runBoardPositionTest
 } from './test-board-position.js';
+import { MCTSNode, MCTSSearch } from './mcts_js.js';
 
 // --- Main Orchestration ---
 // This code is adapted from script.js and is compatible with game_logic_adapter.js and mcts_js.js
@@ -51,7 +52,7 @@ let tfModel = null;
 let AI_DIFFICULTY = 'easy';
 let AI_DEPTH = 1;
 let ANALYSIS_MODE = false;
-let MCTS_ENABLED = false;
+let MCTS_ENABLED = true;
 let MCTS_SIMULATIONS = 50;
 let MCTS_TEMPERATURE = 0.1; // Better default for gameplay (was 0.01)
 let MCTS_PUCT_CONSTANT = 1.0;
@@ -169,25 +170,19 @@ async function loadTFJSModel() {
         
         // Test the model with a dummy prediction
         try {
-            console.log("Testing model with dummy input...");
-            const dummyInput = tf.zeros([1, 192]);
+            // Use a dummy input of shape [1, 8, 4, 18] for the new model
+            const dummyInput = tf.zeros([1, 8, 4, 18]);
             const inputNodeName = tfModel.inputs[0].name;
-            console.log("Input node name:", inputNodeName);
-            
-            const prediction = tfModel.execute({[inputNodeName]: dummyInput});
-            console.log("Dummy prediction successful, output tensors:", prediction.length);
-            
-            // Clean up test tensors
-            dummyInput.dispose();
-            if (Array.isArray(prediction)) {
-                prediction.forEach(tensor => tensor.dispose());
-            } else {
-                prediction.dispose();
+            const testOutput = tfModel.execute({ [inputNodeName]: dummyInput });
+            if (Array.isArray(testOutput)) {
+                testOutput.forEach(t => t.dispose());
+            } else if (testOutput && typeof testOutput.dispose === 'function') {
+                testOutput.dispose();
             }
-            console.log("Model test completed successfully");
+            dummyInput.dispose();
+            console.log("Model test prediction succeeded with dummy input shape [1, 8, 4, 18]");
         } catch (testError) {
-            console.warn("Model test failed:", testError);
-            console.warn("Proceeding anyway as model loaded successfully");
+            console.error("Model test failed:", testError);
         }
         
         // Make tfModel available globally for testing
@@ -591,14 +586,23 @@ if (mctsBtn && mctsOverlay) {
 const aiDifficultySelect = document.getElementById('ai-difficulty-select');
 function updateMCTSControlsVisibility() {
     const mctsOnlyElements = document.querySelectorAll('.mcts-only');
+    const mctsEnabledCheckbox = document.getElementById('mcts-enabled');
     if (aiDifficultySelect && aiDifficultySelect.value === 'hard_ai') {
         mctsOnlyElements.forEach(el => el.style.display = '');
         // Enable MCTS by default when switching to hard_ai
         MCTS_ENABLED = true;
+        if (mctsEnabledCheckbox) {
+            mctsEnabledCheckbox.checked = true;
+            mctsEnabledCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+        }
     } else {
         mctsOnlyElements.forEach(el => el.style.display = 'none');
         // Disable MCTS when not in AI Agent mode
         MCTS_ENABLED = false;
+        if (mctsEnabledCheckbox) {
+            mctsEnabledCheckbox.checked = false;
+            mctsEnabledCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+        }
     }
     // Update UI to reflect the MCTS_ENABLED state
     updateMCTSUI();
@@ -703,6 +707,15 @@ function updateMCTSUI() {
 document.addEventListener('DOMContentLoaded', () => {
     setupMCTSSliders();
     updateMCTSUI();
+    // Ensure MCTS is enabled by default if hard_ai is selected on load
+    if (aiDifficultySelect && aiDifficultySelect.value === 'hard_ai') {
+        MCTS_ENABLED = true;
+        const mctsEnabledCheckbox = document.getElementById('mcts-enabled');
+        if (mctsEnabledCheckbox) {
+            mctsEnabledCheckbox.checked = true;
+            mctsEnabledCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    }
 });
 
 // --- MCTS Button Image Update ---
@@ -889,20 +902,28 @@ if (boardElement) {
 
 async function triggerAIMove() {
     if (gameOver) return;
-    
     // Use the sophisticated AI from the advanced module
+    // Build history array for NN input (oldest first, newest last)
+    const nnHistory = (() => {
+        const arr = [];
+        if (moveHistory && moveHistory.length >= 2) arr.push(moveHistory[moveHistory.length-2].boardAfter);
+        if (moveHistory && moveHistory.length >= 1) arr.push(moveHistory[moveHistory.length-1].boardAfter);
+        while (arr.length < 2) arr.unshift(null);
+        arr.push(board);
+        return arr;
+    })();
+    // The advanced AI module will use this history if needed
     const bestMove = await findBestAIMove(
         board, 
         currentPlayer, 
         AI_DIFFICULTY, 
         AI_DEPTH, 
-        window.analysisMode, // analysisMode
-        MCTS_ENABLED, 
+        window.analysisMode,        MCTS_ENABLED, 
         MCTS_SIMULATIONS, 
         tfModel, 
         mctsSearch, 
-        gameLogic
-    );
+        gameLogic,
+        moveHistory    );
 
     if (bestMove) {
         const boardBefore = cloneBoard(board);

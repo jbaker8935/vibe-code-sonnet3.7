@@ -363,6 +363,8 @@ class AlphaZeroTrainer:
                 print(f"Could not initialize Weights & Biases: {e}. Will run without WandB logging.")
         else:
             print("Weights & Biases logging disabled by command-line argument.")
+        
+        print(f"[DEBUG] Using env class: {type(self.game_env)}; _get_state shape: {self.game_env._get_state().shape}")    
 
     def print_sample_predictions(self, n=3):
         print("\n[Diagnostics] Sample predictions from candidate network:")
@@ -497,8 +499,8 @@ class AlphaZeroTrainer:
                     board_copy_for_mcts = np.ascontiguousarray(self.game_env.board)
                     
                     # Get current state representation for NN prediction
-                    current_state_repr = self.game_env._get_state() # Assuming _get_state() is the correct method for NN input
-                    # Predict policy and value for the root node
+                    current_state_repr = self.game_env._get_state() # (8, 4, 18) for NN input
+                    # Do NOT flatten; pass as (8, 4, 18)
                     nn_policy, nn_value = self.current_nn.predict(current_state_repr)
                     
                     mcts_handler.run_mcts_simulations(
@@ -1019,8 +1021,8 @@ class AlphaZeroTrainer:
                         config=self.mcts_config
                     )
                     # Get current state representation for NN prediction
-                    current_state_repr_eval = eval_env._get_state() # Assuming _get_state() is the correct method for NN input
-                    # Predict policy and value for the root node
+                    current_state_repr_eval = eval_env._get_state() # (8, 4, 18) for NN input
+                    # Do NOT flatten; pass as (8, 4, 18)
                     nn_policy_eval, nn_value_eval = active_model.predict(current_state_repr_eval)
                     
                     mcts_eval.run_mcts_simulations(
@@ -1298,4 +1300,5 @@ if __name__ == '__main__':
 
     # Now run the main training loop (which will fill the buffer again as needed)
     # Use command line argument for start iteration (default 1)
+    
     trainer.train(start_iteration=args.start_iteration)

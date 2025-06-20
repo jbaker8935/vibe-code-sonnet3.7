@@ -4,77 +4,106 @@ import { cloneBoard } from './game-board.js';
 
 // --- AI Logic ---
 
-export function boardToNNInput(boardState, currentPlayer = PLAYER_B) {
-    const flatBoardSize = ROWS * COLS;
-    const totalSize = 6 * flatBoardSize;
-    const nnInput = new Float32Array(totalSize);
-    for (let i = 0; i < totalSize; i++) nnInput[i] = 0.0;
+// Helper to create an empty board (for padding history)
+function createEmptyBoard() {
+    const board = [];
     for (let r = 0; r < ROWS; r++) {
+        const row = [];
         for (let c = 0; c < COLS; c++) {
-            const pos = r * COLS + c;
-            const pieceData = boardState[r][c];
-            if (pieceData) {
-                if (pieceData.player === PLAYER_A) {
-                    if (pieceData.state === NORMAL) {
-                        nnInput[pos] = 1.0;
-                    } else {
-                        nnInput[flatBoardSize + pos] = 1.0;
+            row.push(null);
+        }
+        board.push(row);
+    }
+    return board;
+}
+
+// Updated: Accepts an array of up to 3 boards (oldest first, newest last)
+export function boardToNNInput(historyBoards, currentPlayer = PLAYER_B) {
+    // historyBoards: array of up to 3 board states, oldest first, newest last
+    // Output: [8, 4, 18] tensor (rows, cols, channels)
+    // Channels: 0-5: Player A (normal, swapped, empty, ...), 6-11: Player B, 12-17: misc (see below)
+    // We'll use:
+    // 0: Player A, normal, board t-2
+    // 1: Player A, swapped, board t-2
+    // 2: Player B, normal, board t-2
+    // 3: Player B, swapped, board t-2
+    // 4: empty, board t-2
+    // 5: player channel, board t-2
+    // 6-11: same for t-1
+    // 12-17: same for t (current)
+    // But for simplicity, use 3 boards, 6 channels each: [A-normal, A-swapped, B-normal, B-swapped, empty, player]
+    // So channel = h*6 + type
+    const numBoards = 3;
+    const channelsPerBoard = 6;
+    const nnInput = [];
+    for (let r = 0; r < ROWS; r++) {
+        nnInput[r] = [];
+        for (let c = 0; c < COLS; c++) {
+            nnInput[r][c] = new Array(numBoards * channelsPerBoard).fill(0);
+        }
+    }
+    for (let h = 0; h < numBoards; h++) {
+        const board = historyBoards && historyBoards[h] ? historyBoards[h] : createEmptyBoard();
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                const pieceData = board[r][c];
+                let base = h * channelsPerBoard;
+                if (pieceData) {
+                    if (pieceData.player === PLAYER_A) {
+                        if (pieceData.state === NORMAL) {
+                            nnInput[r][c][base + 0] = 1.0;
+                        } else {
+                            nnInput[r][c][base + 1] = 1.0;
+                        }
+                    } else if (pieceData.player === PLAYER_B) {
+                        if (pieceData.state === NORMAL) {
+                            nnInput[r][c][base + 2] = 1.0;
+                        } else {
+                            nnInput[r][c][base + 3] = 1.0;
+                        }
                     }
                 } else {
-                    if (pieceData.state === NORMAL) {
-                        nnInput[2 * flatBoardSize + pos] = 1.0;
-                    } else {
-                        nnInput[3 * flatBoardSize + pos] = 1.0;
-                    }
+                    nnInput[r][c][base + 4] = 1.0;
                 }
-            } else {
-                nnInput[4 * flatBoardSize + pos] = 1.0;
+                // Player channel for current board only
+                if (h === 2) {
+                    nnInput[r][c][base + 5] = (currentPlayer === PLAYER_B) ? 1.0 : 0.0;
+                }
             }
         }
     }
-    const playerValue = (currentPlayer === PLAYER_A) ? 0.0 : 1.0;
-    for (let pos = 0; pos < flatBoardSize; pos++) {
-        nnInput[5 * flatBoardSize + pos] = playerValue;
-    }
-    console.log("Converted board to NN input:", nnInput);
+    // Output shape: [8, 4, 18]
+    // Flatten last dimension if needed by tfjs
     return nnInput;
 }
 
 export async function neuralNetworkPredict(tfModel, nnInput) {
     if (!tfModel) throw new Error("TensorFlow model not loaded");
-    if (!nnInput || nnInput.length !== 192) throw new Error(`Invalid NN input: expected 192 elements, got ${nnInput?.length}`);
+    // nnInput: [8,4,18] (rows, cols, channels)
+    if (!nnInput || nnInput.length !== 8 || nnInput[0].length !== 4 || nnInput[0][0].length !== 18) throw new Error(`Invalid NN input: expected [8,4,18], got ${JSON.stringify([nnInput?.length, nnInput?.[0]?.length, nnInput?.[0]?.[0]?.length])}`);
     let inputTensor;
     let outputTensors;
     try {
-        inputTensor = tf.tensor2d([nnInput]);
-        const inputNodeName = tfModel.inputs[0].name;
-        outputTensors = tfModel.execute({[inputNodeName]: inputTensor});
-        if (outputTensors.length < 2) throw new Error(`Expected 2 output tensors (value, policy), got ${outputTensors.length}`);
-        
-        // Correct assignment based on model.json and runtime tensor shapes:
-        // tfModel.outputs[0] is "Identity_1" (value, shape [?, 1]) -> maps to outputTensors[0]
-        // tfModel.outputs[1] is "Identity" (policy, shape [?, 256]) -> maps to outputTensors[1]
-        // TensorFlow.js returns tensors in the order they are defined in the model's signature.
-        const valueOutputTensor = outputTensors[0];  // Value is first (Identity_1)
-        const policyOutputTensor = outputTensors[1]; // Policy is second (Identity)
-        
-        // Validate shapes
-        const policyShape = policyOutputTensor.shape;
-        const valueShape = valueOutputTensor.shape;
-        if (policyShape[1] !== 256) {
-            console.error(`ERROR: Policy tensor has wrong shape [${policyShape}], expected [1, 256]`);
+        inputTensor = tf.tensor([nnInput], [1, 8, 4, 18]); // batch, rows, cols, channels
+        // Model expects input shape [1,8,4,18]
+        const outputs = tfModel.predict(inputTensor);
+        // outputs: [policy, value] or {policy_output, value_output}
+        let policy, value;
+        if (Array.isArray(outputs)) {
+            [policy, value] = outputs;
+        } else if (outputs.policy_output && outputs.value_output) {
+            policy = outputs.policy_output;
+            value = outputs.value_output;
+        } else {
+            throw new Error("Unexpected model output format");
         }
-        if (valueShape[1] !== 1) {
-            console.error(`ERROR: Value tensor has wrong shape [${valueShape}], expected [1, 1]`);
-        }
-        
-        const valueData = valueOutputTensor.arraySync();
-        const policyData = policyOutputTensor.arraySync();
-        const value = valueData[0][0];
-        const policy = policyData[0];
+        // policy: [1,256], value: [1,1]
+        const policyData = (await policy.data())[0] ? Array.from(await policy.data()) : Array.from(await policy.arraySync())[0];
+        const valueData = (await value.data())[0] ? Array.from(await value.data()) : Array.from(await value.arraySync())[0];
         inputTensor.dispose();
-        outputTensors.forEach(tensor => tensor.dispose());
-        return { value, policy };
+        if (policy.dispose) policy.dispose();
+        if (value.dispose) value.dispose();
+        return { value: valueData[0], policy: policyData };
     } catch (error) {
         if (inputTensor && !inputTensor.isDisposed) inputTensor.dispose();
         if (outputTensors) outputTensors.forEach(tensor => { if (tensor && !tensor.isDisposed) tensor.dispose(); });

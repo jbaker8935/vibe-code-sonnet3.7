@@ -217,7 +217,7 @@ AZ_MODEL_UPDATE_WIN_RATE = 0.58  # INCREASED: Higher bar based on Phase 3 perfor
 # - Target: Policy accuracy > 65%, Policy loss < 1.5
 
 # Neural Network Architecture - PHASE 4 OPTIMIZATION
-AZ_NN_INPUT_DEPTH = 192  # Number of features in the input layer (e.g., 6 channels for 8x4 board = 6 * 32 = 192)
+AZ_NN_INPUT_DEPTH = 576  # 6 channels * 8 rows * 4 cols * 3 (current + 2 prior boards)
 AZ_NN_RESIDUAL_BLOCKS = 4      # MAINTAINED: Proven effective architecture
 AZ_NN_FILTERS = 64            # MAINTAINED: Stable complexity
 AZ_NN_POLICY_HEAD_UNITS = 192  # MAINTAINED: Effective policy head size

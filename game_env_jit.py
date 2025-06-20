@@ -245,6 +245,9 @@ from env_const import PLAYER_A_ID, ID_PLAYER_MAP, PIECE_MAP # For mapping IDs to
 class SwitcharooEnvJitWrapper:
     def __init__(self):
         self._env_jit = None # This will hold the instance of SwitcharooEnvJit
+        # For history tracking
+        self._prev_board_1 = None
+        self._prev_board_2 = None
         # Initial reset to instantiate the jitclass object
         # Pass None for board_state_array_init to trigger default setup in jitclass
         # Pass PLAYER_A_ID as default starting player
@@ -278,7 +281,10 @@ class SwitcharooEnvJitWrapper:
         # A more complex setup could reuse the instance and call its _reset_internal method,
         # but re-instantiation is cleaner for ensuring a fresh state.
         self._env_jit = SwitcharooEnvJit(parsed_board_for_jit, player_to_start_id)
-        return self._env_jit._get_state_internal()
+        # Reset history: pad with zeros for first two states
+        self._prev_board_1 = np.zeros_like(self._env_jit.board)
+        self._prev_board_2 = np.zeros_like(self._env_jit.board)
+        return self._get_state_for_nn()
 
     def step(self, action_index):
         """
@@ -290,7 +296,11 @@ class SwitcharooEnvJitWrapper:
         next_state, reward, done, winner_id, _, _, move_type_code = \
             self._env_jit.step_internal(action_index)
 
-        # Reconstruct the info dictionary based on codes returned by jitclass
+        # Update history: shift boards
+        self._prev_board_2 = np.copy(self._prev_board_1)
+        self._prev_board_1 = np.copy(self._env_jit.board)
+
+        # next_state is not used directly; we always use _get_state_for_nn()
         info = {}
         # The outcome_code logic was based on a misunderstanding. 
         # step_internal now returns winner_id directly.
@@ -316,26 +326,22 @@ class SwitcharooEnvJitWrapper:
         else: # No winner yet or game ongoing
             info['winner'] = None
                 
-        return next_state, reward, done, info
+        return self._get_state_for_nn(), reward, done, info
 
-    def get_legal_action_indices(self, player=None): # player is \'A\' or \'B\' string or None
+    def get_legal_action_indices(self, player=None):
         """Returns a list of valid action indices for the current or specified player."""
         player_id_to_use = self._env_jit.current_player_id
-        if player: # If a specific player string (\'A\' or \'B\') is provided
-            # Convert \'A\'/\'B\' string to player_id. This logic stays in Python wrapper.
-            found_player_id = -1 # Default to an invalid ID
-            for pid_key, name_val in ID_PLAYER_MAP.items(): # Iterate through ID_PLAYER_MAP
+        if player:  # If a specific player string ('A' or 'B') is provided
+            found_player_id = -1  # Default to an invalid ID
+            for pid_key, name_val in ID_PLAYER_MAP.items():
                 if name_val == player:
                     found_player_id = pid_key
                     break
             if found_player_id != -1:
-                 player_id_to_use = found_player_id
-            # If player string is not found, it defaults to current_player_id (already set)
-
-        # Corrected method name
+                player_id_to_use = found_player_id
         return self._env_jit._get_legal_action_indices_internal(player_id_to_use)
 
-    def check_win_condition(self, player=None): # player is \'A\' or \'B\' string or None
+    def check_win_condition(self, player=None):
         """Checks if the given player has won and returns the winning path if any."""
         player_id_to_use = self._env_jit.current_player_id
         if player:
@@ -346,16 +352,41 @@ class SwitcharooEnvJitWrapper:
                     break
             if found_player_id != -1:
                 player_id_to_use = found_player_id
-        
         has_won = self._env_jit.check_win_internal(player_id_to_use)
-        win_path = [] # Default to empty list
+        win_path = []
         if has_won:
-            # If a win is detected by the jitclass, call the JITted path-finding function.
-            # _find_winning_path_jit is imported from env_util.py
             win_path = _find_winning_path_jit(self._env_jit.board, player_id_to_use)
         return has_won, win_path
-            
-    # Properties to match the original SwitcharooEnv API
+
+    def _get_state(self): # To match original API if called directly
+        """Returns state representation for the neural network: current + 2 prior boards."""
+        return self._get_state_for_nn()
+
+    def _get_state_for_nn(self):
+        """Returns state representation for the neural network: current + 2 prior boards, as (8, 4, 18) for tfjs."""
+        current_player_id = self._env_jit.current_player_id
+        opponent_player_id = PLAYER_B_ID if current_player_id == PLAYER_A_ID else PLAYER_A_ID
+        def encode_board(board, player_id):
+            # Returns (6, 8, 4): channels, rows, cols
+            channel_a_normal = (board == A_NORMAL).astype(np.float32)
+            channel_a_swapped = (board == A_SWAPPED).astype(np.float32)
+            channel_b_normal = (board == B_NORMAL).astype(np.float32)
+            channel_b_swapped = (board == B_SWAPPED).astype(np.float32)
+            channel_empty = (board == EMPTY_CELL).astype(np.float32)
+            player_channel = np.zeros((ROWS, COLS), dtype=np.float32)
+            if player_id == PLAYER_B_ID:
+                player_channel.fill(1.0)
+            return np.stack([
+                channel_a_normal, channel_a_swapped, channel_b_normal,
+                channel_b_swapped, channel_empty, player_channel
+            ], axis=0)
+        current = encode_board(self._env_jit.board, current_player_id)  # (6, 8, 4)
+        prev1 = encode_board(self._prev_board_1, opponent_player_id)  # (6, 8, 4)
+        prev2 = encode_board(self._prev_board_2, current_player_id)  # (6, 8, 4)
+        stacked = np.concatenate([current, prev1, prev2], axis=0)  # (18, 8, 4)
+        state = np.transpose(stacked, (1, 2, 0))  # (8, 4, 18)
+        return state
+        # Properties to match the original SwitcharooEnv API
     @property
     def board(self):
         return self._env_jit.board
@@ -382,18 +413,10 @@ class SwitcharooEnvJitWrapper:
     def done(self):
         return self._env_jit.is_done_internal()
 
-    def _get_state(self): # To match original API if called directly
-        return self._env_jit._get_state_internal()
-    
     def _action_index_to_move(self, action_index):
         """Converts an action index to a move tuple (start_r, start_c, end_r, end_c)."""
         return self._env_jit._action_index_to_move_internal(action_index)
 
-
-    def _get_state_for_nn(self):
-        """Returns state representation in the format expected by the neural network.
-        This is an alias for _get_state() to maintain compatibility with both MCTS implementations."""
-        return self._get_state()
 
     def render(self):
         """Prints the board to the console. This logic remains in Python."""
