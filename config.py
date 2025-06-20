@@ -54,24 +54,24 @@ AAAA
 AAAA"""
 
 POSITION_INTERMEDIATE_1 = """\
-B..B
+.BBB
+..B.
+.BA.
 .BB.
-.BB.
-B..B
-A..A
-.AA.
-.AA.
-A..A"""
+AAB.
+.A..
+....
+AAAA"""
 
 POSITION_INTERMEDIATE_2 = """\
-B.BB
-..BB
-.B..
-b.a.
-a.b.
-.A..
-..AA
-A.AA"""
+..B.
+.baB
+.ab.
+.bB.
+.ba.
+..ba
+A...
+AA.A"""
 
 POSITION_INTERMEDIATE_3 = """\
 .B..
@@ -112,59 +112,68 @@ AZ_PROGRESSIVE_CURRICULUM = True
 AZ_CURRICULUM_SCHEDULE = {
     # Phase 1: Extended foundation mastery (was 1-40, now 1-80)
     'phase_1': {
-        'iterations': (1, 80),           # AGGRESSIVE: Further extended for better foundation (was 60)
+        'iterations': (1, 100),  # Extended
         'positions': [POSITION_ADVANCED_CENTER],
-        'target_policy_accuracy': 0.70,  # AGGRESSIVE: Higher target (was 0.65)
+        'target_policy_accuracy': 0.70,
         'learning_rate': 2e-5,
+        'anneal_portion': 0.95,
+        'temp_min': 0.1,
+        'temp_max': 1.0,
         'description': 'Extended foundation mastery'
     },
     # Phase 2: Gradual dual position learning (was 41-80, now 81-140) 
     'phase_2': {
-        'iterations': (81, 140),         # FIXED: Sequential start after phase 1 ends
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1,
-                      POSITION_INTERMEDIATE_2],  # IMPROVED: Added more positions for dual learning
-        'target_policy_accuracy': 0.55,  # ADJUSTED: Reduced from 0.60 for realistic dual-position target
+        'iterations': (101, 170),  # Extended, non-overlapping
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
+        'target_policy_accuracy': 0.55,
         'learning_rate': 2e-5,
+        'anneal_portion': 0.95,
+        'temp_min': 0.05,
+        'temp_max': 0.7,
         'description': 'Gradual dual position learning'
     },
     # Phase 3: Controlled three-position mastery (was 81-140, now 141-200)
     'phase_3': {
-        'iterations': (141, 260),        # EXTENDED: More time for three-position mastery
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1,
-                      POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3,
-                      POSITION_INTERMEDIATE_4],  # IMPROVED: Only 3 positions
-        'target_policy_accuracy': 0.50,  # REALISTIC: Lowered target for complex learning
+        'iterations': (171, 260),  # Non-overlapping
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3, POSITION_INTERMEDIATE_4, POSITION_STANDARD],  # Added POSITION_STANDARD
+        'target_policy_accuracy': 0.50,
         'learning_rate': 2e-5,
+        'anneal_portion': 0.98,  # More exploration
+        'temp_min': 0.02,
+        'temp_max': 0.5,
         'description': 'Extended three-position mastery with stability focus'
     },
     # Phase 4: Full complexity with realistic targets (was 141-180, now 261-320)
     'phase_4': {
-        'iterations': (261, 320),        # ADJUSTED: Sequential start after phase 3 ends
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD,
-                      POSITION_INTERMEDIATE_1,
-                      POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3,
-                      POSITION_INTERMEDIATE_4],
-        'target_policy_accuracy': 0.48,  # REALISTIC: Lowered for four-position complexity
-        'learning_rate': 2e-5,
+        'iterations': (261, 320),  # Non-overlapping
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3, POSITION_INTERMEDIATE_4],
+        'target_policy_accuracy': 0.48,
+        'learning_rate': 1e-5,  # Lower LR
+        'anneal_portion': 0.98, # More exploration
+        'temp_min': 0.01,
+        'temp_max': 0.35,       # More exploration
         'description': 'Full strategic mastery with stability focus'
     },
     # Phase 5: Ultra-mastery and fine-tuning (321-400)
     'phase_5': {
-        'iterations': (321, 400),        # ADVANCED: Building on Phase 4's ELO 1774 success
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD,
-                      POSITION_INTERMEDIATE_1,
-                      POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3,
-                      POSITION_INTERMEDIATE_4],
-        'target_policy_accuracy': 0.52,  # AMBITIOUS: Higher target based on Phase 4's 87.4% success
-        'learning_rate': 8e-6,
+        'iterations': (321, 400),  # Non-overlapping
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3, POSITION_INTERMEDIATE_4],
+        'target_policy_accuracy': 0.52,
+        'learning_rate': 8e-6,  # Lower LR
+        'anneal_portion': 0.95,
+        'temp_min': 0.01,
+        'temp_max': 0.15,
         'description': 'Ultra-precision mastery and tournament-level refinement'
     },
     # Phase 6: Openings (401-500) - NEW: Focus on opening strategies
     'phase_6': {
-        'iterations': (401, 500),        
+        'iterations': (401, 500),  # Non-overlapping
         'positions': openings,
-        'target_policy_accuracy': 0.52,  # AMBITIOUS: Higher target based on Phase 4's 87.4% success
-        'learning_rate': 8e-6,
+        'target_policy_accuracy': 0.52,
+        'learning_rate': 8e-6,  # Lower LR
+        'anneal_portion': 0.95,
+        'temp_min': 0.01,
+        'temp_max': 0.1,
         'description': 'Opening strategies mastery'
     }    
 }
@@ -201,11 +210,11 @@ DIRICHLET_EPSILON = 0.18       # INCREASED: More noise for exploration across po
 # AlphaZero Training Loop Parameters - PHASE 4 FULL MASTERY (JIT-OPTIMIZED)
 # Building on Phase 3's excellent results: 94.9% policy accuracy, 23/39 model updates
 AZ_ITERATIONS = 500             
-AZ_GAMES_PER_ITERATION = 25      
+AZ_GAMES_PER_ITERATION = 30      
 AZ_TRAINING_STEPS_PER_ITERATION = 1200   # INCREASED: Deeper learning for complex positions
 AZ_REPLAY_BUFFER_SIZE = 20000    # EXPANDED: Larger buffer for 4-position diversity
 AZ_BATCH_SIZE = 144              # OPTIMIZED: Memory-efficient batch size
-AZ_EVALUATION_GAMES_COUNT = 18   # INCREASED: More robust evaluation for complex strategies
+AZ_EVALUATION_GAMES_COUNT = 20   # INCREASED: More robust evaluation for complex strategies
 AZ_MODEL_UPDATE_WIN_RATE = 0.58  # INCREASED: Higher bar based on Phase 3 performance
 
 # PHASE 2A CONFIGURATION (Iterations 61-80) - OPTIMIZER ENHANCED

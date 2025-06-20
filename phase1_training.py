@@ -193,7 +193,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
                     
                     # Learning rate decay after episode threshold
                     if e >= EPISODE_THRESHOLD:
-                        agent.optimizer.learning_rate.assign(NEW_LR)
+                        agent.optimizer.learning_rate = NEW_LR
                         # print(f"Learning rate decayed to {NEW_LR} at episode {e}")
                         # Adjust target update frequency for stability
                         if agent.target_update_freq != 300:
@@ -293,7 +293,7 @@ def phase1_training(agent, start_episode=1, episodes=PHASE1_EPISODES, enable_wan
         if e % 5000 == 0 and e > 0:
             # Decay learning rate more aggressively
             new_lr = max(agent.optimizer.learning_rate.numpy() * 0.1, 1e-8)
-            agent.optimizer.learning_rate.assign(new_lr)
+            agent.optimizer.learning_rate = new_lr
             print(f"Learning rate decayed to {new_lr} at episode {e}")
 
             # Spike epsilon higher for more exploration

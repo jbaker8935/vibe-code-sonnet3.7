@@ -74,7 +74,7 @@ def phase2_training(agent, start_episode=1, episodes=PHASE2_EPISODES, direct_pha
         if e % lr_decay_every == 0 and agent.learning_rate > min_lr:
             agent.learning_rate = max(agent.learning_rate * lr_decay_factor, min_lr)
             if hasattr(agent.optimizer, 'lr'):
-                agent.optimizer.lr.assign(agent.learning_rate)
+                agent.optimizer.lr = agent.learning_rate
             print(f"Decayed learning rate to {agent.learning_rate}")
         
         move_time = train_time = 0
