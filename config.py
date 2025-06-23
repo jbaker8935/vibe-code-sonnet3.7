@@ -159,7 +159,7 @@ AZ_CURRICULUM_SCHEDULE = {
         'iterations': (321, 400),  # Non-overlapping
         'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2, POSITION_INTERMEDIATE_3, POSITION_INTERMEDIATE_4],
         'target_policy_accuracy': 0.52,
-        'learning_rate': 8e-6,  # Lower LR
+        'learning_rate': 9e-6,  # Lower LR
         'anneal_portion': 0.95,
         'temp_min': 0.01,
         'temp_max': 0.15,

@@ -35,6 +35,7 @@ from config import (
     AZ_PROGRESSIVE_CURRICULUM, AZ_CURRICULUM_SCHEDULE, AZ_POSITION_WEIGHTS,
     AZ_CURRICULUM_LOGGING, AZ_POSITION_SPECIFIC_METRICS
 )
+from config import get_az_learning_rate_for_phase
 # Helper function for temperature decay
 def get_temperature(total_game_steps):
     """
@@ -92,31 +93,12 @@ def get_curriculum_aware_temperature(total_game_steps, iteration):
     phase_length = phase_end - phase_start + 1
     phase_progress = (iteration - phase_start) / phase_length  # 0.0 to 1.0
 
-    # Phase-specific temperature annealing
-    if current_phase_name == 'phase_1':
-        phase_min_temp = 0.1
-        phase_max_temp = 1.0
-    elif current_phase_name == 'phase_2':
-        phase_min_temp = 0.05
-        phase_max_temp = 0.7
-    elif current_phase_name == 'phase_3':
-        phase_min_temp = 0.02
-        phase_max_temp = 0.5
-    elif current_phase_name == 'phase_4':
-        phase_min_temp = 0.01
-        phase_max_temp = 0.25
-    elif current_phase_name == 'phase_5':
-        phase_min_temp = 0.01
-        phase_max_temp = 0.15
-    elif current_phase_name == 'phase_6':
-        phase_min_temp = 0.01
-        phase_max_temp = 0.1
-    else:
-        phase_min_temp = TEMPERATURE_END
-        phase_max_temp = TEMPERATURE_START
+    # Use phase-specific temperature min/max from config
+    phase_min_temp = current_phase_config.get('temp_min', TEMPERATURE_END)
+    phase_max_temp = current_phase_config.get('temp_max', TEMPERATURE_START)
 
-    # Anneal temperature within phase, with last 10% at min temp
-    anneal_portion = 0.85  # 85% of phase for annealing, last 15% at min temp
+    # Anneal temperature within phase, with last X% at min temp
+    anneal_portion = current_phase_config.get('anneal_portion', 0.85)
     if phase_progress < anneal_portion:
         local_progress = phase_progress / anneal_portion
         phase_temp = phase_max_temp * (1 - local_progress) + phase_min_temp * local_progress
@@ -365,6 +347,8 @@ class AlphaZeroTrainer:
             print("Weights & Biases logging disabled by command-line argument.")
         
         print(f"[DEBUG] Using env class: {type(self.game_env)}; _get_state shape: {self.game_env._get_state().shape}")    
+
+        self._last_phase_name = None  # Track last phase for per-phase LR
 
     def print_sample_predictions(self, n=3):
         print("\n[Diagnostics] Sample predictions from candidate network:")
@@ -1162,58 +1146,56 @@ class AlphaZeroTrainer:
         # --- End Step 1.3 ---
 
         for iteration in range(start_iteration, AZ_ITERATIONS + 1):
-            # Update current iteration for curriculum tracking
             self.current_iteration = iteration
-            
-            print(f"\n===== Iteration {iteration}/{AZ_ITERATIONS} =====")
-            
-            # Log curriculum phase information
-            if AZ_PROGRESSIVE_CURRICULUM and AZ_CURRICULUM_LOGGING:
-                phase_name, phase_config = get_current_curriculum_phase(iteration)
-                if phase_config:
-                    print(f"🎯 Curriculum Phase: {phase_name}")
-                    print(f"   Description: {phase_config['description']}")
-                    print(f"   Target Policy Accuracy: {phase_config['target_policy_accuracy']:.1%}")
-                    print(f"   Available Positions: {len(phase_config['positions'])}")
-            
+            # --- Per-phase learning rate logic ---
+            phase_name, _ = get_current_curriculum_phase(iteration)
+            phase_lr = get_az_learning_rate_for_phase(phase_name)
+            if self._last_phase_name != phase_name:
+                print(f"[PHASE CHANGE] Switching to phase {phase_name} with learning rate {phase_lr}")
+                # Create a constant learning rate for this phase
+                phase_lr_schedule = phase_lr
+                # Re-instantiate models with new learning rate
+                self.current_nn = AlphaZeroNetwork(learning_rate_schedule=phase_lr_schedule)
+                self.candidate_nn = AlphaZeroNetwork(learning_rate_schedule=phase_lr_schedule)
+                # Load best weights if available
+                if os.path.exists(AZ_BEST_MODEL_FILE):
+                    print(f"[PHASE CHANGE] Loading best model weights from {AZ_BEST_MODEL_FILE}")
+                    self.current_nn.load_model(AZ_BEST_MODEL_FILE)
+                    self.candidate_nn.load_model(AZ_BEST_MODEL_FILE)
+                else:
+                    print(f"[PHASE CHANGE] No best model found, starting with fresh weights for phase {phase_name}")
+                self._last_phase_name = phase_name
+            # --- END Per-phase learning rate logic ---
+
+            # --- DEBUG: Log learning rate at the start of each iteration ---
+            if self.wandb_enabled:
+                try:
+                    current_lr = self.candidate_nn.model.optimizer.learning_rate.numpy()
+                    wandb.log({"iteration": iteration, "learning_rate": current_lr})
+                except Exception as e:
+                    print(f"Error logging learning rate to WandB: {e}")
+            # --- END DEBUG ---
+
             start_time_iter = time.time()
-            # Log GPU memory usage if available
-            try:
-                gpu_devices = tf.config.list_physical_devices('GPU')
-                if gpu_devices:
-                    memory_info = {}
-                    for device in gpu_devices:
-                        device_idx = device.name.split(':')[-1]
-                        memory_stats = tf.config.experimental.get_memory_info(f'/device:GPU:{device_idx}')
-                        if memory_stats:
-                            memory_info[f'gpu_{device_idx}_memory_used_gb'] = memory_stats['current'] / (1024**3)
-                            memory_info[f'gpu_{device_idx}_memory_limit_gb'] = memory_stats['peak'] / (1024**3)
-                    if memory_info and self.wandb_enabled:
-                        wandb.log(memory_info)
-                    print(f"GPU Memory Usage: {memory_info}")
-            except Exception as e:
-                print(f"Note: Could not log GPU memory usage: {e}")
-            
             self._run_self_play_games()
             self._train_network()
             self._evaluate_and_update_model(iteration)
-            # Enhanced selective checkpoint saving
-            # Save checkpoints at more frequent intervals early in training
-            if (iteration < 20 and iteration % 5 == 0) or \
-               (iteration >= 20 and iteration < 50 and iteration % 10 == 0) or \
-               (iteration >= 50 and iteration % 20 == 0) or \
-               (iteration > AZ_ITERATIONS - 10) or \
-               (iteration == 0):
-                checkpoint_path = AZ_CHECKPOINT_FILE_PATTERN.format(iteration + 1)
-                self.candidate_nn.save_model(checkpoint_path)
-                print(f"Saved candidate_nn checkpoint to {checkpoint_path}")
-            else:
-                print(f"Skipping checkpoint save for iteration {iteration + 1} (using progressive saving strategy)")
             end_time_iter = time.time()
             iter_duration = end_time_iter - start_time_iter
             print(f"Iteration {iteration} completed in {iter_duration:.2f} seconds.")
             if self.wandb_enabled:
-                wandb.log({"iteration": iteration, "iteration_duration_sec": iter_duration})
+                # Log phase and learning rate
+                try:
+                    phase_name, _ = get_current_curriculum_phase(iteration)
+                    phase_lr = get_az_learning_rate_for_phase(phase_name)
+                except Exception:
+                    phase_name, phase_lr = 'unknown', 0.0
+                wandb.log({
+                    "iteration": iteration,
+                    "iteration_duration_sec": iter_duration,
+                    "curriculum/current_phase": phase_name,
+                    "train/learning_rate": phase_lr
+                })
 
         print("\nAlphaZero Training Finished.")
         if self.wandb_enabled:
