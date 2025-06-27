@@ -971,6 +971,9 @@ class AlphaZeroTrainer:
         draws = 0
         eval_temperature = 0.01  # Further reduced for even more deterministic evaluation play
 
+        # NEW: Track outcomes per position
+        position_eval_stats = {}
+
         for game_idx in tqdm(range(AZ_EVALUATION_GAMES_COUNT), desc="Evaluation Games"):  # Added tqdm
             eval_env = self.game_env_class()
             
@@ -979,7 +982,6 @@ class AlphaZeroTrainer:
                 curriculum_positions = get_curriculum_positions(self.current_iteration)
                 starting_position_str = select_weighted_position(curriculum_positions, self.current_iteration)
             else:
-                # Original random selection
                 starting_position_str = random.choice(initial_position)
             # print(f"Starting Evaluation Game {game_idx+1}/{AZ_EVALUATION_GAMES_COUNT} with starting position:\n{starting_position_str}")
             eval_env.reset(starting_position=starting_position_str)
@@ -1078,6 +1080,19 @@ class AlphaZeroTrainer:
             # --- End draw logic fix ---
             print(f"  Eval Game {game_idx+1}/{AZ_EVALUATION_GAMES_COUNT}: Candidate ({player_A_name if player_A_model==eval_candidate_nn else player_B_name}) vs Best ({player_A_name if player_A_model==eval_best_nn else player_B_name}). Winner: {eval_env.winner}")
 
+            # NEW: Update position evaluation stats
+            pos_key = starting_position_str.strip()
+            if pos_key not in position_eval_stats:
+                position_eval_stats[pos_key] = {"games": 0, "candidate_win": 0, "best_win": 0, "draw": 0}
+            position_eval_stats[pos_key]["games"] += 1
+            if is_draw:
+                position_eval_stats[pos_key]["draw"] += 1
+            elif (player_A_model == eval_candidate_nn and game_winner_id == PLAYER_A_ID) or \
+                 (player_B_model == eval_candidate_nn and game_winner_id == PLAYER_B_ID):
+                position_eval_stats[pos_key]["candidate_win"] += 1
+            else:
+                position_eval_stats[pos_key]["best_win"] += 1
+
         # Print/check sum of outcomes
         total_outcomes = candidate_wins + best_wins + draws
 
@@ -1118,6 +1133,19 @@ class AlphaZeroTrainer:
                 "evaluation/best_model_updated": best_model_updated,
                 "evaluation/skipped": False
             })
+
+        # NEW: Log evaluation results by position
+        if self.wandb_enabled:
+            for pos, stats in position_eval_stats.items():
+                wandb.log({f"eval/pos/{hash(pos)}/candidate_win": stats['candidate_win'],
+                           f"eval/pos/{hash(pos)}/best_win": stats['best_win'],
+                           f"eval/pos/{hash(pos)}/draw": stats['draw'],
+                           f"eval/pos/{hash(pos)}/games": stats['games']})
+
+        # NEW: Print evaluation results by position
+        print("\nEvaluation outcomes by starting position:")
+        for pos, stats in position_eval_stats.items():
+            print(f"Position:\n{pos}\n  Games: {stats['games']}  Candidate Wins: {stats['candidate_win']}  Best Wins: {stats['best_win']}  Draws: {stats['draw']}")
 
     def train(self, start_iteration=1):
         print("Starting AlphaZero Training Process...")

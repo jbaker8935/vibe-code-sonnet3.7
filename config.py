@@ -124,7 +124,7 @@ AZ_CURRICULUM_SCHEDULE = {
     # Phase 2: Gradual dual position learning (was 41-80, now 81-140) 
     'phase_2': {
         'iterations': (101, 170),  # Extended, non-overlapping
-        'positions': [POSITION_ADVANCED_CENTER, POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
+        'positions': [POSITION_ADVANCED_CENTER, POSITION_STANDARD, POSITION_INTERMEDIATE_1, POSITION_INTERMEDIATE_2],
         'target_policy_accuracy': 0.55,
         'learning_rate': 2e-5,
         'anneal_portion': 0.95,
@@ -181,7 +181,7 @@ AZ_CURRICULUM_SCHEDULE = {
 # Position-specific weights for balanced training
 AZ_POSITION_WEIGHTS = {
     POSITION_ADVANCED_CENTER: 1,    # IMPROVED: Emphasize best-performing position
-    POSITION_STANDARD: 3,           # Stable weight
+    POSITION_STANDARD: 6,           # Stable weight
     POSITION_INTERMEDIATE_1: 1,     # IMPROVED: Reduced complexity weight
     POSITION_INTERMEDIATE_2: 1,     # IMPROVED: Reduced complexity weight
     POSITION_INTERMEDIATE_3: 1,     # IMPROVED: Reduced complexity weight
@@ -210,11 +210,11 @@ DIRICHLET_EPSILON = 0.18       # INCREASED: More noise for exploration across po
 # AlphaZero Training Loop Parameters - PHASE 4 FULL MASTERY (JIT-OPTIMIZED)
 # Building on Phase 3's excellent results: 94.9% policy accuracy, 23/39 model updates
 AZ_ITERATIONS = 500             
-AZ_GAMES_PER_ITERATION = 30      
+AZ_GAMES_PER_ITERATION = 60      
 AZ_TRAINING_STEPS_PER_ITERATION = 1200   # INCREASED: Deeper learning for complex positions
 AZ_REPLAY_BUFFER_SIZE = 20000    # EXPANDED: Larger buffer for 4-position diversity
 AZ_BATCH_SIZE = 144              # OPTIMIZED: Memory-efficient batch size
-AZ_EVALUATION_GAMES_COUNT = 20   # INCREASED: More robust evaluation for complex strategies
+AZ_EVALUATION_GAMES_COUNT = 60   # INCREASED: More robust evaluation for complex strategies
 AZ_MODEL_UPDATE_WIN_RATE = 0.58  # INCREASED: Higher bar based on Phase 3 performance
 
 # PHASE 2A CONFIGURATION (Iterations 61-80) - OPTIMIZER ENHANCED
